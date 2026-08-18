@@ -237,8 +237,18 @@ async function main() {
   ok('Sem músicas cadastradas ainda, mostra aviso', html.includes('Nenhuma música cadastrada ainda.'));
 
   await page.fill('#new-musica-nome', 'Ventania');
+  await page.fill('#new-musica-tom', 'Sol maior');
+  await page.fill('#new-musica-cantor', 'Carla');
   await page.click('#btn-add-musica');
   await page.waitForTimeout(150);
+  html = await appHtml(page);
+  ok('Música salva com tom e cantor(a) preenchidos', html.includes('value="Sol maior"') && html.includes('value="Carla"'));
+
+  const tonsSugeridos = await page.$$eval('#lista-tons option', els => els.map(e => e.value));
+  ok('Tom já usado (Sol maior) vira sugestão (datalist) para a próxima música', tonsSugeridos.includes('Sol maior'));
+  const cantoresSugeridos = await page.$$eval('#lista-cantores option', els => els.map(e => e.value));
+  ok('Cantor(a) já usado (Carla) vira sugestão (datalist) para a próxima música', cantoresSugeridos.includes('Carla'));
+
   await page.fill('#new-musica-nome', 'Aquarela');
   await page.click('#btn-add-musica');
   await page.waitForTimeout(150);
@@ -247,6 +257,8 @@ async function main() {
 
   const nomesMusicasNaTela = await page.$$eval('.musica-name-input', els => els.map(e => e.value));
   ok('Músicas aparecem em ordem alfabética (Aquarela antes de Ventania)', nomesMusicasNaTela.indexOf('Aquarela') < nomesMusicasNaTela.indexOf('Ventania'));
+  const tonsNaTela = await page.$$eval('.musica-tom-input', els => els.map(e => e.value));
+  ok('Aquarela (tom/cantor não preenchidos) fica com tom em branco, sem herdar o de Ventania', tonsNaTela[nomesMusicasNaTela.indexOf('Aquarela')] === '');
 
   console.log('\n== 8b-ii. Edição de música não salva sobrevive a um re-render em segundo plano ==');
   const musicaInputs = await page.$$('input.musica-name-input');
@@ -280,6 +292,7 @@ async function main() {
   await page.waitForTimeout(150);
   html = await appHtml(page);
   ok('Editor de músicas do ensaio abre com as opções cadastradas', html.includes('Aquarela (Editada)') && html.includes('Ventania'));
+  ok('Editor mostra o tom e o cantor(a) cadastrados ao lado da música (Sol maior · Carla)', html.includes('Sol maior') && html.includes('Carla'));
 
   await page.locator('label:has-text("Ventania") input.musica-ensaio-check').check();
   await page.waitForTimeout(100);
@@ -296,7 +309,7 @@ async function main() {
   await page.click('[data-save-musicas-ensaio]');
   await page.waitForTimeout(250);
   html = await appHtml(page);
-  ok('Música "Ventania" aparece marcada como ensaiada na linha do ensaio', html.includes('Ventania'));
+  ok('Música "Ventania" aparece marcada como ensaiada, com tom e cantor(a), na linha do ensaio', html.includes('Ventania (Sol maior · Carla)'));
 
   await page.click('#btn-back-admin4');
   await page.waitForTimeout(150);

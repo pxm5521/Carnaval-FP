@@ -79,6 +79,13 @@ function posicoesUnicasOrdenadas(pessoas) {
   return [...new Set(pessoas.map(p => p.posicao))].sort((a, b) => (a || "").localeCompare(b || "", "pt-BR", { sensitivity: "base" }));
 }
 function musicaNome(id) { const m = musicasCache.find(x => x.id === id); return m ? m.nome : null; }
+/* Nome da música + tom/cantor entre parênteses, quando cadastrados (ex: "Vem Ni Mim (Sol maior · Carla)"). */
+function musicaResumo(id) {
+  const m = musicasCache.find(x => x.id === id);
+  if (!m) return null;
+  const extras = [m.tom, m.cantor].filter(Boolean).join(" · ");
+  return extras ? `${m.nome} (${extras})` : m.nome;
+}
 
 /* ============================================================
    BOOT — autenticação dirige tudo
@@ -792,7 +799,7 @@ function viewAdminEnsaios() {
               const realizado = e.data <= hoje;
               const presentes = usersCache.filter(p => presencasCache[p.id] && presencasCache[p.id][e.id]).length;
               const musicaIds = e.musicaIds || [];
-              const nomesMusicas = musicaIds.map(musicaNome).filter(Boolean);
+              const nomesMusicas = musicaIds.map(musicaResumo).filter(Boolean);
               const aberto = session.ensaioMusicasAberto === e.id;
               const draftIds = aberto ? (session.ensaioMusicasDraft || []) : musicaIds;
               return `<tr>
@@ -815,7 +822,7 @@ function viewAdminEnsaios() {
                   <div style="display:flex; flex-direction:column; gap:8px;">
                     ${ordenarMusicasAlfabetica(musicasCache).map(m => `
                       <label style="display:flex; align-items:center; gap:6px; font-weight:400; font-size:13.5px;">
-                        <input type="checkbox" class="musica-ensaio-check" data-musica-id="${m.id}" ${draftIds.includes(m.id) ? "checked" : ""} style="width:auto;"> ${m.nome}
+                        <input type="checkbox" class="musica-ensaio-check" data-musica-id="${m.id}" ${draftIds.includes(m.id) ? "checked" : ""} style="width:auto;"> ${m.nome}${(m.tom || m.cantor) ? ` <span class="hint">${[m.tom, m.cantor].filter(Boolean).join(" · ")}</span>` : ""}
                       </label>`).join("")}
                   </div>`}
                   <div style="display:flex; gap:8px; margin-top:14px;">
@@ -956,32 +963,53 @@ function viewAdminPosicoes() {
   </div>`;
 }
 
+/* Valores únicos já usados em Tom/Cantor entre as músicas do rascunho atual —
+   viram as opções sugeridas (<datalist>) nos campos livres de tom e cantor,
+   para reaproveitar nomes já digitados sem impedir digitar um novo. */
+function valoresUnicosOrdenados(lista, campo) {
+  return [...new Set(lista.map(m => (m[campo] || "").trim()).filter(Boolean))]
+    .sort((a, b) => a.localeCompare(b, "pt-BR", { sensitivity: "base" }));
+}
+
 function viewAdminMusicas() {
   const u = myProfile;
   // Mesmo padrão de rascunho local usado nas posições: evita perder edições
   // digitadas se a tela for redesenhada por outro motivo antes de salvar.
   if (!session.musicasDraft) {
-    session.musicasDraft = ordenarMusicasAlfabetica(musicasCache.map(m => ({ id: m.id, nome: m.nome })));
+    session.musicasDraft = ordenarMusicasAlfabetica(musicasCache.map(m => ({ id: m.id, nome: m.nome, tom: m.tom || "", cantor: m.cantor || "" })));
   }
   const draft = session.musicasDraft;
+  const tonsSugeridos = valoresUnicosOrdenados(draft, "tom");
+  const cantoresSugeridos = valoresUnicosOrdenados(draft, "cantor");
   return `
   ${headerBar(u)}
   <div class="wrap">
     <p><button class="link-btn" id="btn-back-admin6">← Voltar para o painel admin</button></p>
     <div class="card">
       <h2>Repertório / músicas</h2>
-      <p class="card-sub">Cadastre aqui as músicas do repertório, em ordem alfabética. Elas ficam disponíveis para marcar quais foram ensaiadas em cada data (painel admin → Ensaios). Depois de editar, clique em "Salvar todas as músicas" uma única vez.</p>
+      <p class="card-sub">Cadastre aqui as músicas do repertório, o tom e quem canta (voz) cada uma — em ordem alfabética. Tom e Cantor(a) são campos livres: comece a digitar e os valores já usados em outras músicas aparecem como sugestão, mas você também pode digitar um novo. Elas ficam disponíveis para marcar quais foram ensaiadas em cada data (painel admin → Ensaios). Depois de editar, clique em "Salvar todas as músicas" uma única vez.</p>
       ${draft.length === 0 ? `<p class="hint">Nenhuma música cadastrada ainda.</p>` : ""}
       ${draft.map(m => `
-        <div class="list-row">
-          <input type="text" class="musica-name-input" data-musica-id="${m.id}" value="${m.nome}" style="flex:1; max-width:320px;">
-          <button class="btn-ghost btn-sm" data-remove-musica="${m.id}">Remover</button>
+        <div style="border-bottom:1px solid var(--gridline); padding:10px 0;">
+          <div class="grid-3">
+            <div class="field" style="margin-bottom:0;"><label>Música</label><input type="text" class="musica-name-input" data-musica-id="${m.id}" value="${m.nome}"></div>
+            <div class="field" style="margin-bottom:0;"><label>Tom</label><input type="text" class="musica-tom-input" data-musica-id="${m.id}" value="${m.tom || ""}" list="lista-tons" placeholder="Ex: Sol maior"></div>
+            <div class="field" style="margin-bottom:0;"><label>Cantor(a) / voz</label><input type="text" class="musica-cantor-input" data-musica-id="${m.id}" value="${m.cantor || ""}" list="lista-cantores" placeholder="Nome"></div>
+          </div>
+          <button class="btn-ghost btn-sm" style="margin-top:8px;" data-remove-musica="${m.id}">Remover</button>
         </div>`).join("")}
-      <div style="display:flex; gap:8px; margin-top:14px; align-items:center; flex-wrap:wrap;">
-        <input type="text" id="new-musica-nome" placeholder="Nova música" style="flex:1; min-width:180px;">
-        <button class="btn-secondary btn-sm" id="btn-add-musica">Adicionar</button>
+
+      <div class="grid-3" style="margin-top:14px;">
+        <div class="field" style="margin-bottom:0;"><label>Nova música</label><input type="text" id="new-musica-nome" placeholder="Nome da música"></div>
+        <div class="field" style="margin-bottom:0;"><label>Tom</label><input type="text" id="new-musica-tom" placeholder="Ex: Sol maior" list="lista-tons"></div>
+        <div class="field" style="margin-bottom:0;"><label>Cantor(a) / voz</label><input type="text" id="new-musica-cantor" placeholder="Nome" list="lista-cantores"></div>
       </div>
-      <button class="btn-primary btn-sm" id="btn-save-all-musicas" style="margin-top:16px;">Salvar todas as músicas</button>
+      <button class="btn-secondary btn-sm" id="btn-add-musica" style="margin-top:10px;">Adicionar</button>
+
+      <button class="btn-primary btn-sm" id="btn-save-all-musicas" style="margin-top:16px; display:block;">Salvar todas as músicas</button>
+
+      <datalist id="lista-tons">${tonsSugeridos.map(t => `<option value="${t}">`).join("")}</datalist>
+      <datalist id="lista-cantores">${cantoresSugeridos.map(c => `<option value="${c}">`).join("")}</datalist>
     </div>
   </div>`;
 }
@@ -1399,15 +1427,25 @@ function wireEvents() {
     const row = session.musicasDraft && session.musicasDraft.find(m => m.id === el.dataset.musicaId);
     if (row) row.nome = el.value;
   });
+  onAll(".musica-tom-input", "input", el => {
+    const row = session.musicasDraft && session.musicasDraft.find(m => m.id === el.dataset.musicaId);
+    if (row) row.tom = el.value;
+  });
+  onAll(".musica-cantor-input", "input", el => {
+    const row = session.musicasDraft && session.musicasDraft.find(m => m.id === el.dataset.musicaId);
+    if (row) row.cantor = el.value;
+  });
 
   on("#btn-add-musica", "click", async () => {
     const nome = $("#new-musica-nome").value.trim();
     if (!nome) return;
     if (musicasCache.some(m => m.nome.toLowerCase() === nome.toLowerCase())) { alert("Essa música já está cadastrada."); return; }
+    const tom = $("#new-musica-tom").value.trim();
+    const cantor = $("#new-musica-cantor").value.trim();
     try {
-      const ref = await addDoc(collection(db, "musicas"), { nome });
+      const ref = await addDoc(collection(db, "musicas"), { nome, tom, cantor });
       if (session.musicasDraft) {
-        session.musicasDraft = ordenarMusicasAlfabetica([...session.musicasDraft, { id: ref.id, nome }]);
+        session.musicasDraft = ordenarMusicasAlfabetica([...session.musicasDraft, { id: ref.id, nome, tom, cantor }]);
       }
       render();
     } catch (err) { alert(friendlyFirestoreError(err)); }
@@ -1427,9 +1465,12 @@ function wireEvents() {
       let algumaMudanca = false;
       draft.forEach(row => {
         const original = musicasCache.find(m => m.id === row.id);
-        if (!original || row.nome === original.nome) return;
+        if (!original) return;
+        const tom = (row.tom || "").trim(), cantor = (row.cantor || "").trim();
+        const mudou = row.nome !== original.nome || tom !== (original.tom || "") || cantor !== (original.cantor || "");
+        if (!mudou) return;
         algumaMudanca = true;
-        batch.update(doc(db, "musicas", row.id), { nome: row.nome });
+        batch.update(doc(db, "musicas", row.id), { nome: row.nome, tom, cantor });
       });
       if (!algumaMudanca) { showToast("Nenhuma alteração para salvar."); return; }
       await batch.commit();
