@@ -729,13 +729,10 @@ function viewAdminEnsaios() {
               const realizado = e.data <= hoje;
               const presentes = usersCache.filter(p => presencasCache[p.id] && presencasCache[p.id][e.id]).length;
               return `<tr>
-                <td>
-                  <input type="date" class="ensaio-data-input" data-ensaio-id="${e.id}" value="${e.data}">
-                  <div class="muted-sm" style="margin-top:2px;">${dateBR(e.data)}</div>
-                </td>
+                <td><input type="date" class="ensaio-data-input" data-ensaio-id="${e.id}" value="${e.data}"></td>
                 <td><span class="badge ${realizado ? "badge-good" : "badge-warning"}">${realizado ? "Realizado" : "Agendado"}</span></td>
                 <td>${presentes}/${totalPessoas} presentes</td>
-                <td style="display:flex; gap:6px;">
+                <td class="row-actions">
                   <button class="btn-secondary btn-sm" data-save-ensaio="${e.id}">Salvar</button>
                   <button class="btn-ghost btn-sm" data-remove-ensaio="${e.id}">Remover</button>
                 </td>
@@ -830,7 +827,7 @@ function pricingPlanFieldset(planoKey, precos) {
       <div style="font-weight:700; font-size:13.5px; margin-bottom:8px;">${plano.label}</div>
       <div class="field"><label>Valor total (R$)</label><input type="number" id="admin-preco-${planoKey}" value="${cfg.valor}" min="1" step="0.01"></div>
       <div class="${plano.parcelas > 1 ? "grid-" + plano.parcelas : ""}">
-        ${cfg.prazos.map((d, i) => `<div class="field"><label>${plano.parcelas > 1 ? `Parcela ${i + 1} — ` : ""}Data-limite</label><input type="date" id="admin-prazo-${planoKey}-${i}" value="${d || ""}"><div class="muted-sm" style="margin-top:2px;">${d ? dateBR(d) : "—"}</div></div>`).join("")}
+        ${cfg.prazos.map((d, i) => `<div class="field"><label>${plano.parcelas > 1 ? `Parcela ${i + 1} — ` : ""}Data-limite</label><input type="date" id="admin-prazo-${planoKey}-${i}" value="${d || ""}"></div>`).join("")}
       </div>
     </div>`;
 }
@@ -943,15 +940,6 @@ function renderAdminEditUserForm(p) {
    EVENTOS
    ============================================================ */
 function wireEvents() {
-  // Qualquer campo de data que tenha um "dd/mm/aaaa" de confirmação logo
-  // abaixo (ver pricingPlanFieldset e a tabela de ensaios) atualiza esse texto
-  // ao vivo conforme a pessoa escolhe uma nova data no seletor nativo — sem
-  // isso, o texto só mostraria o último valor salvo até o próximo render().
-  onAll('input[type="date"]', "input", el => {
-    const hint = el.nextElementSibling;
-    if (hint && hint.classList.contains("muted-sm")) hint.textContent = el.value ? dateBR(el.value) : "—";
-  });
-
   // LANDING
   on("#btn-goto-register", "click", () => { session.draftUser = {}; go("register1"); });
   on("#btn-goto-login", "click", () => go("login"));
