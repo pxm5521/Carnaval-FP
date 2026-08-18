@@ -20,7 +20,7 @@ async function appHtml(page) {
   return page.evaluate(() => document.getElementById('app').innerHTML);
 }
 
-async function registerAndVerify(page, { email, nome, sobrenome, posicao, posicaoOutro, camisa, idade = '30', celular = '(21) 90000-0000' }) {
+async function registerAndVerify(page, { email, nome, sobrenome, posicao, posicaoOutro, camisa, dataNascimento = '1996-05-10', celular = '(21) 90000-0000' }) {
   await page.click('#btn-goto-register');
   await page.waitForSelector('#form-register1');
   await page.fill('#reg-email', email);
@@ -31,7 +31,7 @@ async function registerAndVerify(page, { email, nome, sobrenome, posicao, posica
   await page.fill('#c-nome', nome);
   await page.fill('#c-sobrenome', sobrenome);
   await page.fill('#c-celular', celular);
-  await page.fill('#c-idade', idade);
+  await page.fill('#c-datanasc', dataNascimento);
   await page.click('#radio-vaitocar .radio-pill[data-val="Sim"]');
   await page.selectOption('#c-posicao', posicao);
   if (posicao === 'Outro' && posicaoOutro) await page.fill('#c-posicao-outro', posicaoOutro);
@@ -105,18 +105,18 @@ async function main() {
   await logout(page);
 
   console.log('\n== 4. Cadastro (Ana) + verificação de e-mail obrigatória, já com posições disponíveis ==');
-  await registerAndVerify(page, { email: 'ana@example.com', nome: 'Ana', sobrenome: 'Silva', posicao: 'Surdo 1', camisa: 'M', idade: '28' });
+  await registerAndVerify(page, { email: 'ana@example.com', nome: 'Ana', sobrenome: 'Silva', posicao: 'Surdo 1', camisa: 'M', dataNascimento: '1998-03-15' });
   html = await appHtml(page);
   ok('Nome aparece no cabeçalho', html.includes('Bem-vindo(a), Ana'));
   ok('Sem acesso admin, botão painel admin não aparece', !html.includes('Painel admin'));
 
   console.log('\n== 5. Editar meus dados ==');
   await page.click('#btn-edit-data');
-  await page.fill('#e-idade', '29');
+  await page.fill('#e-datanasc', '1990-01-20');
   await page.click('#form-edit-mydata button[type=submit]');
   await page.waitForTimeout(250);
   html = await appHtml(page);
-  ok('Idade atualizada para 29 anos', html.includes('29 anos'));
+  ok('Data de nascimento atualizada (20/01/1990)', html.includes('20/01/1990'));
 
   await logout(page);
 

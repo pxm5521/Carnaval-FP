@@ -140,6 +140,15 @@ const dateBR = iso => { if (!iso) return "—"; const [y, m, d] = iso.split("-")
 const fullName = u => `${u.nome || ""} ${u.sobrenome || ""}`.trim();
 const hojeISO = () => new Date().toISOString().slice(0, 10);
 const ensaioLabel = e => { if (!e.data) return "—"; const [y, m, d] = e.data.split("-"); return `${d}/${m}`; };
+function calcIdade(dataNascISO) {
+  if (!dataNascISO) return null;
+  const [y, m, d] = dataNascISO.split("-").map(Number);
+  const hoje = new Date();
+  let idade = hoje.getFullYear() - y;
+  const aindaNaoFezAniversario = (hoje.getMonth() + 1 < m) || (hoje.getMonth() + 1 === m && hoje.getDate() < d);
+  if (aindaNaoFezAniversario) idade--;
+  return idade;
+}
 
 function temAcessoAdmin(u) { return !!(u && u.adminAccess); }
 function posicaoInfo(nome) { return posicoesCache.find(p => p.nome === nome); }
@@ -353,7 +362,7 @@ function viewRegister2() {
         </div>
         <div class="grid-2">
           <div class="field"><label>Celular</label><input type="tel" id="c-celular" required placeholder="(21) 90000-0000" value="${d.celular || ""}"></div>
-          <div class="field"><label>Idade</label><input type="number" id="c-idade" required min="1" max="110" value="${d.idade || ""}"></div>
+          <div class="field"><label>Data de nascimento</label><input type="date" id="c-datanasc" required value="${d.dataNascimento || ""}"></div>
         </div>
         <div class="field">
           <label>Vai tocar no Carnaval 2027?</label>
@@ -569,7 +578,7 @@ function renderViewMyData(u) {
       <div><div class="hint">Nome completo</div><div>${fullName(u)}</div></div>
       <div><div class="hint">E-mail</div><div>${u.email}</div></div>
       <div><div class="hint">Celular</div><div>${u.celular}</div></div>
-      <div><div class="hint">Idade</div><div>${u.idade} anos</div></div>
+      <div><div class="hint">Data de nascimento</div><div>${dateBR(u.dataNascimento)}${calcIdade(u.dataNascimento) !== null ? ` (${calcIdade(u.dataNascimento)} anos)` : ""}</div></div>
       <div><div class="hint">Vai tocar em 2027?</div><div>${u.vaiTocar}</div></div>
       <div><div class="hint">Posição / instrumento</div><div>${u.posicao}${u.posicao === "Outro" && u.posicaoOutro ? ` (${u.posicaoOutro})` : ""}</div></div>
       <div><div class="hint">Tamanho da camisa</div><div>${u.camisa}</div></div>
@@ -585,7 +594,7 @@ function renderEditMyData(u) {
       </div>
       <div class="grid-2">
         <div class="field"><label>Celular</label><input type="tel" id="e-celular" value="${u.celular}" required></div>
-        <div class="field"><label>Idade</label><input type="number" id="e-idade" value="${u.idade}" required></div>
+        <div class="field"><label>Data de nascimento</label><input type="date" id="e-datanasc" value="${u.dataNascimento || ""}" required></div>
       </div>
       <div class="field">
         <label>Vai tocar no Carnaval 2027?</label>
@@ -900,7 +909,7 @@ function renderAdminEditUserForm(p) {
       </div>
       <div class="grid-2">
         <div class="field"><label>Celular</label><input type="tel" id="ae-celular-${p.id}" value="${p.celular}"></div>
-        <div class="field"><label>Idade</label><input type="number" id="ae-idade-${p.id}" value="${p.idade}"></div>
+        <div class="field"><label>Data de nascimento</label><input type="date" id="ae-datanasc-${p.id}" value="${p.dataNascimento || ""}"></div>
       </div>
       <div class="field">
         <label>Posição</label>
@@ -977,7 +986,7 @@ function wireEvents() {
     const profileData = {
       email: fbUser.email,
       nome: $("#c-nome").value.trim(), sobrenome: $("#c-sobrenome").value.trim(),
-      celular: $("#c-celular").value.trim(), idade: $("#c-idade").value,
+      celular: $("#c-celular").value.trim(), dataNascimento: $("#c-datanasc").value,
       vaiTocar, posicao, posicaoOutro: $("#c-posicao-outro") ? $("#c-posicao-outro").value.trim() : "",
       camisa, isentoManual: false, formaPagamento: null, adminAccess: false, totalPago: 0,
       createdAt: serverTimestamp(),
@@ -1062,7 +1071,7 @@ function wireEvents() {
     e.preventDefault();
     const patch = {
       nome: $("#e-nome").value.trim(), sobrenome: $("#e-sobrenome").value.trim(),
-      celular: $("#e-celular").value.trim(), idade: $("#e-idade").value,
+      celular: $("#e-celular").value.trim(), dataNascimento: $("#e-datanasc").value,
       vaiTocar: $("#edit-radio-vaitocar .radio-pill.active")?.dataset.val || myProfile.vaiTocar,
       posicao: $("#e-posicao").value,
       posicaoOutro: $("#e-posicao-outro") ? $("#e-posicao-outro").value.trim() : "",
@@ -1218,7 +1227,7 @@ function wireEvents() {
         nome: $(`#ae-nome-${id}`).value.trim(),
         sobrenome: $(`#ae-sobrenome-${id}`).value.trim(),
         celular: $(`#ae-celular-${id}`).value.trim(),
-        idade: $(`#ae-idade-${id}`).value,
+        dataNascimento: $(`#ae-datanasc-${id}`).value,
         posicao: $(`#ae-posicao-${id}`).value,
         camisa: $(`#ae-camisa-${id}`).value,
         isentoManual: $(`#ae-isento-${id}`).checked,
