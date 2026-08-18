@@ -42,11 +42,12 @@ let myProfile = null;       // { id, ...campos } de users/{uid} do usuário loga
 let usersCache = [];
 let posicoesCache = [];
 let ensaiosCache = [];
+let musicasCache = [];
 let precosCache = null;
 let presencasCache = {};    // uid -> { ensaioId: true/false }
 let myPagamentos = [];      // só os pagamentos do próprio usuário logado
 
-const unsub = { myProfile: null, users: null, posicoes: null, ensaios: null, precos: null, presencas: null, myPagamentos: null };
+const unsub = { myProfile: null, users: null, posicoes: null, ensaios: null, musicas: null, precos: null, presencas: null, myPagamentos: null };
 
 const session = {
   view: "landing",
@@ -61,18 +62,23 @@ const session = {
   relatorioFiltroPosicao: "todas",
   adminEditingUser: null,
   posicoesDraft: null,
+  musicasDraft: null,
+  ensaioMusicasAberto: null,
+  ensaioMusicasDraft: null,
   busy: {},
   toast: null,
 };
 
-/* Ordena posições em ordem alfabética (ignorando maiúsculas/acentos). */
+/* Ordena posições (ou músicas — qualquer lista com campo .nome) em ordem alfabética, ignorando maiúsculas/acentos. */
 function ordenarPosicoesAlfabetica(lista) {
   return [...lista].sort((a, b) => (a.nome || "").localeCompare(b.nome || "", "pt-BR", { sensitivity: "base" }));
 }
+const ordenarMusicasAlfabetica = ordenarPosicoesAlfabetica;
 /* Nomes de posição únicos (para droplists de filtro), em ordem alfabética. */
 function posicoesUnicasOrdenadas(pessoas) {
   return [...new Set(pessoas.map(p => p.posicao))].sort((a, b) => (a || "").localeCompare(b || "", "pt-BR", { sensitivity: "base" }));
 }
+function musicaNome(id) { const m = musicasCache.find(x => x.id === id); return m ? m.nome : null; }
 
 /* ============================================================
    BOOT — autenticação dirige tudo
@@ -82,7 +88,7 @@ onAuthStateChanged(auth, (user) => {
   teardownUserListeners();
   if (!user) {
     myProfile = null; profileLoaded = false;
-    usersCache = []; posicoesCache = []; ensaiosCache = []; precosCache = null; presencasCache = {}; myPagamentos = [];
+    usersCache = []; posicoesCache = []; ensaiosCache = []; musicasCache = []; precosCache = null; presencasCache = {}; myPagamentos = [];
     if (session.view && !["landing", "login", "register1"].includes(session.view)) session.view = "landing";
     render();
     return;
@@ -114,6 +120,11 @@ function setupUserListeners(uid) {
     ensaiosCache = snap.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => (a.data || "").localeCompare(b.data || ""));
     render();
   }, onErr("ensaios"));
+
+  unsub.musicas = onSnapshot(collection(db, "musicas"), snap => {
+    musicasCache = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    render();
+  }, onErr("músicas"));
 
   unsub.precos = onSnapshot(doc(db, "config", "precos"), snap => {
     precosCache = snap.exists() ? snap.data() : null;
@@ -303,7 +314,7 @@ function render() {
       if (!session.draftUser) session.draftUser = { email: fbUser.email };
       html = viewRegister2();
     } else {
-      const validAdminViews = ["batuqueiro", "admin", "admin-precos", "admin-ensaios", "admin-relatorio", "admin-posicoes", "admin-pessoas"];
+      const validAdminViews = ["batuqueiro", "admin", "admin-precos", "admin-ensaios", "admin-relatorio", "admin-posicoes", "admin-musicas", "admin-pessoas"];
       if (!validAdminViews.includes(session.view)) session.view = "batuqueiro";
       if (session.view.startsWith("admin") && !temAcessoAdmin(myProfile)) session.view = "batuqueiro";
 
@@ -313,6 +324,7 @@ function render() {
       else if (session.view === "admin-ensaios") html = viewAdminEnsaios();
       else if (session.view === "admin-relatorio") html = viewAdminRelatorio();
       else if (session.view === "admin-posicoes") html = viewAdminPosicoes();
+      else if (session.view === "admin-musicas") html = viewAdminMusicas();
       else if (session.view === "admin-pessoas") html = viewAdminPessoas();
     }
   } else {
@@ -731,6 +743,13 @@ function viewAdmin() {
 
     <div class="card">
       <div class="card-head">
+        <div><h2>Repertório / músicas</h2><p class="card-sub" style="margin-bottom:0">${musicasCache.length} música${musicasCache.length === 1 ? "" : "s"} cadastrada${musicasCache.length === 1 ? "" : "s"}</p></div>
+        <button class="btn-secondary btn-sm" id="btn-goto-musicas">Gerenciar músicas</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-head">
         <div><h2>Relatório geral de pagamentos</h2><p class="card-sub" style="margin-bottom:0">Quantas pessoas em cada status</p></div>
         <button class="btn-secondary btn-sm" id="btn-goto-relatorio">Ver relatório completo</button>
       </div>
@@ -767,20 +786,44 @@ function viewAdminEnsaios() {
       <p class="card-sub">Edite a data, veja quantas pessoas foram em cada ensaio e adicione novas datas</p>
       <div class="table-scroll">
         <table>
-          <thead><tr><th>Data</th><th>Situação</th><th>Presença</th><th></th></tr></thead>
+          <thead><tr><th>Data</th><th>Situação</th><th>Presença</th><th>Músicas ensaiadas</th><th></th></tr></thead>
           <tbody>
-            ${ensaiosCache.length === 0 ? `<tr><td colspan="4" class="hint">Nenhum ensaio cadastrado.</td></tr>` : ensaiosCache.map(e => {
+            ${ensaiosCache.length === 0 ? `<tr><td colspan="5" class="hint">Nenhum ensaio cadastrado.</td></tr>` : ensaiosCache.map(e => {
               const realizado = e.data <= hoje;
               const presentes = usersCache.filter(p => presencasCache[p.id] && presencasCache[p.id][e.id]).length;
+              const musicaIds = e.musicaIds || [];
+              const nomesMusicas = musicaIds.map(musicaNome).filter(Boolean);
+              const aberto = session.ensaioMusicasAberto === e.id;
+              const draftIds = aberto ? (session.ensaioMusicasDraft || []) : musicaIds;
               return `<tr>
                 <td><input type="date" class="ensaio-data-input" data-ensaio-id="${e.id}" value="${e.data}"></td>
                 <td><span class="badge ${realizado ? "badge-good" : "badge-warning"}">${realizado ? "Realizado" : "Agendado"}</span></td>
                 <td>${presentes}/${totalPessoas} presentes</td>
+                <td>
+                  <div>${nomesMusicas.length ? nomesMusicas.join(", ") : '<span class="hint">Nenhuma</span>'}</div>
+                  <button class="btn-ghost btn-sm" style="margin-top:4px;" data-toggle-musicas-ensaio="${e.id}">${aberto ? "Fechar" : "Editar músicas"}</button>
+                </td>
                 <td class="row-actions">
                   <button class="btn-secondary btn-sm" data-save-ensaio="${e.id}">Salvar</button>
                   <button class="btn-ghost btn-sm" data-remove-ensaio="${e.id}">Remover</button>
                 </td>
-              </tr>`;
+              </tr>
+              ${aberto ? `<tr><td colspan="5">
+                <div class="add-pay-form open">
+                  <p class="card-sub" style="margin:0 0 10px;">Marque as músicas ensaiadas em ${dateBR(e.data)}:</p>
+                  ${musicasCache.length === 0 ? `<p class="hint">Nenhuma música cadastrada ainda. Cadastre no repertório (painel admin → Repertório / músicas).</p>` : `
+                  <div style="display:flex; flex-direction:column; gap:8px;">
+                    ${ordenarMusicasAlfabetica(musicasCache).map(m => `
+                      <label style="display:flex; align-items:center; gap:6px; font-weight:400; font-size:13.5px;">
+                        <input type="checkbox" class="musica-ensaio-check" data-musica-id="${m.id}" ${draftIds.includes(m.id) ? "checked" : ""} style="width:auto;"> ${m.nome}
+                      </label>`).join("")}
+                  </div>`}
+                  <div style="display:flex; gap:8px; margin-top:14px;">
+                    <button class="btn-primary btn-sm" data-save-musicas-ensaio="${e.id}">Salvar músicas deste ensaio</button>
+                    <button class="btn-ghost btn-sm" data-cancel-musicas-ensaio="1">Cancelar</button>
+                  </div>
+                </div>
+              </td></tr>` : ""}`;
             }).join("")}
           </tbody>
         </table>
@@ -909,6 +952,36 @@ function viewAdminPosicoes() {
       </div>
       <button class="btn-primary btn-sm" id="btn-save-all-posicoes" style="margin-top:16px;">Salvar todas as posições</button>
       <p class="hint" style="margin-top:10px">"Outro" continua disponível no formulário de cadastro e nunca é isento automaticamente — só por isenção individual.</p>
+    </div>
+  </div>`;
+}
+
+function viewAdminMusicas() {
+  const u = myProfile;
+  // Mesmo padrão de rascunho local usado nas posições: evita perder edições
+  // digitadas se a tela for redesenhada por outro motivo antes de salvar.
+  if (!session.musicasDraft) {
+    session.musicasDraft = ordenarMusicasAlfabetica(musicasCache.map(m => ({ id: m.id, nome: m.nome })));
+  }
+  const draft = session.musicasDraft;
+  return `
+  ${headerBar(u)}
+  <div class="wrap">
+    <p><button class="link-btn" id="btn-back-admin6">← Voltar para o painel admin</button></p>
+    <div class="card">
+      <h2>Repertório / músicas</h2>
+      <p class="card-sub">Cadastre aqui as músicas do repertório, em ordem alfabética. Elas ficam disponíveis para marcar quais foram ensaiadas em cada data (painel admin → Ensaios). Depois de editar, clique em "Salvar todas as músicas" uma única vez.</p>
+      ${draft.length === 0 ? `<p class="hint">Nenhuma música cadastrada ainda.</p>` : ""}
+      ${draft.map(m => `
+        <div class="list-row">
+          <input type="text" class="musica-name-input" data-musica-id="${m.id}" value="${m.nome}" style="flex:1; max-width:320px;">
+          <button class="btn-ghost btn-sm" data-remove-musica="${m.id}">Remover</button>
+        </div>`).join("")}
+      <div style="display:flex; gap:8px; margin-top:14px; align-items:center; flex-wrap:wrap;">
+        <input type="text" id="new-musica-nome" placeholder="Nova música" style="flex:1; min-width:180px;">
+        <button class="btn-secondary btn-sm" id="btn-add-musica">Adicionar</button>
+      </div>
+      <button class="btn-primary btn-sm" id="btn-save-all-musicas" style="margin-top:16px;">Salvar todas as músicas</button>
     </div>
   </div>`;
 }
@@ -1078,6 +1151,8 @@ function wireEvents() {
   on("#btn-back-batuqueiro", "click", () => go("batuqueiro"));
   on("#btn-goto-posicoes", "click", () => { session.posicoesDraft = null; go("admin-posicoes"); });
   on("#btn-back-admin", "click", () => { session.posicoesDraft = null; go("admin"); });
+  on("#btn-goto-musicas", "click", () => { session.musicasDraft = null; go("admin-musicas"); });
+  on("#btn-back-admin6", "click", () => { session.musicasDraft = null; go("admin"); });
   on("#btn-goto-pessoas", "click", () => go("admin-pessoas"));
   on("#btn-back-admin2", "click", () => go("admin"));
   on("#btn-goto-precos", "click", () => go("admin-precos"));
@@ -1192,6 +1267,46 @@ function wireEvents() {
     catch (err) { alert(friendlyFirestoreError(err)); }
   });
 
+  // ADMIN — músicas ensaiadas em cada ensaio (abre um editor por ensaio;
+  // os checkboxes só mexem no rascunho local, sem render(), para não perder
+  // as marcações se algo mais causar um redesenho da tela antes de salvar).
+  onAll("[data-toggle-musicas-ensaio]", "click", el => {
+    const id = el.dataset.toggleMusicasEnsaio;
+    if (session.ensaioMusicasAberto === id) {
+      session.ensaioMusicasAberto = null;
+      session.ensaioMusicasDraft = null;
+    } else {
+      const e = ensaiosCache.find(x => x.id === id);
+      session.ensaioMusicasAberto = id;
+      session.ensaioMusicasDraft = [...((e && e.musicaIds) || [])];
+    }
+    render();
+  });
+  onAll(".musica-ensaio-check", "change", el => {
+    if (!session.ensaioMusicasDraft) session.ensaioMusicasDraft = [];
+    const id = el.dataset.musicaId;
+    if (el.checked) {
+      if (!session.ensaioMusicasDraft.includes(id)) session.ensaioMusicasDraft.push(id);
+    } else {
+      session.ensaioMusicasDraft = session.ensaioMusicasDraft.filter(x => x !== id);
+    }
+  });
+  on("[data-cancel-musicas-ensaio]", "click", () => {
+    session.ensaioMusicasAberto = null;
+    session.ensaioMusicasDraft = null;
+    render();
+  });
+  onAll("[data-save-musicas-ensaio]", "click", async el => {
+    const id = el.dataset.saveMusicasEnsaio;
+    const musicaIds = session.ensaioMusicasDraft || [];
+    try {
+      await updateDoc(doc(db, "ensaios", id), { musicaIds });
+      session.ensaioMusicasAberto = null;
+      session.ensaioMusicasDraft = null;
+      showToast("Músicas do ensaio salvas!");
+    } catch (err) { alert(friendlyFirestoreError(err)); }
+  });
+
   // ADMIN — valores/prazos
   on("#btn-save-precos", "click", async () => {
     const novo = { avista: {}, duasVezes: {}, tresVezes: {} };
@@ -1275,6 +1390,61 @@ function wireEvents() {
     try {
       await deleteDoc(doc(db, "posicoes", id));
       if (session.posicoesDraft) session.posicoesDraft = session.posicoesDraft.filter(p => p.id !== id);
+      render();
+    } catch (err) { alert(friendlyFirestoreError(err)); }
+  });
+
+  // ADMIN — repertório de músicas (mesmo padrão de rascunho local das posições)
+  onAll(".musica-name-input", "input", el => {
+    const row = session.musicasDraft && session.musicasDraft.find(m => m.id === el.dataset.musicaId);
+    if (row) row.nome = el.value;
+  });
+
+  on("#btn-add-musica", "click", async () => {
+    const nome = $("#new-musica-nome").value.trim();
+    if (!nome) return;
+    if (musicasCache.some(m => m.nome.toLowerCase() === nome.toLowerCase())) { alert("Essa música já está cadastrada."); return; }
+    try {
+      const ref = await addDoc(collection(db, "musicas"), { nome });
+      if (session.musicasDraft) {
+        session.musicasDraft = ordenarMusicasAlfabetica([...session.musicasDraft, { id: ref.id, nome }]);
+      }
+      render();
+    } catch (err) { alert(friendlyFirestoreError(err)); }
+  });
+
+  on("#btn-save-all-musicas", "click", async () => {
+    const draft = session.musicasDraft || [];
+    for (const row of draft) {
+      row.nome = (row.nome || "").trim();
+      if (!row.nome) { alert("O nome da música não pode ficar vazio."); return; }
+    }
+    const nomesMinusculos = draft.map(r => r.nome.toLowerCase());
+    const duplicado = nomesMinusculos.find((n, i) => nomesMinusculos.indexOf(n) !== i);
+    if (duplicado) { alert(`Existe mais de uma música chamada "${duplicado}". Ajuste os nomes antes de salvar.`); return; }
+    try {
+      const batch = writeBatch(db);
+      let algumaMudanca = false;
+      draft.forEach(row => {
+        const original = musicasCache.find(m => m.id === row.id);
+        if (!original || row.nome === original.nome) return;
+        algumaMudanca = true;
+        batch.update(doc(db, "musicas", row.id), { nome: row.nome });
+      });
+      if (!algumaMudanca) { showToast("Nenhuma alteração para salvar."); return; }
+      await batch.commit();
+      session.musicasDraft = null;
+      showToast("Músicas salvas!");
+    } catch (err) { alert(friendlyFirestoreError(err)); }
+  });
+
+  onAll("[data-remove-musica]", "click", async el => {
+    const id = el.dataset.removeMusica;
+    const emUso = ensaiosCache.filter(e => (e.musicaIds || []).includes(id)).length;
+    if (emUso > 0 && !confirm(`Essa música está marcada em ${emUso} ensaio(s). Remover mesmo assim? Ela deixa de aparecer nas listas, mas o histórico dos ensaios não é alterado automaticamente.`)) return;
+    try {
+      await deleteDoc(doc(db, "musicas", id));
+      if (session.musicasDraft) session.musicasDraft = session.musicasDraft.filter(m => m.id !== id);
       render();
     } catch (err) { alert(friendlyFirestoreError(err)); }
   });

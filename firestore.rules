@@ -6,9 +6,9 @@ rules_version = '2';
 // presença) e marcar presença de qualquer pessoa (pedido explícito do
 // organizador). Dados financeiros individuais (pix/data/valor de cada
 // pagamento) só podem ser lidos pelo próprio dono. Ações administrativas
-// (editar posições, ensaios, preços, conceder acesso admin ou isenção manual,
-// remover cadastros) exigem que o usuário tenha adminAccess = true no próprio
-// documento em /users.
+// (editar posições, ensaios, repertório de músicas, preços, conceder acesso
+// admin ou isenção manual, remover cadastros) exigem que o usuário tenha
+// adminAccess = true no próprio documento em /users.
 
 service cloud.firestore {
   match /databases/{database}/documents {
@@ -58,6 +58,12 @@ service cloud.firestore {
 
     // ---------- datas de ensaio ----------
     match /ensaios/{id} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
+
+    // ---------- repertório de músicas ----------
+    match /musicas/{id} {
       allow read: if isSignedIn();
       allow write: if isAdmin();
     }

@@ -3,7 +3,8 @@
 // edição de "meus dados", seed de posições/preços padrão, escolha de plano de
 // pagamento + registro de pagamento (increment de totalPago via writeBatch),
 // isenção automática por posição, presença marcada por OUTRO usuário logado,
-// e todas as subviews do admin (posições, preços, ensaios, relatório, pessoas +
+// e todas as subviews do admin (posições, preços, ensaios, repertório de
+// músicas + marcar músicas ensaiadas em cada ensaio, relatório, pessoas +
 // conceder acesso admin a outra pessoa).
 import { chromium } from 'playwright';
 
@@ -226,6 +227,77 @@ async function main() {
   ok('3 ensaios cadastrados', (html.match(/ensaio-data-input/g) || []).length === 3);
   ok('Ensaio passado marcado como Realizado', html.includes('Realizado'));
   ok('Ensaios futuros marcados como Agendado', html.includes('Agendado'));
+  await page.click('#btn-back-admin4');
+  await page.waitForTimeout(150);
+
+  console.log('\n== 8b. Painel admin — Repertório de músicas ==');
+  await page.click('#btn-goto-musicas');
+  await page.waitForTimeout(150);
+  html = await appHtml(page);
+  ok('Sem músicas cadastradas ainda, mostra aviso', html.includes('Nenhuma música cadastrada ainda.'));
+
+  await page.fill('#new-musica-nome', 'Ventania');
+  await page.click('#btn-add-musica');
+  await page.waitForTimeout(150);
+  await page.fill('#new-musica-nome', 'Aquarela');
+  await page.click('#btn-add-musica');
+  await page.waitForTimeout(150);
+  html = await appHtml(page);
+  ok('Duas músicas cadastradas (Ventania, Aquarela)', html.includes('value="Ventania"') && html.includes('value="Aquarela"'));
+
+  const nomesMusicasNaTela = await page.$$eval('.musica-name-input', els => els.map(e => e.value));
+  ok('Músicas aparecem em ordem alfabética (Aquarela antes de Ventania)', nomesMusicasNaTela.indexOf('Aquarela') < nomesMusicasNaTela.indexOf('Ventania'));
+
+  console.log('\n== 8b-ii. Edição de música não salva sobrevive a um re-render em segundo plano ==');
+  const musicaInputs = await page.$$('input.musica-name-input');
+  await musicaInputs[0].fill('Aquarela (Editada)');
+  await page.evaluate(async () => {
+    const fb = await import('./firebase-init.mock.js');
+    const ref = await fb.addDoc(fb.collection(fb.db, 'ensaios'), { data: '2030-02-02' });
+    await fb.deleteDoc(fb.doc(fb.db, 'ensaios', ref.id)); // só para disparar o onSnapshot
+  });
+  await page.waitForTimeout(200);
+  const valoresMusicasAposRerender = await page.$$eval('input.musica-name-input', els => els.map(e => e.value));
+  ok('Edição de música não salva sobrevive a um re-render em segundo plano', valoresMusicasAposRerender.includes('Aquarela (Editada)'));
+
+  await page.click('#btn-save-all-musicas');
+  await page.waitForTimeout(250);
+  html = await appHtml(page);
+  ok('Edição da música foi salva', html.includes('value="Aquarela (Editada)"'));
+
+  await page.click('#btn-back-admin6');
+  await page.waitForTimeout(150);
+  html = await appHtml(page);
+  ok('Card do painel admin mostra "2 músicas cadastradas"', html.includes('2 músicas cadastradas'));
+
+  console.log('\n== 8c. Painel admin — Marcar músicas ensaiadas em um ensaio ==');
+  await page.click('#btn-goto-ensaios');
+  await page.waitForTimeout(150);
+  html = await appHtml(page);
+  ok('Ensaios mostram "Nenhuma" música marcada inicialmente', html.includes('Nenhuma'));
+
+  await page.click('[data-toggle-musicas-ensaio]');
+  await page.waitForTimeout(150);
+  html = await appHtml(page);
+  ok('Editor de músicas do ensaio abre com as opções cadastradas', html.includes('Aquarela (Editada)') && html.includes('Ventania'));
+
+  await page.locator('label:has-text("Ventania") input.musica-ensaio-check').check();
+  await page.waitForTimeout(100);
+
+  await page.evaluate(async () => {
+    const fb = await import('./firebase-init.mock.js');
+    const ref = await fb.addDoc(fb.collection(fb.db, 'ensaios'), { data: '2030-03-03' });
+    await fb.deleteDoc(fb.doc(fb.db, 'ensaios', ref.id));
+  });
+  await page.waitForTimeout(200);
+  const marcado = await page.locator('label:has-text("Ventania") input.musica-ensaio-check').first().isChecked();
+  ok('Marcação de música (ainda não salva) sobrevive a um re-render em segundo plano', marcado);
+
+  await page.click('[data-save-musicas-ensaio]');
+  await page.waitForTimeout(250);
+  html = await appHtml(page);
+  ok('Música "Ventania" aparece marcada como ensaiada na linha do ensaio', html.includes('Ventania'));
+
   await page.click('#btn-back-admin4');
   await page.waitForTimeout(150);
 

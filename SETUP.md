@@ -130,4 +130,6 @@ Se você tiver o Node.js instalado, também há um script de teste automatizado 
 
 **Como adiciono mais um organizador?** Painel admin → Cadastros → editar a pessoa → marcar "Acesso ao painel admin". Ela continua aparecendo normalmente nas listas de presença e pagamento, só ganha também a visão de admin.
 
+**Como registro quais músicas foram ensaiadas?** Painel admin → "Repertório / músicas" cadastra o repertório (nome de cada música, em ordem alfabética). Depois, em Painel admin → Ensaios, cada data tem um botão "Editar músicas" onde você marca quais músicas dessa lista foram tocadas naquele ensaio.
+
 **Por que o campo de calendário pode mostrar mm/dd/aaaa em vez de dd/mm/aaaa?** Todo texto de data que o próprio site escreve (datas de nascimento, prazos de parcela, data de pagamento, data de ensaio) está sempre em dd/mm/aaaa. Só o "calendário" clicável (o ícone 📅 dentro do campo, ao editar) é um componente do navegador da pessoa, não do site — a grande maioria dos navegadores em português já mostra esse seletor em dd/mm/aaaa, mas em algum navegador configurado em outro idioma ele pode aparecer diferente. Isso não afeta o valor salvo, só a aparência do seletor.
