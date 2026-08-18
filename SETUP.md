@@ -124,7 +124,7 @@ Se você tiver o Node.js instalado, também há um script de teste automatizado 
 
 **Uma pessoa pode ver os pagamentos de outra?** Não. Cada pessoa só vê os detalhes (pix, data, valor) dos próprios pagamentos. O admin vê o total pago de cada pessoa (para o relatório geral), mas não os comprovantes individuais de quem não é ele mesmo.
 
-**Qualquer pessoa logada pode mesmo marcar presença de qualquer outra?** Sim, esse foi um pedido explícito — a tabela de presença funciona como uma "lista de chamada" coletiva, qualquer batuqueiro pode marcar SIM/NÃO para si e para os colegas.
+**Quem pode marcar presença nos ensaios?** Só admins e quem recebeu esse acesso individualmente. Todo mundo vê a tabela de presença de todos os ensaios (como uma "lista de chamada" coletiva, só para consulta), mas só marca SIM/NÃO quem tiver permissão. Para dar esse acesso a alguém que não é admin: painel admin → Cadastros → editar a pessoa → marcar "Pode marcar presença nos ensaios (de qualquer batuqueiro) sem ser admin".
 
 **E se eu esquecer minha senha?** Na tela de login há um link "Esqueci minha senha", que envia um e-mail de redefinição pelo próprio Firebase.
 

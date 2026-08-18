@@ -420,14 +420,47 @@ async function main() {
   await page.selectOption('#presenca-filtro-posicao', 'todas');
   await page.waitForTimeout(100);
 
-  console.log('\n== 14. Duda vê que Ana marcou presença dela (dado colaborativo, tempo real) ==');
+  console.log('\n== 14. Duda vê que Ana marcou presença dela — mas só como leitura (Duda não tem acesso de edição) ==');
   await logout(page);
   await login(page, 'duda@example.com');
   html = await appHtml(page);
+  ok('Duda NÃO vê nenhum toggle clicável (sem acesso, só visualização)', !html.includes('class="toggle'));
   const toggleDuda = await page.$(`.toggle[data-uid="${dudaId}"]`);
-  const cls2 = toggleDuda ? await toggleDuda.getAttribute('class') : '';
-  ok('Presença marcada por Ana está visível para a própria Duda', cls2.includes('on'));
+  ok('Nenhum elemento .toggle é renderizado para Duda', toggleDuda === null);
+  ok('Presença marcada por Ana aparece para Duda como badge "Presente" (somente leitura)', html.includes('badge-good">Presente<'));
+  ok('Texto do card avisa que é só visualização, sem instrução de clicar', html.includes('Veja a presença de todos os batuqueiros'));
 
+  await logout(page);
+
+  // ============================================================
+  console.log('\n== 15. Admin concede acesso à edição de presença para alguém que NÃO é admin (Carla) ==');
+  await login(page, 'carla@example.com');
+  html = await appHtml(page);
+  ok('Carla (sem nenhum acesso especial) também só visualiza a presença, sem toggle', !html.includes('class="toggle'));
+  await logout(page);
+
+  await login(page, 'bruno@example.com');
+  await page.click('#btn-goto-admin');
+  await page.click('#btn-goto-pessoas');
+  await page.waitForTimeout(150);
+  const carlaId = Object.keys(users).find(id => users[id].email === 'carla@example.com');
+  await page.click(`[data-edit-user="${carlaId}"]`);
+  await page.waitForTimeout(150);
+  await page.check(`#ae-presencaaccess-${carlaId}`);
+  await page.click(`[data-admin-edit-form="${carlaId}"] button[type=submit]`);
+  await page.waitForTimeout(250);
+  html = await appHtml(page);
+  ok('Carla aparece na lista de cadastros com o badge "Edita presença"', html.includes('Edita presença'));
+  await logout(page);
+
+  await login(page, 'carla@example.com');
+  html = await appHtml(page);
+  ok('Agora Carla (não-admin, com presencaAccess) vê os botões SIM/NÃO', html.includes('class="toggle'));
+  const toggleCarlaParaDuda = page.locator(`.toggle[data-uid="${dudaId}"]`).first();
+  await toggleCarlaParaDuda.click();
+  await page.waitForTimeout(300);
+  const clsCarla = await page.locator(`.toggle[data-uid="${dudaId}"]`).first().getAttribute('class');
+  ok('Carla (não-admin, com acesso concedido) consegue alterar a presença da Duda', clsCarla.includes('off'));
   await logout(page);
 
   console.log(`\n=== RESULTADO: ${pass} passaram, ${fail} falharam ===`);

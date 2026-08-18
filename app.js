@@ -207,6 +207,8 @@ function lerDataNascimento(idPrefix) {
 }
 
 function temAcessoAdmin(u) { return !!(u && u.adminAccess); }
+/* Admins sempre podem editar presença; além deles, só quem recebeu o acesso individual (presencaAccess). */
+function temAcessoPresenca(u) { return !!(u && (u.adminAccess || u.presencaAccess)); }
 function posicaoInfo(nome) { return posicoesCache.find(p => p.nome === nome); }
 function isIsento(u) {
   const info = posicaoInfo(u.posicao);
@@ -509,7 +511,7 @@ function viewBatuqueiro() {
     <!-- BOX 3: PRESENÇA EM ENSAIOS -->
     <div class="card">
       <div class="card-head">
-        <div><h2>Presença em ensaios</h2><p class="card-sub" style="margin-bottom:0">Clique em SIM/NÃO para marcar a presença de qualquer batuqueiro em cada ensaio</p></div>
+        <div><h2>Presença em ensaios</h2><p class="card-sub" style="margin-bottom:0">${temAcessoPresenca(u) ? "Clique em SIM/NÃO para marcar a presença de qualquer batuqueiro em cada ensaio" : "Veja a presença de todos os batuqueiros em cada ensaio"}</p></div>
       </div>
       <div class="filter-row">
         <div><label>Filtrar por posição</label>
@@ -541,6 +543,7 @@ function viewBatuqueiro() {
                 <td>${p.posicao}</td>
                 ${ensaios.map(e => {
                   const on = !!(presencasCache[p.id] && presencasCache[p.id][e.id]);
+                  if (!temAcessoPresenca(u)) return `<td><span class="badge ${on ? "badge-good" : "badge-critical"}">${on ? "Presente" : "Ausente"}</span></td>`;
                   return `<td><div class="toggle ${on ? "on" : "off"}" data-uid="${p.id}" data-eid="${e.id}"><span class="yes">SIM</span><span class="no">NÃO</span></div></td>`;
                 }).join("")}
               </tr>`).join("") || `<tr><td colspan="${2 + ensaios.length}" class="hint">Ninguém encontrado com esse filtro.</td></tr>`}
@@ -1034,7 +1037,7 @@ function viewAdminPessoas() {
       </div>
       ${lista.length === 0 ? '<div class="hint">Nenhuma pessoa encontrada com esse filtro.</div>' : lista.map(p => `
         <div class="list-row">
-          <span class="grow"><b>${fullName(p)}</b> <span class="muted-sm">— ${p.posicao} · ${p.email} · camisa ${p.camisa} · toca 2027: ${p.vaiTocar}${isIsento(p) ? ` · <span class="badge badge-isenta">Isento — ${isentoMotivo(p)}</span>` : ""}${p.adminAccess ? ` · <span class="badge badge-good">Acesso admin</span>` : ""}</span></span>
+          <span class="grow"><b>${fullName(p)}</b> <span class="muted-sm">— ${p.posicao} · ${p.email} · camisa ${p.camisa} · toca 2027: ${p.vaiTocar}${isIsento(p) ? ` · <span class="badge badge-isenta">Isento — ${isentoMotivo(p)}</span>` : ""}${p.adminAccess ? ` · <span class="badge badge-good">Acesso admin</span>` : ""}${!p.adminAccess && p.presencaAccess ? ` · <span class="badge badge-good">Edita presença</span>` : ""}</span></span>
           <button class="btn-secondary btn-sm" data-edit-user="${p.id}">Editar</button>
           <button class="btn-danger btn-sm" data-remove-user="${p.id}">Remover</button>
         </div>
@@ -1076,6 +1079,13 @@ function renderAdminEditUserForm(p) {
           <input type="checkbox" id="ae-adminaccess-${p.id}" ${p.adminAccess ? "checked" : ""} style="width:auto;">
           Acesso ao painel admin (co-organizador — continua aparecendo normalmente na presença e nos pagamentos)
         </label>
+      </div>
+      <div class="field">
+        <label style="display:flex; align-items:center; gap:8px; font-weight:400; cursor:pointer;">
+          <input type="checkbox" id="ae-presencaaccess-${p.id}" ${p.presencaAccess ? "checked" : ""} style="width:auto;">
+          Pode marcar presença nos ensaios (de qualquer batuqueiro) sem ser admin
+        </label>
+        <p class="hint" style="margin-top:4px;">Quem tem acesso ao painel admin já pode marcar presença automaticamente, não precisa marcar aqui também.</p>
       </div>
       <button class="btn-primary btn-sm" type="submit">Salvar</button>
       <button class="btn-secondary btn-sm" type="button" data-cancel-admin-edit="${p.id}">Cancelar</button>
@@ -1136,7 +1146,7 @@ function wireEvents() {
       nome: $("#c-nome").value.trim(), sobrenome: $("#c-sobrenome").value.trim(),
       celular: $("#c-celular").value.trim(), dataNascimento,
       vaiTocar, posicao, posicaoOutro: $("#c-posicao-outro") ? $("#c-posicao-outro").value.trim() : "",
-      camisa, isentoManual: false, formaPagamento: null, adminAccess: false, totalPago: 0,
+      camisa, isentoManual: false, formaPagamento: null, adminAccess: false, presencaAccess: false, totalPago: 0,
       createdAt: serverTimestamp(),
     };
     session.busy.register2 = true; render();
@@ -1253,8 +1263,11 @@ function wireEvents() {
   on("#presenca-filtro-posicao", "change", e => { session.presencaFiltro = e.target.value; render(); });
   on("#presenca-filtro-ensaio", "change", e => { session.presencaEnsaioFiltro = e.target.value; render(); });
 
-  // BATUQUEIRO — presença (qualquer pessoa pode alterar qualquer célula)
+  // BATUQUEIRO — presença (só quem tem acesso — admin ou presencaAccess — pode alterar; os
+  // demais só veem a tabela, o próprio HTML nem gera o toggle clicável para eles, mas o
+  // guard abaixo é uma segunda camada de proteção do lado do cliente).
   onAll(".toggle", "click", async el => {
+    if (!temAcessoPresenca(myProfile)) return;
     const targetUid = el.dataset.uid, eid = el.dataset.eid;
     const atual = !!(presencasCache[targetUid] && presencasCache[targetUid][eid]);
     try {
@@ -1516,6 +1529,7 @@ function wireEvents() {
         camisa: $(`#ae-camisa-${id}`).value,
         isentoManual: $(`#ae-isento-${id}`).checked,
         adminAccess: $(`#ae-adminaccess-${id}`).checked,
+        presencaAccess: $(`#ae-presencaaccess-${id}`).checked,
       };
       try { await updateDoc(doc(db, "users", id), patch); session.adminEditingUser = null; render(); }
       catch (err) { alert(friendlyFirestoreError(err)); }
