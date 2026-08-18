@@ -1,0 +1,23 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>[TESTE] Carnaval do Fogo e Paixão</title>
+<link rel="stylesheet" href="styles.css">
+<script type="importmap">
+{
+  "imports": {
+    "./firebase-init.js": "./firebase-init.mock.js"
+  }
+}
+</script>
+</head>
+<body>
+<div style="position:fixed; top:0; left:0; right:0; background:#111; color:#fff; text-align:center; font:12px monospace; padding:4px; z-index:999;">
+  MODO TESTE — usando Firebase simulado (firebase-init.mock.js), nenhum dado real é enviado
+</div>
+<div id="app" style="margin-top:22px;"></div>
+<script type="module" src="app.js"></script>
+</body>
+</html>

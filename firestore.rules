@@ -1,0 +1,94 @@
+rules_version = '2';
+
+// Regras de segurança do Firestore para o site do Carnaval do Fogo e Paixão.
+// Modelo de confiança: é um grupo pequeno e conhecido (a bateria). Qualquer
+// pessoa logada pode ver o nome/posição de todos (necessário para a tabela de
+// presença) e marcar presença de qualquer pessoa (pedido explícito do
+// organizador). Dados financeiros individuais (pix/data/valor de cada
+// pagamento) só podem ser lidos pelo próprio dono. Ações administrativas
+// (editar posições, ensaios, preços, conceder acesso admin ou isenção manual,
+// remover cadastros) exigem que o usuário tenha adminAccess = true no próprio
+// documento em /users.
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(uid) {
+      return isSignedIn() && request.auth.uid == uid;
+    }
+
+    // true se o usuário logado tem acesso ao painel admin (co-organizador ou organizador principal)
+    function isAdmin() {
+      return isSignedIn()
+        && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.adminAccess == true;
+    }
+
+    // ---------- cadastro de cada batuqueiro ----------
+    match /users/{uid} {
+      allow read: if isSignedIn();
+
+      // no cadastro inicial, a pessoa só pode criar o PRÓPRIO documento,
+      // e não pode nascer com privilégios (isso evita que alguém se
+      // autopromova a admin ou se autoconceda isenção no cadastro).
+      allow create: if isOwner(uid)
+        && request.resource.data.adminAccess == false
+        && request.resource.data.isentoManual == false
+        && request.resource.data.totalPago == 0;
+
+      // o dono pode editar os próprios dados (inclusive registrar
+      // pagamentos, que atualizam totalPago), mas não pode mudar
+      // adminAccess nem isentoManual por conta própria — só um admin pode.
+      allow update: if isAdmin()
+        || (isOwner(uid)
+            && request.resource.data.adminAccess == resource.data.adminAccess
+            && request.resource.data.isentoManual == resource.data.isentoManual);
+
+      allow delete: if isAdmin();
+    }
+
+    // ---------- lista de posições/instrumentos (isenção automática) ----------
+    match /posicoes/{id} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
+
+    // ---------- datas de ensaio ----------
+    match /ensaios/{id} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
+
+    // ---------- valores/prazos da anuidade (doc único "precos") ----------
+    match /config/{id} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
+
+    // ---------- pagamentos individuais (pix/data/valor) ----------
+    // só o próprio dono lê os detalhes; o admin usa o total já somado em
+    // users/{uid}.totalPago para o relatório, então não precisa ler aqui.
+    match /pagamentos/{id} {
+      allow read: if isSignedIn() && resource.data.uid == request.auth.uid;
+      allow create: if isSignedIn()
+        && request.resource.data.uid == request.auth.uid
+        && request.resource.data.valor is number
+        && request.resource.data.valor > 0;
+      allow update, delete: if false; // histórico de pagamento não é editável nem removível
+    }
+
+    // ---------- presença nos ensaios ----------
+    // qualquer pessoa logada pode ver e marcar a presença de qualquer outra
+    // pessoa — foi um pedido explícito (registro colaborativo de chamada).
+    match /presencas/{id} {
+      allow read: if isSignedIn();
+      allow create, update: if isSignedIn()
+        && request.resource.data.updatedBy == request.auth.uid
+        && request.resource.data.presente is bool;
+      allow delete: if false;
+    }
+  }
+}
