@@ -20,6 +20,16 @@ async function appHtml(page) {
   return page.evaluate(() => document.getElementById('app').innerHTML);
 }
 
+// Data de nascimento agora é 3 campos separados (Dia / Mês / Ano) em vez de um
+// <input type="date"> nativo — evita o mesmo bug de troca dia/mês que o Pedro
+// encontrou em produção. iso no formato "aaaa-mm-dd".
+async function fillDataNascimento(page, idPrefix, iso) {
+  const [ano, mes, dia] = iso.split('-');
+  await page.selectOption(`#${idPrefix}-dia`, dia);
+  await page.selectOption(`#${idPrefix}-mes`, mes);
+  await page.fill(`#${idPrefix}-ano`, ano);
+}
+
 async function registerAndVerify(page, { email, nome, sobrenome, posicao, posicaoOutro, camisa, dataNascimento = '1996-05-10', celular = '(21) 90000-0000' }) {
   await page.click('#btn-goto-register');
   await page.waitForSelector('#form-register1');
@@ -31,7 +41,7 @@ async function registerAndVerify(page, { email, nome, sobrenome, posicao, posica
   await page.fill('#c-nome', nome);
   await page.fill('#c-sobrenome', sobrenome);
   await page.fill('#c-celular', celular);
-  await page.fill('#c-datanasc', dataNascimento);
+  await fillDataNascimento(page, 'c-datanasc', dataNascimento);
   await page.click('#radio-vaitocar .radio-pill[data-val="Sim"]');
   await page.selectOption('#c-posicao', posicao);
   if (posicao === 'Outro' && posicaoOutro) await page.fill('#c-posicao-outro', posicaoOutro);
@@ -106,11 +116,25 @@ async function main() {
 
   console.log('\n== 5. Editar meus dados ==');
   await page.click('#btn-edit-data');
-  await page.fill('#e-datanasc', '1990-01-20');
+  await fillDataNascimento(page, 'e-datanasc', '1990-01-20');
   await page.click('#form-edit-mydata button[type=submit]');
   await page.waitForTimeout(250);
   html = await appHtml(page);
   ok('Data de nascimento atualizada (20/01/1990)', html.includes('20/01/1990'));
+
+  // Regressão do bug relatado: com dia=05 e mês=novembro (ambos números
+  // válidos como dia OU mês, o cenário exato onde um <input type="date">
+  // nativo pode trocar dia/mês sem avisar), a idade tem que bater com a
+  // data REAL (5 de novembro), não com uma troca acidental (11 de maio
+  // daria uma idade diferente). "Hoje" neste ambiente de teste é fixo,
+  // então o valor exato (45) é determinístico.
+  await page.click('#btn-edit-data');
+  await fillDataNascimento(page, 'e-datanasc', '1980-11-05');
+  await page.click('#form-edit-mydata button[type=submit]');
+  await page.waitForTimeout(250);
+  html = await appHtml(page);
+  ok('Dia/mês não trocam: 05/11/1980 fica 05/11/1980 (não 11/05)', html.includes('05/11/1980'));
+  ok('Idade calculada bate com a data real, não com uma troca dia/mês', html.includes('(45 anos)'));
 
   await logout(page);
 

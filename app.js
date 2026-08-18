@@ -160,6 +160,34 @@ function calcIdade(dataNascISO) {
   return idade;
 }
 
+/* ============================================================
+   DATA DE NASCIMENTO — dia/mês/ano em três campos separados.
+   Um <input type="date"> nativo mostra os campos na ordem do idioma
+   do NAVEGADOR (não da página), e em muitos navegadores isso é
+   mês/dia/ano mesmo com o site em português. Quem digita pensando em
+   dia/mês (padrão brasileiro) pode acabar salvando uma data diferente
+   da pretendida sem perceber — por isso aqui usamos três seletores
+   nomeados (Dia / Mês por extenso / Ano), sem nenhuma ambiguidade.
+   ============================================================ */
+const MESES = ["Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho", "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"];
+function dataNascimentoFieldsHtml(idPrefix, isoValue) {
+  const [anoAtual, mesAtual, diaAtual] = (isoValue || "").split("-");
+  const diaOpts = Array.from({ length: 31 }, (_, i) => i + 1)
+    .map(n => { const v = String(n).padStart(2, "0"); return `<option value="${v}" ${diaAtual === v ? "selected" : ""}>${n}</option>`; }).join("");
+  const mesOpts = MESES.map((nome, i) => { const v = String(i + 1).padStart(2, "0"); return `<option value="${v}" ${mesAtual === v ? "selected" : ""}>${nome}</option>`; }).join("");
+  return `
+    <div class="grid-3">
+      <div class="field"><label>Dia</label><select id="${idPrefix}-dia"><option value="">Dia</option>${diaOpts}</select></div>
+      <div class="field"><label>Mês</label><select id="${idPrefix}-mes"><option value="">Mês</option>${mesOpts}</select></div>
+      <div class="field"><label>Ano</label><input type="number" id="${idPrefix}-ano" placeholder="aaaa" value="${anoAtual || ""}" min="1920" max="${new Date().getFullYear()}"></div>
+    </div>`;
+}
+function lerDataNascimento(idPrefix) {
+  const dia = $(`#${idPrefix}-dia`)?.value, mes = $(`#${idPrefix}-mes`)?.value, ano = $(`#${idPrefix}-ano`)?.value;
+  if (!dia || !mes || !ano) return "";
+  return `${ano}-${mes}-${dia}`;
+}
+
 function temAcessoAdmin(u) { return !!(u && u.adminAccess); }
 function posicaoInfo(nome) { return posicoesCache.find(p => p.nome === nome); }
 function isIsento(u) {
@@ -371,9 +399,10 @@ function viewRegister2() {
           <div class="field"><label>Nome</label><input type="text" id="c-nome" required value="${d.nome || ""}"></div>
           <div class="field"><label>Sobrenome</label><input type="text" id="c-sobrenome" required value="${d.sobrenome || ""}"></div>
         </div>
-        <div class="grid-2">
-          <div class="field"><label>Celular</label><input type="tel" id="c-celular" required placeholder="(21) 90000-0000" value="${d.celular || ""}"></div>
-          <div class="field"><label>Data de nascimento</label><input type="date" id="c-datanasc" required value="${d.dataNascimento || ""}"></div>
+        <div class="field"><label>Celular</label><input type="tel" id="c-celular" required placeholder="(21) 90000-0000" value="${d.celular || ""}"></div>
+        <div class="field">
+          <label>Data de nascimento</label>
+          ${dataNascimentoFieldsHtml("c-datanasc", d.dataNascimento)}
         </div>
         <div class="field">
           <label>Vai tocar no Carnaval 2027?</label>
@@ -581,9 +610,10 @@ function renderEditMyData(u) {
         <div class="field"><label>Nome</label><input type="text" id="e-nome" value="${u.nome}" required></div>
         <div class="field"><label>Sobrenome</label><input type="text" id="e-sobrenome" value="${u.sobrenome}" required></div>
       </div>
-      <div class="grid-2">
-        <div class="field"><label>Celular</label><input type="tel" id="e-celular" value="${u.celular}" required></div>
-        <div class="field"><label>Data de nascimento</label><input type="date" id="e-datanasc" value="${u.dataNascimento || ""}" required></div>
+      <div class="field"><label>Celular</label><input type="tel" id="e-celular" value="${u.celular}" required></div>
+      <div class="field">
+        <label>Data de nascimento</label>
+        ${dataNascimentoFieldsHtml("e-datanasc", u.dataNascimento)}
       </div>
       <div class="field">
         <label>Vai tocar no Carnaval 2027?</label>
@@ -908,9 +938,10 @@ function renderAdminEditUserForm(p) {
         <div class="field"><label>Nome</label><input type="text" id="ae-nome-${p.id}" value="${p.nome}"></div>
         <div class="field"><label>Sobrenome</label><input type="text" id="ae-sobrenome-${p.id}" value="${p.sobrenome}"></div>
       </div>
-      <div class="grid-2">
-        <div class="field"><label>Celular</label><input type="tel" id="ae-celular-${p.id}" value="${p.celular}"></div>
-        <div class="field"><label>Data de nascimento</label><input type="date" id="ae-datanasc-${p.id}" value="${p.dataNascimento || ""}"></div>
+      <div class="field"><label>Celular</label><input type="tel" id="ae-celular-${p.id}" value="${p.celular}"></div>
+      <div class="field">
+        <label>Data de nascimento</label>
+        ${dataNascimentoFieldsHtml(`ae-datanasc-${p.id}`, p.dataNascimento)}
       </div>
       <div class="field">
         <label>Posição</label>
@@ -981,12 +1012,14 @@ function wireEvents() {
     e.preventDefault();
     const vaiTocar = $("#radio-vaitocar .radio-pill.active")?.dataset.val;
     const camisa = $("#radio-camisa .radio-pill.active")?.dataset.val;
+    const dataNascimento = lerDataNascimento("c-datanasc");
     if (!vaiTocar || !camisa) { session.errors.register2 = "Preencha se vai tocar em 2027 e o tamanho da camisa."; render(); return; }
+    if (!dataNascimento) { session.errors.register2 = "Preencha dia, mês e ano de nascimento."; render(); return; }
     const posicao = $("#c-posicao").value;
     const profileData = {
       email: fbUser.email,
       nome: $("#c-nome").value.trim(), sobrenome: $("#c-sobrenome").value.trim(),
-      celular: $("#c-celular").value.trim(), dataNascimento: $("#c-datanasc").value,
+      celular: $("#c-celular").value.trim(), dataNascimento,
       vaiTocar, posicao, posicaoOutro: $("#c-posicao-outro") ? $("#c-posicao-outro").value.trim() : "",
       camisa, isentoManual: false, formaPagamento: null, adminAccess: false, totalPago: 0,
       createdAt: serverTimestamp(),
@@ -1059,7 +1092,7 @@ function wireEvents() {
     e.preventDefault();
     const patch = {
       nome: $("#e-nome").value.trim(), sobrenome: $("#e-sobrenome").value.trim(),
-      celular: $("#e-celular").value.trim(), dataNascimento: $("#e-datanasc").value,
+      celular: $("#e-celular").value.trim(), dataNascimento: lerDataNascimento("e-datanasc") || myProfile.dataNascimento,
       vaiTocar: $("#edit-radio-vaitocar .radio-pill.active")?.dataset.val || myProfile.vaiTocar,
       posicao: $("#e-posicao").value,
       posicaoOutro: $("#e-posicao-outro") ? $("#e-posicao-outro").value.trim() : "",
@@ -1248,11 +1281,12 @@ function wireEvents() {
     form.addEventListener("submit", async e => {
       e.preventDefault();
       const id = form.dataset.adminEditForm;
+      const original = usersCache.find(u => u.id === id);
       const patch = {
         nome: $(`#ae-nome-${id}`).value.trim(),
         sobrenome: $(`#ae-sobrenome-${id}`).value.trim(),
         celular: $(`#ae-celular-${id}`).value.trim(),
-        dataNascimento: $(`#ae-datanasc-${id}`).value,
+        dataNascimento: lerDataNascimento(`ae-datanasc-${id}`) || (original && original.dataNascimento) || "",
         posicao: $(`#ae-posicao-${id}`).value,
         camisa: $(`#ae-camisa-${id}`).value,
         isentoManual: $(`#ae-isento-${id}`).checked,
