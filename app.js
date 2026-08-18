@@ -1,7 +1,7 @@
 import {
   auth, db,
   createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut,
-  onAuthStateChanged, sendEmailVerification, sendPasswordResetEmail,
+  onAuthStateChanged, sendPasswordResetEmail,
   collection, doc, setDoc, updateDoc, deleteDoc, addDoc, getDoc, getDocs,
   onSnapshot, query, where, writeBatch, increment, serverTimestamp,
 } from './firebase-init.js';
@@ -60,9 +60,19 @@ const session = {
   relatorioFiltroStatus: "todos",
   relatorioFiltroPosicao: "todas",
   adminEditingUser: null,
+  posicoesDraft: null,
   busy: {},
   toast: null,
 };
+
+/* Ordena posições em ordem alfabética (ignorando maiúsculas/acentos). */
+function ordenarPosicoesAlfabetica(lista) {
+  return [...lista].sort((a, b) => (a.nome || "").localeCompare(b.nome || "", "pt-BR", { sensitivity: "base" }));
+}
+/* Nomes de posição únicos (para droplists de filtro), em ordem alfabética. */
+function posicoesUnicasOrdenadas(pessoas) {
+  return [...new Set(pessoas.map(p => p.posicao))].sort((a, b) => (a || "").localeCompare(b || "", "pt-BR", { sensitivity: "base" }));
+}
 
 /* ============================================================
    BOOT — autenticação dirige tudo
@@ -139,7 +149,7 @@ const currency = v => (v || 0).toLocaleString("pt-BR", { style: "currency", curr
 const dateBR = iso => { if (!iso) return "—"; const [y, m, d] = iso.split("-"); return `${d}/${m}/${y}`; };
 const fullName = u => `${u.nome || ""} ${u.sobrenome || ""}`.trim();
 const hojeISO = () => new Date().toISOString().slice(0, 10);
-const ensaioLabel = e => { if (!e.data) return "—"; const [y, m, d] = e.data.split("-"); return `${d}/${m}`; };
+const ensaioLabel = e => dateBR(e.data);
 function calcIdade(dataNascISO) {
   if (!dataNascISO) return null;
   const [y, m, d] = dataNascISO.split("-").map(Number);
@@ -163,7 +173,7 @@ function isentoMotivo(u) {
   return "";
 }
 function posicaoOptionsHtml(selected) {
-  let opts = posicoesCache.map(p => `<option value="${p.nome}" ${p.nome === selected ? "selected" : ""}>${p.nome}</option>`).join("");
+  let opts = ordenarPosicoesAlfabetica(posicoesCache).map(p => `<option value="${p.nome}" ${p.nome === selected ? "selected" : ""}>${p.nome}</option>`).join("");
   opts += `<option value="Outro" ${selected === "Outro" ? "selected" : ""}>Outro</option>`;
   if (selected && selected !== "Outro" && !posicoesCache.some(p => p.nome === selected)) {
     opts = `<option value="${selected}" selected>${selected} (removida da lista)</option>` + opts;
@@ -264,8 +274,6 @@ function render() {
     } else if (!myProfile) {
       if (!session.draftUser) session.draftUser = { email: fbUser.email };
       html = viewRegister2();
-    } else if (!fbUser.emailVerified) {
-      html = viewVerifyEmail();
     } else {
       const validAdminViews = ["batuqueiro", "admin", "admin-precos", "admin-ensaios", "admin-relatorio", "admin-posicoes", "admin-pessoas"];
       if (!validAdminViews.includes(session.view)) session.view = "batuqueiro";
@@ -300,7 +308,10 @@ function viewLoading(msg) {
 function viewLanding() {
   return `
   <div class="hero"><div class="hero-inner">
-    <h1>🔥 Carnaval do Fogo e Paixão</h1>
+    <div style="display:flex; align-items:center; gap:14px; justify-content:center;">
+      <img src="logo.png" alt="Logo Carnaval do Fogo e Paixão" class="brand-logo">
+      <h1 style="margin:0;">Carnaval do Fogo e Paixão</h1>
+    </div>
     <p>Cadastro oficial de batuqueiros para o Carnaval 2027</p>
   </div></div>
   <div class="wrap">
@@ -327,7 +338,7 @@ function viewRegister1() {
     <div class="center-wrap card">
       <div class="step-dots"><div class="step-dot active"></div><div class="step-dot"></div></div>
       <h2>Crie seu login e senha</h2>
-      <p class="card-sub">Você vai receber um e-mail de confirmação antes de poder entrar.</p>
+      <p class="card-sub">Escolha um e-mail e uma senha para acessar sua área de batuqueiro.</p>
       ${err ? `<div class="error-box">${err}</div>` : ""}
       <form id="form-register1">
         <div class="field"><label>E-mail</label><input type="email" id="reg-email" required placeholder="seuemail@exemplo.com" ${busy ? "disabled" : ""}></div>
@@ -415,28 +426,6 @@ function viewLogin() {
 }
 
 /* ============================================================
-   VIEW: CONFIRMAR E-MAIL
-   ============================================================ */
-function viewVerifyEmail() {
-  const err = session.errors.verify;
-  return `
-  <div class="hero"><div class="hero-inner"><h1>Quase lá!</h1><p>Falta confirmar seu e-mail</p></div></div>
-  <div class="wrap">
-    <div class="center-wrap card verify-box">
-      <div class="big-icon">📧</div>
-      <h2>Confirme seu e-mail</h2>
-      <p class="card-sub">Enviamos um link de confirmação para <b>${fbUser.email}</b>. Clique no link recebido e depois volte aqui.</p>
-      ${err ? `<div class="error-box">${err}</div>` : ""}
-      <div style="display:flex; flex-direction:column; gap:10px;">
-        <button class="btn-primary" id="btn-check-verified">Já confirmei, continuar</button>
-        <button class="btn-secondary" id="btn-resend-verify">Reenviar e-mail</button>
-        <button class="link-btn" id="btn-logout-from-verify">Sair</button>
-      </div>
-    </div>
-  </div>`;
-}
-
-/* ============================================================
    VIEW: BATUQUEIRO
    ============================================================ */
 function viewBatuqueiro() {
@@ -478,7 +467,7 @@ function viewBatuqueiro() {
         <div><label>Filtrar por posição</label>
           <select id="presenca-filtro-posicao">
             <option value="todas" ${(session.presencaFiltro || "todas") === "todas" ? "selected" : ""}>Todas as posições</option>
-            ${[...new Set(todos.map(p => p.posicao))].map(pos => `<option value="${pos}" ${session.presencaFiltro === pos ? "selected" : ""}>${pos}</option>`).join("")}
+            ${posicoesUnicasOrdenadas(todos).map(pos => `<option value="${pos}" ${session.presencaFiltro === pos ? "selected" : ""}>${pos}</option>`).join("")}
           </select>
         </div>
         <div><label>Filtrar por ensaio</label>
@@ -625,7 +614,10 @@ function headerBar(u) {
   return `
   <div class="hero" style="padding-bottom:20px;"><div class="hero-inner">
     <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px;">
-      <div><h1 style="font-size:22px;">🔥 Área do Batuqueiro</h1><p>Bem-vindo(a), ${u.nome}!</p></div>
+      <div style="display:flex; align-items:center; gap:10px;">
+        <img src="logo.png" alt="Logo Carnaval do Fogo e Paixão" class="brand-logo brand-logo-sm">
+        <div><h1 style="font-size:22px; margin:0;">Área do Batuqueiro</h1><p style="margin:0;">Bem-vindo(a), ${u.nome}!</p></div>
+      </div>
       <div style="display:flex; gap:8px;">
         ${temAcessoAdmin(u) ? `<button class="btn-secondary" id="btn-goto-admin">Painel admin</button>` : ""}
         <button class="btn-secondary" id="btn-logout">Sair</button>
@@ -737,7 +729,10 @@ function viewAdminEnsaios() {
               const realizado = e.data <= hoje;
               const presentes = usersCache.filter(p => presencasCache[p.id] && presencasCache[p.id][e.id]).length;
               return `<tr>
-                <td><input type="date" class="ensaio-data-input" data-ensaio-id="${e.id}" value="${e.data}"></td>
+                <td>
+                  <input type="date" class="ensaio-data-input" data-ensaio-id="${e.id}" value="${e.data}">
+                  <div class="muted-sm" style="margin-top:2px;">${dateBR(e.data)}</div>
+                </td>
                 <td><span class="badge ${realizado ? "badge-good" : "badge-warning"}">${realizado ? "Realizado" : "Agendado"}</span></td>
                 <td>${presentes}/${totalPessoas} presentes</td>
                 <td style="display:flex; gap:6px;">
@@ -777,7 +772,7 @@ function viewAdminRelatorio() {
         <div><label>Posição</label>
           <select id="relatorio-filtro-posicao">
             <option value="todas" ${(session.relatorioFiltroPosicao || "todas") === "todas" ? "selected" : ""}>Todas as posições</option>
-            ${[...new Set(todos.map(p => p.posicao))].map(pos => `<option value="${pos}" ${session.relatorioFiltroPosicao === pos ? "selected" : ""}>${pos}</option>`).join("")}
+            ${posicoesUnicasOrdenadas(todos).map(pos => `<option value="${pos}" ${session.relatorioFiltroPosicao === pos ? "selected" : ""}>${pos}</option>`).join("")}
           </select>
         </div>
       </div>
@@ -835,34 +830,43 @@ function pricingPlanFieldset(planoKey, precos) {
       <div style="font-weight:700; font-size:13.5px; margin-bottom:8px;">${plano.label}</div>
       <div class="field"><label>Valor total (R$)</label><input type="number" id="admin-preco-${planoKey}" value="${cfg.valor}" min="1" step="0.01"></div>
       <div class="${plano.parcelas > 1 ? "grid-" + plano.parcelas : ""}">
-        ${cfg.prazos.map((d, i) => `<div class="field"><label>${plano.parcelas > 1 ? `Parcela ${i + 1} — ` : ""}Data-limite</label><input type="date" id="admin-prazo-${planoKey}-${i}" value="${d || ""}"></div>`).join("")}
+        ${cfg.prazos.map((d, i) => `<div class="field"><label>${plano.parcelas > 1 ? `Parcela ${i + 1} — ` : ""}Data-limite</label><input type="date" id="admin-prazo-${planoKey}-${i}" value="${d || ""}"><div class="muted-sm" style="margin-top:2px;">${d ? dateBR(d) : "—"}</div></div>`).join("")}
       </div>
     </div>`;
 }
 
 function viewAdminPosicoes() {
   const u = myProfile;
+  // O rascunho local (session.posicoesDraft) é a fonte da verdade enquanto essa
+  // tela está aberta — assim, edições digitadas não se perdem se um re-render
+  // acontecer por outro motivo (ex: alguém mais mexendo em outra parte do
+  // sistema em tempo real). Só é recriado a partir do servidor quando ainda
+  // não existe (entrada na tela) ou depois de salvar/adicionar/remover.
+  if (!session.posicoesDraft) {
+    session.posicoesDraft = ordenarPosicoesAlfabetica(posicoesCache.map(p => ({ id: p.id, nome: p.nome, isenta: !!p.isenta })));
+  }
+  const draft = session.posicoesDraft;
   return `
   ${headerBar(u)}
   <div class="wrap">
     <p><button class="link-btn" id="btn-back-admin">← Voltar para o painel admin</button></p>
     <div class="card">
       <h2>Posições / instrumentos</h2>
-      <p class="card-sub">Adicione, edite e diga se a posição é isenta de anuidade automaticamente</p>
-      ${posicoesCache.map(p => `
+      <p class="card-sub">Adicione, edite e diga se a posição é isenta de anuidade automaticamente — em ordem alfabética. Depois de editar, clique em "Salvar todas as posições" uma única vez.</p>
+      ${draft.map(p => `
         <div class="list-row">
           <input type="text" class="pos-name-input" data-pos-id="${p.id}" value="${p.nome}" style="flex:1; max-width:220px;">
           <label style="display:flex; align-items:center; gap:6px; font-weight:400; font-size:12.5px; white-space:nowrap;">
             <input type="checkbox" class="pos-isenta-input" data-pos-id="${p.id}" ${p.isenta ? "checked" : ""} style="width:auto;"> Isenta automaticamente
           </label>
-          <button class="btn-secondary btn-sm" data-save-posicao="${p.id}">Salvar</button>
           <button class="btn-ghost btn-sm" data-remove-posicao="${p.id}">Remover</button>
         </div>`).join("")}
       <div style="display:flex; gap:8px; margin-top:14px; align-items:center; flex-wrap:wrap;">
         <input type="text" id="new-posicao-nome" placeholder="Nova posição/instrumento" style="flex:1; min-width:180px;">
         <label style="display:flex; align-items:center; gap:6px; font-size:12.5px; white-space:nowrap;"><input type="checkbox" id="new-posicao-isenta" style="width:auto;"> Isenta</label>
-        <button class="btn-primary btn-sm" id="btn-add-posicao">Adicionar</button>
+        <button class="btn-secondary btn-sm" id="btn-add-posicao">Adicionar</button>
       </div>
+      <button class="btn-primary btn-sm" id="btn-save-all-posicoes" style="margin-top:16px;">Salvar todas as posições</button>
       <p class="hint" style="margin-top:10px">"Outro" continua disponível no formulário de cadastro e nunca é isento automaticamente — só por isenção individual.</p>
     </div>
   </div>`;
@@ -872,7 +876,7 @@ function viewAdminPessoas() {
   const u = myProfile;
   const filtro = session.adminPessoasFiltro || "todas";
   const todos = usersCache;
-  const posicoesPresentes = [...new Set(todos.map(p => p.posicao))];
+  const posicoesPresentes = posicoesUnicasOrdenadas(todos);
   const lista = filtro === "todas" ? todos : todos.filter(p => p.posicao === filtro);
   return `
   ${headerBar(u)}
@@ -939,6 +943,15 @@ function renderAdminEditUserForm(p) {
    EVENTOS
    ============================================================ */
 function wireEvents() {
+  // Qualquer campo de data que tenha um "dd/mm/aaaa" de confirmação logo
+  // abaixo (ver pricingPlanFieldset e a tabela de ensaios) atualiza esse texto
+  // ao vivo conforme a pessoa escolhe uma nova data no seletor nativo — sem
+  // isso, o texto só mostraria o último valor salvo até o próximo render().
+  onAll('input[type="date"]', "input", el => {
+    const hint = el.nextElementSibling;
+    if (hint && hint.classList.contains("muted-sm")) hint.textContent = el.value ? dateBR(el.value) : "—";
+  });
+
   // LANDING
   on("#btn-goto-register", "click", () => { session.draftUser = {}; go("register1"); });
   on("#btn-goto-login", "click", () => go("login"));
@@ -946,7 +959,7 @@ function wireEvents() {
   on("#back-to-landing2", "click", () => go("landing"));
   on("#goto-register-from-login", "click", () => { session.draftUser = {}; go("register1"); });
 
-  // REGISTER STEP 1 — cria a conta no Firebase Auth e envia e-mail de verificação
+  // REGISTER STEP 1 — cria a conta no Firebase Auth
   on("#form-register1", "submit", async e => {
     e.preventDefault();
     const email = $("#reg-email").value.trim().toLowerCase();
@@ -956,8 +969,7 @@ function wireEvents() {
     if (senha !== senha2) { session.errors.register1 = "As senhas não coincidem."; render(); return; }
     session.busy.register1 = true; render();
     try {
-      const { user } = await createUserWithEmailAndPassword(auth, email, senha);
-      await sendEmailVerification(user);
+      await createUserWithEmailAndPassword(auth, email, senha);
       session.errors.register1 = null;
       session.draftUser = { email };
     } catch (err) {
@@ -1025,24 +1037,12 @@ function wireEvents() {
     catch (err) { alert(friendlyAuthError(err)); }
   });
 
-  // VERIFICAR E-MAIL
-  on("#btn-check-verified", "click", async () => {
-    await fbUser.reload();
-    session.errors.verify = fbUser.emailVerified ? null : "Ainda não encontramos a confirmação. Verifique sua caixa de entrada (e o spam) e tente de novo.";
-    render();
-  });
-  on("#btn-resend-verify", "click", async () => {
-    try { await sendEmailVerification(fbUser); showToast("E-mail reenviado."); }
-    catch (err) { alert(friendlyAuthError(err)); }
-  });
-  on("#btn-logout-from-verify", "click", async () => { await signOut(auth); go("landing"); });
-
   // HEADER
   on("#btn-logout", "click", async () => { await signOut(auth); go("landing"); });
   on("#btn-goto-admin", "click", () => go("admin"));
   on("#btn-back-batuqueiro", "click", () => go("batuqueiro"));
-  on("#btn-goto-posicoes", "click", () => go("admin-posicoes"));
-  on("#btn-back-admin", "click", () => go("admin"));
+  on("#btn-goto-posicoes", "click", () => { session.posicoesDraft = null; go("admin-posicoes"); });
+  on("#btn-back-admin", "click", () => { session.posicoesDraft = null; go("admin"); });
   on("#btn-goto-pessoas", "click", () => go("admin-pessoas"));
   on("#btn-back-admin2", "click", () => go("admin"));
   on("#btn-goto-precos", "click", () => go("admin-precos"));
@@ -1175,36 +1175,73 @@ function wireEvents() {
   });
 
   // ADMIN — posições/instrumentos
+  // Os campos de nome/isenção só atualizam o rascunho local (session.posicoesDraft),
+  // sem chamar render() — assim o que foi digitado não é perdido se a tela for
+  // redesenhada por outro motivo enquanto o admin ainda está editando.
+  onAll(".pos-name-input", "input", el => {
+    const row = session.posicoesDraft && session.posicoesDraft.find(p => p.id === el.dataset.posId);
+    if (row) row.nome = el.value;
+  });
+  onAll(".pos-isenta-input", "change", el => {
+    const row = session.posicoesDraft && session.posicoesDraft.find(p => p.id === el.dataset.posId);
+    if (row) row.isenta = el.checked;
+  });
+
   on("#btn-add-posicao", "click", async () => {
     const nome = $("#new-posicao-nome").value.trim();
     if (!nome) return;
     if (posicoesCache.some(p => p.nome.toLowerCase() === nome.toLowerCase())) { alert("Essa posição já existe."); return; }
-    try { await addDoc(collection(db, "posicoes"), { nome, isenta: $("#new-posicao-isenta").checked }); }
-    catch (err) { alert(friendlyFirestoreError(err)); }
-  });
-  onAll("[data-save-posicao]", "click", async el => {
-    const id = el.dataset.savePosicao;
-    const nomeInput = document.querySelector(`.pos-name-input[data-pos-id="${id}"]`);
-    const isentaInput = document.querySelector(`.pos-isenta-input[data-pos-id="${id}"]`);
-    const pos = posicoesCache.find(p => p.id === id);
-    const novoNome = nomeInput.value.trim();
-    if (!novoNome) { alert("O nome da posição não pode ficar vazio."); return; }
+    const isenta = $("#new-posicao-isenta").checked;
     try {
-      const batch = writeBatch(db);
-      batch.update(doc(db, "posicoes", id), { nome: novoNome, isenta: isentaInput.checked });
-      if (novoNome !== pos.nome) {
-        usersCache.filter(u => u.posicao === pos.nome).forEach(u => { batch.update(doc(db, "users", u.id), { posicao: novoNome }); });
+      const ref = await addDoc(collection(db, "posicoes"), { nome, isenta });
+      if (session.posicoesDraft) {
+        session.posicoesDraft = ordenarPosicoesAlfabetica([...session.posicoesDraft, { id: ref.id, nome, isenta }]);
       }
-      await batch.commit();
+      render();
     } catch (err) { alert(friendlyFirestoreError(err)); }
   });
+
+  on("#btn-save-all-posicoes", "click", async () => {
+    const draft = session.posicoesDraft || [];
+    for (const row of draft) {
+      row.nome = (row.nome || "").trim();
+      if (!row.nome) { alert("O nome da posição não pode ficar vazio."); return; }
+    }
+    const nomesMinusculos = draft.map(r => r.nome.toLowerCase());
+    const duplicado = nomesMinusculos.find((n, i) => nomesMinusculos.indexOf(n) !== i);
+    if (duplicado) { alert(`Existe mais de uma posição chamada "${duplicado}". Ajuste os nomes antes de salvar.`); return; }
+    try {
+      const batch = writeBatch(db);
+      let algumaMudanca = false;
+      draft.forEach(row => {
+        const original = posicoesCache.find(p => p.id === row.id);
+        if (!original) return;
+        const mudouNome = row.nome !== original.nome;
+        const mudouIsenta = row.isenta !== !!original.isenta;
+        if (!mudouNome && !mudouIsenta) return;
+        algumaMudanca = true;
+        batch.update(doc(db, "posicoes", row.id), { nome: row.nome, isenta: row.isenta });
+        if (mudouNome) {
+          usersCache.filter(u => u.posicao === original.nome).forEach(u => { batch.update(doc(db, "users", u.id), { posicao: row.nome }); });
+        }
+      });
+      if (!algumaMudanca) { showToast("Nenhuma alteração para salvar."); return; }
+      await batch.commit();
+      session.posicoesDraft = null;
+      showToast("Posições salvas!");
+    } catch (err) { alert(friendlyFirestoreError(err)); }
+  });
+
   onAll("[data-remove-posicao]", "click", async el => {
     const id = el.dataset.removePosicao;
     const pos = posicoesCache.find(p => p.id === id);
     const emUso = usersCache.filter(u => u.posicao === pos.nome).length;
     if (emUso > 0 && !confirm(`${emUso} pessoa(s) estão cadastradas com "${pos.nome}". Remover mesmo assim? Elas continuam com essa posição no cadastro, mas ela deixa de aparecer nas listas.`)) return;
-    try { await deleteDoc(doc(db, "posicoes", id)); }
-    catch (err) { alert(friendlyFirestoreError(err)); }
+    try {
+      await deleteDoc(doc(db, "posicoes", id));
+      if (session.posicoesDraft) session.posicoesDraft = session.posicoesDraft.filter(p => p.id !== id);
+      render();
+    } catch (err) { alert(friendlyFirestoreError(err)); }
   });
 
   // ADMIN — cadastros

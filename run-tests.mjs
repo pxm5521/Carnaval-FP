@@ -1,5 +1,5 @@
 // Teste automatizado (Playwright) rodando contra test.html + firebase-init.mock.js.
-// Cobre: cadastro em 2 etapas + verificação de e-mail obrigatória, login/logout,
+// Cobre: cadastro em 2 etapas (sem verificação de e-mail), login/logout,
 // edição de "meus dados", seed de posições/preços padrão, escolha de plano de
 // pagamento + registro de pagamento (increment de totalPago via writeBatch),
 // isenção automática por posição, presença marcada por OUTRO usuário logado,
@@ -37,13 +37,7 @@ async function registerAndVerify(page, { email, nome, sobrenome, posicao, posica
   if (posicao === 'Outro' && posicaoOutro) await page.fill('#c-posicao-outro', posicaoOutro);
   await page.click(`#radio-camisa .radio-pill[data-val="${camisa}"]`);
   await page.click('#form-register2 button[type=submit]');
-  await page.waitForTimeout(200);
-  await page.evaluate((e) => window.__mock.verifyEmail(e), email);
-  // A mutação do mock já dispara onAuthStateChanged e re-renderiza sozinha
-  // (diferente do Firebase real, que exige reload() + clique); só clica se
-  // a tela de confirmação ainda estiver visível.
-  const stillOnVerify = await page.$('#btn-check-verified');
-  if (stillOnVerify) { await stillOnVerify.click(); }
+  // Sem verificação de e-mail: o cadastro já cai direto na área do batuqueiro.
   await page.waitForSelector('#btn-logout', { timeout: 5000 });
 }
 
@@ -104,7 +98,7 @@ async function main() {
   ok('Resumo de posições mostra 17 posições, 8 isentas automaticamente', html.includes('17 posições') && html.includes('8 isentas'));
   await logout(page);
 
-  console.log('\n== 4. Cadastro (Ana) + verificação de e-mail obrigatória, já com posições disponíveis ==');
+  console.log('\n== 4. Cadastro (Ana), já com posições disponíveis ==');
   await registerAndVerify(page, { email: 'ana@example.com', nome: 'Ana', sobrenome: 'Silva', posicao: 'Surdo 1', camisa: 'M', dataNascimento: '1998-03-15' });
   html = await appHtml(page);
   ok('Nome aparece no cabeçalho', html.includes('Bem-vindo(a), Ana'));
@@ -131,16 +125,45 @@ async function main() {
   await page.click('#btn-goto-admin');
   await page.waitForTimeout(150);
 
-  console.log('\n== 7. Painel admin — Posições (editar isenção, adicionar nova) ==');
+  console.log('\n== 7. Painel admin — Posições (ordem alfabética, adicionar, editar em lote) ==');
   await page.click('#btn-goto-posicoes');
   await page.waitForTimeout(150);
   html = await appHtml(page);
   ok('Lista de posições carregada (Agogô presente)', html.includes('value="Agogô"'));
+
+  const nomesNaTela = await page.$$eval('.pos-name-input', els => els.map(e => e.value));
+  const nomesOrdenados = [...nomesNaTela].sort((a, b) => a.localeCompare(b, 'pt-BR', { sensitivity: 'base' }));
+  ok('Posições aparecem em ordem alfabética', JSON.stringify(nomesNaTela) === JSON.stringify(nomesOrdenados));
+
   await page.fill('#new-posicao-nome', 'Bateria Extra');
   await page.click('#btn-add-posicao');
   await page.waitForTimeout(200);
   html = await appHtml(page);
   ok('Nova posição "Bateria Extra" adicionada', html.includes('Bateria Extra'));
+  ok('Não sobrou botão de salvar individual por posição (só o botão único)', !html.includes('data-save-posicao'));
+
+  console.log('\n== 7b. Edições não somem mesmo se a tela for re-renderizada antes de salvar ==');
+  // Edita duas posições sem clicar em salvar (simula "mudar de posição sem salvar").
+  const inputs = await page.$$('input.pos-name-input');
+  await inputs[0].fill('XYZ-Editado-1');
+  await inputs[1].fill('XYZ-Editado-2');
+  // Simula uma atualização em segundo plano (outra pessoa mexendo no sistema em
+  // tempo real) chamando o Firestore simulado diretamente — isso dispara um
+  // onSnapshot e um render() completo da tela, sem nenhum clique do admin.
+  await page.evaluate(async () => {
+    const fb = await import('./firebase-init.mock.js');
+    const ref = await fb.addDoc(fb.collection(fb.db, 'ensaios'), { data: '2030-01-01' });
+    await fb.deleteDoc(fb.doc(fb.db, 'ensaios', ref.id)); // limpa de novo, só queríamos disparar o snapshot
+  });
+  await page.waitForTimeout(200);
+  const valoresAposRerender = await page.$$eval('input.pos-name-input', els => els.map(e => e.value));
+  ok('Edição não salva sobrevive a um re-render em segundo plano', valoresAposRerender.includes('XYZ-Editado-1') && valoresAposRerender.includes('XYZ-Editado-2'));
+
+  await page.click('#btn-save-all-posicoes');
+  await page.waitForTimeout(250);
+  html = await appHtml(page);
+  ok('As duas edições em lote foram salvas de uma vez', html.includes('XYZ-Editado-1') && html.includes('XYZ-Editado-2'));
+
   await page.click('#btn-back-admin');
   await page.waitForTimeout(150);
 

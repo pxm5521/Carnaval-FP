@@ -26,9 +26,9 @@ Você vai precisar de:
 3. Na aba **Sign-in method**, clique em **"Email/Password"**.
 4. Ative a primeira opção ("Email/Password") e clique em **Salvar**.
 
-A confirmação por e-mail (link de verificação) já é enviada automaticamente pelo próprio código do site (`sendEmailVerification`) — não precisa configurar nada extra aqui, além do provedor "Email/Password" acima estar ativo.
+O cadastro não exige confirmação por e-mail — assim que a pessoa cria o login e preenche os dados, já entra direto na área do batuqueiro.
 
-> Dica opcional: em **Authentication → Templates**, você pode personalizar o texto do e-mail de verificação e de redefinição de senha (trocar para português, adicionar o nome da bateria, etc.).
+> Dica opcional: em **Authentication → Templates**, você pode personalizar o texto do e-mail de redefinição de senha (trocar para português, adicionar o nome da bateria, etc.).
 
 ### 1.2 — Criar o banco de dados (Firestore)
 
@@ -97,11 +97,10 @@ Qualquer alteração futura no código: basta subir os arquivos atualizados no G
 Por segurança, ninguém consegue se autopromover a admin pelo próprio site — nem no cadastro, nem depois (as regras do Firestore impedem isso de propósito). Por isso, a primeira pessoa admin precisa ser configurada manualmente, direto no Firebase, uma única vez:
 
 1. Acesse o site publicado e crie seu cadastro normalmente (**"Criar meu cadastro"**), como qualquer batuqueiro faria.
-2. Confirme seu e-mail (clique no link recebido).
-3. No **Firebase Console → Firestore Database → Dados**, abra a coleção `users`.
-4. Encontre o documento com o seu e-mail (o ID do documento é o seu UID, mas o campo `email` mostra qual é o seu).
-5. Clique no campo `adminAccess`, que estará como `false`, e mude para `true`.
-6. Volte ao site e atualize a página — o botão **"Painel admin"** já vai aparecer no seu cabeçalho.
+2. No **Firebase Console → Firestore Database → Dados**, abra a coleção `users`.
+3. Encontre o documento com o seu e-mail (o ID do documento é o seu UID, mas o campo `email` mostra qual é o seu).
+4. Clique no campo `adminAccess`, que estará como `false`, e mude para `true`.
+5. Volte ao site e atualize a página — o botão **"Painel admin"** já vai aparecer no seu cabeçalho.
 
 A partir daí, você (como admin) pode conceder acesso admin a outras pessoas diretamente pelo painel (**Cadastros → Editar → "Acesso ao painel admin"**), sem precisar mexer no Firebase Console de novo.
 
@@ -113,7 +112,7 @@ Assim que entrar no painel admin pela primeira vez, vai aparecer uma caixa **"Pr
 
 Este pacote inclui `test.html`, uma versão do site que usa um Firebase "simulado" (`firebase-init.mock.js`) — tudo acontece só na memória do navegador, nada é enviado para a internet nem para o Firebase real. É útil para você mesmo clicar em tudo e conferir os fluxos (cadastro, pagamento, presença, painel admin) sem misturar dados de teste com os dados reais da bateria.
 
-Para usar: abra `test.html` num navegador (pode ser localmente ou publicando também esse arquivo). O rótulo preto no topo ("MODO TESTE") deixa claro que não é o site de verdade. Como o e-mail de verificação não pode ser realmente enviado nesse modo, digite `window.__mock.verifyEmail("seuemail@teste.com")` no console do navegador (F12) para simular a confirmação.
+Para usar: abra `test.html` num navegador (pode ser localmente ou publicando também esse arquivo). O rótulo preto no topo ("MODO TESTE") deixa claro que não é o site de verdade.
 
 Se você tiver o Node.js instalado, também há um script de teste automatizado (`run-tests.mjs`) que exercita o site inteiro (cadastro, login, pagamentos, presença marcada por outra pessoa, todas as telas do admin) e imprime um relatório de sucesso/falha — mas isso é uma ferramenta de desenvolvedor, opcional, não necessária para o dia a dia.
 
@@ -130,3 +129,5 @@ Se você tiver o Node.js instalado, também há um script de teste automatizado 
 **E se eu esquecer minha senha?** Na tela de login há um link "Esqueci minha senha", que envia um e-mail de redefinição pelo próprio Firebase.
 
 **Como adiciono mais um organizador?** Painel admin → Cadastros → editar a pessoa → marcar "Acesso ao painel admin". Ela continua aparecendo normalmente nas listas de presença e pagamento, só ganha também a visão de admin.
+
+**Por que o campo de calendário às vezes mostra mm/dd/aaaa em vez de dd/mm/aaaa?** Todo texto de data que o próprio site escreve (datas de nascimento, prazos de parcela, data de pagamento, data de ensaio) está sempre em dd/mm/aaaa. Mas o "calendário" clicável (o ícone 📅 dentro do campo) é um componente do navegador da pessoa, não do site — e alguns navegadores mostram esse seletor no formato do idioma do sistema operacional, não no idioma da página. Por isso, logo abaixo de todo campo de data já preenchido, o site sempre mostra o valor confirmado em dd/mm/aaaa, para não haver dúvida.
