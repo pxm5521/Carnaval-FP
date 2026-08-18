@@ -319,11 +319,19 @@ async function main() {
     ok('Toggle de presença da Duda virou "on" após clique de Ana', cls.includes('on'));
   }
 
+  console.log('\n== 12b. Linha de total de presentes por ensaio, no rodapé da tabela ==');
+  html = await appHtml(page);
+  ok('Aparece a linha "Total presentes"', html.includes('Total presentes'));
+  ok('Total do ensaio marcado mostra 1 presente de 4 pessoas (só Duda está SIM)', html.includes('1/4'));
+  ok('Mostra quantas pessoas estão no filtro atual (4, sem filtro)', html.includes('4 pessoas no filtro'));
+
   console.log('\n== 13. Filtro de presença por posição e por ensaio ==');
   await page.selectOption('#presenca-filtro-posicao', 'Repique');
   await page.waitForTimeout(150);
   html = await appHtml(page);
   ok('Filtro por posição (Repique) mostra só Duda na tabela de presença', html.includes('Duda Reis') && !html.includes('Bruno Costa'));
+  ok('Total recalcula com o filtro: 1 de 1 pessoa (só a Duda, presente)', html.includes('1/1'));
+  ok('Contagem de pessoas no filtro atualiza para 1', html.includes('1 pessoa no filtro'));
   await page.selectOption('#presenca-filtro-posicao', 'todas');
   await page.waitForTimeout(100);
 

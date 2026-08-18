@@ -188,6 +188,8 @@
   tbody tr.me { background: color-mix(in srgb, var(--brand-fire) 8%, transparent); }
   td.name-cell { font-weight: 600; position: sticky; left: 0; background: var(--surface-1); }
   tbody tr.me td.name-cell { background: color-mix(in srgb, var(--brand-fire) 12%, var(--surface-1)); }
+  tfoot .presenca-total-row td { font-weight: 700; border-top: 2px solid var(--gridline); border-bottom: none; background: var(--surface-2); }
+  tfoot .presenca-total-row td.name-cell { background: var(--surface-2); }
 
   /* ---------- presence toggle ---------- */
   .toggle {

@@ -506,7 +506,9 @@ function viewBatuqueiro() {
           </select>
         </div>
       </div>
-      ${ensaiosCache.length === 0 ? `<div class="hint">Nenhum ensaio cadastrado ainda.</div>` : `
+      ${ensaiosCache.length === 0 ? `<div class="hint">Nenhum ensaio cadastrado ainda.</div>` : (() => {
+        const pessoasFiltradas = todos.filter(p => !session.presencaFiltro || session.presencaFiltro === "todas" || p.posicao === session.presencaFiltro);
+        return `
       <div class="table-scroll">
         <table>
           <thead><tr>
@@ -514,7 +516,7 @@ function viewBatuqueiro() {
             ${ensaios.map(e => `<th>${ensaioLabel(e)}</th>`).join("")}
           </tr></thead>
           <tbody>
-            ${todos.filter(p => !session.presencaFiltro || session.presencaFiltro === "todas" || p.posicao === session.presencaFiltro).map(p => `
+            ${pessoasFiltradas.map(p => `
               <tr class="${p.id === u.id ? "me" : ""}">
                 <td class="name-cell">${fullName(p)}${p.id === u.id ? ' <span class="muted-sm">(você)</span>' : ""}</td>
                 <td>${p.posicao}</td>
@@ -524,9 +526,21 @@ function viewBatuqueiro() {
                 }).join("")}
               </tr>`).join("") || `<tr><td colspan="${2 + ensaios.length}" class="hint">Ninguém encontrado com esse filtro.</td></tr>`}
           </tbody>
+          ${pessoasFiltradas.length > 0 ? `
+          <tfoot>
+            <tr class="presenca-total-row">
+              <td class="name-cell">Total presentes</td>
+              <td>${pessoasFiltradas.length} pessoa${pessoasFiltradas.length === 1 ? "" : "s"} no filtro</td>
+              ${ensaios.map(e => {
+                const presentes = pessoasFiltradas.filter(p => presencasCache[p.id] && presencasCache[p.id][e.id]).length;
+                return `<td>${presentes}/${pessoasFiltradas.length}</td>`;
+              }).join("")}
+            </tr>
+          </tfoot>` : ""}
         </table>
       </div>
-      <div class="legend"><span><i style="background:var(--good)"></i>Presente</span><span><i style="background:var(--critical)"></i>Ausente</span></div>`}
+      <div class="legend"><span><i style="background:var(--good)"></i>Presente</span><span><i style="background:var(--critical)"></i>Ausente</span></div>`;
+      })()}
     </div>
   </div>`;
 }
