@@ -81,6 +81,8 @@ const P = {
 let fbUser = null;          // usuário do Firebase Auth (ou null)
 let pessoaLoaded = false;   // true assim que o listener de pessoas/{uid} respondeu 1x
 let myPessoa = null;        // { id, ...campos } de pessoas/{uid} do usuário logado
+let myLegado = null;        // cadastro do formato antigo (/users/{uid}), só até a importação
+let legadoConsultado = false;
 let pessoasCache = [];      // todas as pessoas cadastradas (dados permanentes)
 let edicoesCache = [];      // todas as edições do carnaval
 let inscricoesCache = [];   // inscrições da edição em contexto
@@ -192,7 +194,7 @@ onAuthStateChanged(auth, (user) => {
   uidAnterior = user ? user.uid : null;
 
   if (!user) {
-    myPessoa = null; pessoaLoaded = false;
+    myPessoa = null; pessoaLoaded = false; myLegado = null; legadoConsultado = false;
     pessoasCache = []; edicoesCache = [];
     limparCachesDaEdicao();
     if (session.view && !["landing", "login", "register1"].includes(session.view)) session.view = "landing";
@@ -202,6 +204,38 @@ onAuthStateChanged(auth, (user) => {
   setupUserListeners(user.uid);
   render();
 });
+
+/* ============================================================
+   PONTE COM O FORMATO ANTIGO
+   ------------------------------------------------------------
+   Enquanto a importação não foi feita, o cadastro da pessoa (inclusive o acesso
+   de admin) ainda está em /users, e não em /pessoas. Sem enxergar isso, quem já
+   era admin entraria no site sem o botão do painel — justamente quem precisa
+   dele para rodar a importação. As regras de segurança já aceitam as duas
+   origens; aqui o app passa a fazer o mesmo.
+   ============================================================ */
+async function carregarCadastroLegado(uid) {
+  try {
+    const snap = await getDoc(doc(db, "users", uid));
+    myLegado = snap.exists() ? { id: snap.id, ...snap.data() } : null;
+  } catch (err) {
+    // Se as coleções antigas já foram removidas, simplesmente não há legado.
+    myLegado = null;
+  }
+  legadoConsultado = true;
+  render();
+}
+
+/* Cadastro do usuário logado, venha ele do formato novo ou do antigo. */
+function meuCadastro() { return myPessoa || myLegado || null; }
+/* Sou admin? Vale tanto o cadastro novo quanto o antigo (período de transição). */
+function souAdmin() { return !!(myPessoa && myPessoa.adminAccess) || !!(myLegado && myLegado.adminAccess); }
+/* Idem para quem pode marcar presença. */
+function souEditorDePresenca() {
+  return souAdmin() || !!(myPessoa && myPessoa.presencaAccess) || !!(myLegado && myLegado.presencaAccess);
+}
+/* Ainda existe cadastro no formato antigo esperando importação? */
+function precisaImportarLegado() { return !!myLegado && !edicoesCache.some(e => e.migradaDoFormatoAntigo); }
 
 /* Zera o estado que pertence a uma pessoa/sessão específica, preservando só o
    roteamento (a view atual é definida logo depois pelo próprio fluxo de login). */
@@ -249,6 +283,9 @@ function onErr(label) {
 }
 
 function setupUserListeners(uid) {
+  myLegado = null; legadoConsultado = false;
+  carregarCadastroLegado(uid);
+
   unsub.myPessoa = onSnapshot(P.pessoa(uid), snap => {
     myPessoa = snap.exists() ? { id: snap.id, ...snap.data() } : null;
     pessoaLoaded = true;
@@ -356,9 +393,11 @@ function trocarEdicaoCtx(eid) {
    ============================================================ */
 function minhaInscricao() { return fbUser ? inscricoesCache.find(i => i.id === fbUser.uid) || null : null; }
 function perfilMesclado() {
-  if (!myPessoa) return null;
+  const base = meuCadastro();
+  if (!base) return null;
   const insc = minhaInscricao();
-  return insc ? { ...myPessoa, ...insc, id: myPessoa.id } : { ...myPessoa };
+  const id = fbUser ? fbUser.uid : base.id;
+  return insc ? { ...base, ...insc, id } : { ...base, id };
 }
 /* Lista de batuqueiros inscritos na edição em contexto (pessoa + inscrição). */
 function batuqueirosDaEdicao() {
@@ -561,16 +600,19 @@ function render() {
   let html = "";
 
   if (fbUser) {
-    if (!pessoaLoaded) {
+    // Só decide o que mostrar depois de saber se existe cadastro novo E se existe
+    // cadastro antigo — senão quem ainda não foi importado seria mandado para a
+    // tela de "criar cadastro" e acabaria com um registro duplicado.
+    if (!pessoaLoaded || !legadoConsultado) {
       html = viewLoading("Carregando seus dados...");
-    } else if (!myPessoa) {
+    } else if (!meuCadastro()) {
       if (!session.draftUser) session.draftUser = { email: fbUser.email };
       html = viewRegister2();
     } else {
       const u = perfilMesclado();
       const validViews = ["batuqueiro", "historico", ...VIEWS_ADMIN];
       if (!validViews.includes(session.view)) session.view = "batuqueiro";
-      if (VIEWS_ADMIN.includes(session.view) && !temAcessoAdmin(u)) session.view = "batuqueiro";
+      if (VIEWS_ADMIN.includes(session.view) && !souAdmin()) session.view = "batuqueiro";
 
       if (session.view === "historico") html = viewHistorico(u);
       else if (session.view === "admin") html = viewAdmin();
@@ -734,9 +776,35 @@ function viewLogin() {
    ============================================================ */
 function viewSemEdicao(u) {
   const encerradas = edicoesOrdenadas().filter(e => e.status === "encerrada");
+  // Caso do período de transição: o site foi atualizado, mas os dados antigos
+  // ainda não foram importados. Quem é admin precisa ser levado direto ao botão
+  // de importar, em vez de ver só "inscrições fechadas".
+  if (precisaImportarLegado() && souAdmin()) {
+    return `
+    ${headerBar(u)}
+    <div class="wrap">
+      <div class="seed-box" style="text-align:left;">
+        <b>Seus dados ainda estão no formato antigo.</b>
+        <p style="margin:8px 0 0;">O site foi atualizado para guardar um carnaval por edição, mas os cadastros, ensaios, músicas, valores e presenças que já existiam ainda não foram importados. Enquanto isso não for feito, os batuqueiros veem o site como se não houvesse carnaval aberto.</p>
+        <div style="margin-top:10px;">
+          <button class="btn-primary btn-sm" id="btn-migrar-legado">Importar dados do formato antigo</button>
+        </div>
+        <p class="hint" style="margin-top:8px;">Prefere conferir antes? O botão <b>Painel admin</b>, no topo da página, também leva ao mesmo lugar.</p>
+      </div>
+    </div>`;
+  }
+  // Site recém-instalado: ninguém é admin ainda, então não há quem crie a primeira
+  // edição. Sem essa dica, o dono do site fica sem saída nesta tela. A condição é
+  // estreita de propósito — nenhum batuqueiro comum chega a ver isso.
+  const siteNovoSemAdmin = edicoesCache.length === 0 && !myLegado && !pessoasCache.some(p => p.adminAccess);
   return `
   ${headerBar(u)}
   <div class="wrap">
+    ${precisaImportarLegado() ? `<div class="seed-box" style="text-align:left;">Seu cadastro já existe e está guardado. A organização ainda está terminando de preparar o próximo carnaval no site — assim que abrir, é só entrar e confirmar sua inscrição.</div>` : ""}
+    ${siteNovoSemAdmin ? `<div class="seed-box" style="text-align:left;">
+      <b>É você quem organiza a bateria?</b>
+      <p style="margin:8px 0 0;">Este site ainda não tem nenhum organizador definido, e por isso ninguém consegue criar o primeiro carnaval. Esse passo é feito uma única vez, direto no Firebase (por segurança, ninguém pode se tornar organizador pelo próprio site): no <b>Firebase Console → Firestore Database → Dados</b>, abra a coleção <b>pessoas</b>, encontre o registro com o seu e-mail e mude o campo <b>adminAccess</b> de <code>false</code> para <code>true</code>. Depois é só atualizar esta página. O passo a passo completo está no arquivo SETUP.md.</p>
+    </div>` : ""}
     <div class="center-wrap card">
       <h2 style="text-align:center">Inscrições fechadas no momento</h2>
       <p class="card-sub" style="text-align:center">Não há nenhum carnaval com inscrições abertas agora. Assim que a organização abrir a próxima edição, é só entrar aqui e confirmar sua inscrição — seus dados de cadastro continuam guardados.</p>
@@ -848,7 +916,7 @@ function viewBatuqueiro() {
     <!-- BOX 3: PRESENÇA EM ENSAIOS -->
     <div class="card">
       <div class="card-head">
-        <div><h2>Presença em ensaios</h2><p class="card-sub" style="margin-bottom:0">${temAcessoPresenca(u) && editavel ? "Clique em SIM/NÃO para marcar a presença de qualquer batuqueiro em cada ensaio" : "Veja a presença de todos os batuqueiros em cada ensaio"}</p></div>
+        <div><h2>Presença em ensaios</h2><p class="card-sub" style="margin-bottom:0">${souEditorDePresenca() && editavel ? "Clique em SIM/NÃO para marcar a presença de qualquer batuqueiro em cada ensaio" : "Veja a presença de todos os batuqueiros em cada ensaio"}</p></div>
       </div>
       <div class="filter-row">
         <div><label>Filtrar por posição</label>
@@ -880,7 +948,7 @@ function viewBatuqueiro() {
                 <td>${esc(p.posicao)}</td>
                 ${ensaios.map(e => {
                   const on = !!(presencasCache[p.id] && presencasCache[p.id][e.id]);
-                  if (!temAcessoPresenca(u) || !editavel) return `<td><span class="badge ${on ? "badge-good" : "badge-critical"}">${on ? "Presente" : "Ausente"}</span></td>`;
+                  if (!souEditorDePresenca() || !editavel) return `<td><span class="badge ${on ? "badge-good" : "badge-critical"}">${on ? "Presente" : "Ausente"}</span></td>`;
                   return `<td><div class="toggle ${on ? "on" : "off"}" data-uid="${p.id}" data-eid="${e.id}"><span class="yes">SIM</span><span class="no">NÃO</span></div></td>`;
                 }).join("")}
               </tr>`).join("") || `<tr><td colspan="${2 + ensaios.length}" class="hint">Ninguém encontrado com esse filtro.</td></tr>`}
@@ -1066,7 +1134,7 @@ function headerBar(u) {
         </div>
       </div>
       <div style="display:flex; gap:8px;">
-        ${temAcessoAdmin(u) ? `<button class="btn-secondary" id="btn-goto-admin">Painel admin</button>` : ""}
+        ${souAdmin() ? `<button class="btn-secondary" id="btn-goto-admin">Painel admin</button>` : ""}
         <button class="btn-secondary" id="btn-logout">Sair</button>
       </div>
     </div>
@@ -1237,6 +1305,11 @@ function viewAdmin() {
     ${headerBar(u)}
     <div class="wrap">
       <p><button class="link-btn" id="btn-back-batuqueiro">← Voltar para minha área</button></p>
+      ${precisaImportarLegado() ? `
+      <div class="seed-box" style="text-align:left; border-style:solid;">
+        <b>Encontrei dados no formato antigo esperando importação.</b>
+        <p style="margin:8px 0 0;">Seu cadastro (e o dos outros batuqueiros) ainda está na estrutura anterior. Clique em importar abaixo: é um passo único e leva tudo — cadastros, posições, ensaios, músicas, valores e presenças — para dentro de uma edição.</p>
+      </div>` : ""}
       <div class="seed-box" style="text-align:left;">
         <b>Nenhuma edição do carnaval cadastrada ainda.</b>
         <p style="margin:8px 0 0;">Cada carnaval (2027, 2028...) é uma "edição": um pacote com as suas próprias posições, ensaios, músicas, valores de anuidade, inscrições e presenças. Isso é o que permite guardar o histórico de um ano sem misturar com o outro.</p>
@@ -2391,7 +2464,7 @@ function wireEvents() {
   onAll(".toggle", "click", async el => {
     const u = perfilMesclado();
     const ed = edicaoCtx();
-    if (!temAcessoPresenca(u) || !edicaoEditavel(ed)) return;
+    if (!souEditorDePresenca() || !edicaoEditavel(ed)) return;
     const targetUid = el.dataset.uid, eid = el.dataset.eid;
     const atual = !!(presencasCache[targetUid] && presencasCache[targetUid][eid]);
     try {

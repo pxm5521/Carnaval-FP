@@ -112,6 +112,9 @@ async function main() {
   let html = await appHtml(page);
   ok('Sem edição aberta, o cadastro é aceito e avisa que as inscrições estão fechadas', html.includes('Inscrições fechadas no momento'));
   ok('Nome do cadastro permanente aparece no cabeçalho', html.includes('Bem-vindo(a), Bruno'));
+  // Site novo sem nenhum organizador: quem instalou precisa saber como se tornar
+  // admin, senão fica sem saída (ninguém pode criar a primeira edição).
+  ok('Site sem admin nenhum explica o passo único do Firebase Console', html.includes('É você quem organiza a bateria?'));
   await logout(page);
 
   console.log('\n== 2. Bootstrap do primeiro admin (passo único documentado no SETUP.md) ==');
@@ -756,7 +759,14 @@ async function main() {
   await registrar(page, { email: 'pedro@example.com', nome: 'Pedro', sobrenome: 'Martins', comEdicaoAberta: false });
   await logout(page);
 
-  // Monta um banco no formato ANTIGO (tudo solto na raiz), como era antes.
+  // Reproduz fielmente a situação real: a pessoa só existe no formato ANTIGO.
+  // Apaga o cadastro novo criado acima e monta o banco como era antes — inclusive
+  // o acesso de admin, que ficava em /users e não em /pessoas.
+  await page.evaluate(async () => {
+    const uid = window.__mock.uidPorEmail('pedro@example.com');
+    const fb = await import('./firebase-init.mock.js');
+    await fb.deleteDoc(fb.doc(fb.db, 'pessoas', uid));
+  });
   await page.evaluate(() => {
     const uid = window.__mock.uidPorEmail('pedro@example.com');
     window.__mock.seedFormatoAntigo({
@@ -779,14 +789,36 @@ async function main() {
       presencas: { 'ens1_legado2': { ensaioId: 'ens1', uid: 'legado2', presente: true } },
     });
   });
-  await page.evaluate(() => window.__mock.grantAdminAccessByEmail('pedro@example.com'));
+  // Caso real: ao entrar no site novo antes de importar, a pessoa foi levada à
+  // tela de "criar cadastro" e refez o cadastro — ficando com um registro novo
+  // SEM acesso admin, em paralelo ao registro antigo que tem o acesso.
+  await page.evaluate(async () => {
+    const uid = window.__mock.uidPorEmail('pedro@example.com');
+    const fb = await import('./firebase-init.mock.js');
+    await fb.setDoc(fb.doc(fb.db, 'pessoas', uid), {
+      nome: 'Pedro', sobrenome: 'Martins', email: 'pedro@example.com',
+      celular: '(21) 90000-0000', dataNascimento: '2000-01-01',
+      adminAccess: false, presencaAccess: false,
+    });
+  });
 
   respostaPrompt = '2027';
   await login(page, 'pedro@example.com');
+  await page.waitForTimeout(400);
+  html = await appHtml(page);
+  ok('Mesmo com um cadastro novo sem admin, o acesso do formato antigo vale', html.includes('Painel admin'));
+  // Regressão do que aconteceu em produção: quem já era admin no formato antigo
+  // entrava no site novo sem o botão do painel — justamente quem precisa dele
+  // para rodar a importação — e via só "inscrições fechadas".
+  ok('Admin do formato antigo é reconhecido como admin no site novo', html.includes('Painel admin'));
+  ok('Em vez de "inscrições fechadas", ele vê o aviso de importação pendente', html.includes('Seus dados ainda estão no formato antigo'));
+  ok('E o botão de importar está logo ali', html.includes('btn-migrar-legado'));
+
   await page.click('#btn-goto-admin');
   await page.waitForTimeout(250);
   html = await appHtml(page);
   ok('Antes de migrar, o painel avisa que não há edição cadastrada', html.includes('Nenhuma edição do carnaval cadastrada ainda'));
+  ok('O painel também destaca que há dados antigos esperando importação', html.includes('Encontrei dados no formato antigo esperando importação'));
   await page.click('#btn-migrar-legado');
   await page.waitForTimeout(900);
   html = await appHtml(page);

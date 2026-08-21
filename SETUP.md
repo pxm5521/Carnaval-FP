@@ -141,7 +141,9 @@ Cada pessoa também passa a ter um **"Meu histórico de carnavais"**, com a posi
 
 ## Parte 6 — Importar dados de antes (só se o site já estava em uso)
 
-Se você já estava usando o site antes da separação por edições, os dados antigos precisam ser reorganizados uma única vez. É um botão, feito por você mesmo pelo site:
+Se você já estava usando o site antes da separação por edições, os dados antigos precisam ser reorganizados uma única vez. É um botão, feito por você mesmo pelo site.
+
+> **Você continua sendo admin durante a transição.** O acesso de organizador que estava em `users` é reconhecido normalmente pelo site novo até a importação acontecer — não é preciso mexer no Firebase Console de novo. Ao entrar, você vê direto um aviso com o botão de importar; se você tiver refeito o cadastro por engano nesse meio-tempo, a importação corrige o registro duplicado sozinha, trazendo de volta seus dados originais.
 
 1. Entre no site como admin.
 2. Vá em **Painel admin → "Gerenciar edições" → "Importar agora"** (ou, se ainda não houver nenhuma edição, no botão **"Importar dados do formato antigo"** que aparece direto no painel).
