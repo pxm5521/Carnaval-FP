@@ -39,7 +39,9 @@ O cadastro não exige confirmação por e-mail — assim que a pessoa cria o log
 
 ### 1.3 — Publicar as regras de segurança
 
-O arquivo `firestore.rules` (incluído neste pacote) já contém as regras corretas: qualquer pessoa logada pode ver a lista de batuqueiros e marcar presença, mas só o dono de um cadastro (ou um admin) pode editá-lo, e só admins podem mexer em posições, ensaios, preços ou conceder acesso ao painel admin.
+O arquivo `firestore.rules` (incluído neste pacote) já contém as regras corretas: qualquer pessoa logada pode ver a lista de batuqueiros e a presença de todos, mas só quem tem permissão marca presença; só o dono de um cadastro (ou um admin) pode editá-lo; e só admins mexem em edições, posições, ensaios, músicas, preços ou concedem acessos. Uma edição encerrada fica travada até para o admin.
+
+> **Sempre que este arquivo mudar numa atualização do site, republique as regras.** É um passo separado de subir o código no GitHub — se esquecer, o site publica normalmente mas algumas ações passam a dar erro de permissão.
 
 1. No Firestore, vá na aba **"Regras"** (Rules).
 2. Apague o conteúdo que estiver lá.
@@ -97,14 +99,58 @@ Qualquer alteração futura no código: basta subir os arquivos atualizados no G
 Por segurança, ninguém consegue se autopromover a admin pelo próprio site — nem no cadastro, nem depois (as regras do Firestore impedem isso de propósito). Por isso, a primeira pessoa admin precisa ser configurada manualmente, direto no Firebase, uma única vez:
 
 1. Acesse o site publicado e crie seu cadastro normalmente (**"Criar meu cadastro"**), como qualquer batuqueiro faria.
-2. No **Firebase Console → Firestore Database → Dados**, abra a coleção `users`.
+2. No **Firebase Console → Firestore Database → Dados**, abra a coleção `pessoas`.
 3. Encontre o documento com o seu e-mail (o ID do documento é o seu UID, mas o campo `email` mostra qual é o seu).
 4. Clique no campo `adminAccess`, que estará como `false`, e mude para `true`.
 5. Volte ao site e atualize a página — o botão **"Painel admin"** já vai aparecer no seu cabeçalho.
 
 A partir daí, você (como admin) pode conceder acesso admin a outras pessoas diretamente pelo painel (**Cadastros → Editar → "Acesso ao painel admin"**), sem precisar mexer no Firebase Console de novo.
 
-Assim que entrar no painel admin pela primeira vez, vai aparecer uma caixa **"Primeiro acesso"** com um botão para carregar as posições/instrumentos e os valores de anuidade padrão — isso evita ter que cadastrar as 17 posições uma por uma. Depois é só ajustar o que quiser (valores, prazos, isenções) nas telas de edição.
+---
+
+## Parte 5 — Criar a primeira edição do carnaval
+
+O site guarda um carnaval por **edição** (2027, 2028, ...). Cada edição tem as próprias posições, ensaios, músicas, valores de anuidade, inscrições e presenças — é isso que permite acumular um histórico ano após ano sem misturar os dados de um carnaval com os do outro. Os dados permanentes de cada pessoa (nome, sobrenome, celular, data de nascimento) ficam fora das edições e nunca precisam ser redigitados.
+
+No painel admin, vá em **"Gerenciar edições" → "Criar nova edição"**:
+
+1. Informe o ano, o nome (ex: "Carnaval do Fogo e Paixão 2027") e a data do desfile.
+2. Se já existir uma edição anterior, deixe marcado **"Copiar posições e valores de anuidade"** — você começa com tudo pronto e só ajusta o que mudou.
+3. A edição nasce **"Em preparação"**: só você a enxerga. Aproveite para conferir posições, valores, prazos e já cadastrar as datas de ensaio com calma.
+4. Quando estiver tudo certo, clique em **"Abrir para os batuqueiros"**. A partir daí eles passam a ver e preencher os dados dessa edição.
+
+Na primeira edição, quando ela ainda não tem nada, aparece a caixa **"Primeiro acesso desta edição"** com um botão que carrega as 17 posições/instrumentos e os valores de anuidade padrão de uma vez — evita cadastrar tudo à mão.
+
+### O ciclo de vida de uma edição
+
+| Situação | O que significa |
+|---|---|
+| **Em preparação** | Só o admin vê. Serve para montar tudo antes de liberar. |
+| **Aberta** | Em andamento. Os batuqueiros se inscrevem, pagam e marcam presença. Só uma edição fica aberta por vez — ao abrir uma nova, a anterior é encerrada automaticamente. |
+| **Encerrada** | Virou histórico. Ninguém edita mais nada nela, nem o admin. Continua visível para consulta. |
+
+Se precisar corrigir algo depois do carnaval, use **"Reabrir"** na tela de edições: ela volta para "Em preparação" (visível só para você), você corrige, e abre de novo se for o caso.
+
+### O que acontece com os batuqueiros a cada novo carnaval
+
+Quando você abre uma edição nova, quem já tem cadastro entra no site e vê uma tela de **"Confirmar inscrição"**, já preenchida com os dados do último carnaval em que a pessoa participou (posição, camisa, se vai tocar). Ela só confere, ajusta o que mudou e confirma. Nome e data de nascimento não são pedidos de novo.
+
+Cada pessoa também passa a ter um **"Meu histórico de carnavais"**, com a posição de cada ano, a situação da anuidade e quantos ensaios frequentou.
+
+---
+
+## Parte 6 — Importar dados de antes (só se o site já estava em uso)
+
+Se você já estava usando o site antes da separação por edições, os dados antigos precisam ser reorganizados uma única vez. É um botão, feito por você mesmo pelo site:
+
+1. Entre no site como admin.
+2. Vá em **Painel admin → "Gerenciar edições" → "Importar agora"** (ou, se ainda não houver nenhuma edição, no botão **"Importar dados do formato antigo"** que aparece direto no painel).
+3. O site pergunta de que ano são aqueles dados. Informe (ex: 2027).
+4. Pronto: os cadastros, posições, ensaios, músicas, valores e presenças que existiam passam a viver dentro dessa edição, já separando o que é permanente do que é daquele carnaval. A edição nasce **aberta**, então nada muda na prática para quem já estava usando.
+
+Os comprovantes de pagamento de cada pessoa são levados automaticamente na primeira vez que ela entrar no site depois da importação — isso porque as regras de segurança só deixam cada um ler os próprios comprovantes (nem o admin vê os dos outros). O total já pago vai junto na importação, então nenhum saldo fica errado nesse meio-tempo.
+
+Depois de conferir que está tudo certo, as coleções antigas (`users`, `posicoes`, `ensaios`, `musicas`, `config`, `presencas`, `pagamentos` na raiz) podem ser apagadas no Firebase Console, junto com o bloco correspondente no final do `firestore.rules`.
 
 ---
 
@@ -114,7 +160,7 @@ Este pacote inclui `test.html`, uma versão do site que usa um Firebase "simulad
 
 Para usar: abra `test.html` num navegador (pode ser localmente ou publicando também esse arquivo). O rótulo preto no topo ("MODO TESTE") deixa claro que não é o site de verdade.
 
-Se você tiver o Node.js instalado, também há um script de teste automatizado (`run-tests.mjs`) que exercita o site inteiro (cadastro, login, pagamentos, presença marcada por outra pessoa, todas as telas do admin) e imprime um relatório de sucesso/falha — mas isso é uma ferramenta de desenvolvedor, opcional, não necessária para o dia a dia.
+Se você tiver o Node.js instalado, também há um script de teste automatizado (`run-tests.mjs`) que exercita o site inteiro — cadastro, login, ciclo de vida das edições (criar, preparar, abrir, encerrar, reabrir), renovação de inscrição de um ano para o outro, pagamentos, presença, histórico, isolamento entre edições e a importação dos dados antigos — e imprime um relatório de sucesso/falha. É uma ferramenta de desenvolvedor, opcional, não necessária para o dia a dia.
 
 ---
 
@@ -130,6 +176,23 @@ Se você tiver o Node.js instalado, também há um script de teste automatizado 
 
 **Como adiciono mais um organizador?** Painel admin → Cadastros → editar a pessoa → marcar "Acesso ao painel admin". Ela continua aparecendo normalmente nas listas de presença e pagamento, só ganha também a visão de admin.
 
-**Como registro quais músicas foram ensaiadas?** Painel admin → "Repertório / músicas" cadastra o repertório (nome de cada música, em ordem alfabética). Depois, em Painel admin → Ensaios, cada data tem um botão "Editar músicas" onde você marca quais músicas dessa lista foram tocadas naquele ensaio.
+**Como registro quais músicas foram ensaiadas?** Painel admin → "Repertório / músicas" cadastra o repertório (nome, tom e cantor(a) de cada música, em ordem alfabética). Depois, em Painel admin → Ensaios, cada data tem um botão "Editar músicas" onde você marca quais músicas dessa lista foram tocadas naquele ensaio. Tanto o repertório quanto as marcações valem só para a edição em que foram feitos.
+
+**O que exatamente é guardado por carnaval e o que é permanente?** Permanente (vale para sempre, em `/pessoas`): nome, sobrenome, e-mail, celular, data de nascimento, acesso ao painel admin e acesso para marcar presença. Por carnaval (dentro de `/edicoes/{id}`): posição/instrumento, tamanho da camisa, se vai tocar, isenção individual, forma de pagamento e valor pago, além das posições disponíveis, ensaios, repertório, valores da anuidade e presenças daquele ano.
+
+**Posso ver os dados de um carnaval antigo?** Sim. No painel admin, o seletor **"Estou vendo os dados de"** troca a edição que está sendo exibida — todas as telas (ensaios, posições, músicas, relatório, cadastros) passam a mostrar aquele carnaval. Se a edição estiver encerrada, tudo fica só leitura, com um aviso no topo. Cada batuqueiro também tem o próprio "Meu histórico de carnavais".
+
+**E se eu quiser comparar todos os carnavais de uma vez?** Painel admin → **"Histórico geral"**. São duas tabelas com uma coluna por carnaval:
+
+- **Batuqueiros por carnaval** — todo mundo que já teve cadastro no site, tenha participado de um carnaval ou de todos. Cada célula mostra a posição da pessoa naquele ano (verde) quando ela tocou, "Não tocou" (amarelo) quando ela se inscreveu mas avisou que não ia tocar, e um traço quando ela não teve inscrição naquele carnaval. A última coluna conta em quantos carnavais a pessoa tocou.
+- **Músicas por carnaval** — todo o repertório já cadastrado, em qualquer ano. Cada célula mostra em quantos ensaios daquele carnaval a música foi tocada (verde), "No repertório" (amarelo) quando ela foi cadastrada mas nunca ensaiada, e um traço quando não fazia parte do repertório daquele ano. A mesma música é reconhecida de um ano para o outro pelo nome.
+
+O campo de busca no topo filtra as duas tabelas ao mesmo tempo, e os totais do rodapé acompanham o filtro. Como essa tela lê todos os carnavais de uma vez, ela é carregada sob demanda — se você acabou de mudar alguma coisa em outra tela, use o botão "Atualizar".
+
+**Por que o identificador da edição é `2027-1` e não a data do desfile?** No Firestore, o identificador de um registro não pode ser alterado depois de criado — só copiando tudo para outro e apagando o original. Como a data do desfile costuma mudar depois de cadastrada, usá-la como identificador deixaria o nome permanentemente errado. O ano não muda, e o `-1`, `-2` cobre o caso de desfilar duas vezes no mesmo ano. A data do desfile fica num campo próprio, que você edita quando quiser — e é ela que aparece em todas as telas.
+
+**Alguém pode se inscrever num carnaval que já passou?** Não. Só é possível se inscrever na edição que estiver aberta. Quem não participou de uma edição encerrada simplesmente não aparece nas listas daquele ano — e quem participou fica registrado ali para sempre, mesmo que saia da bateria depois.
+
+**Tirei alguém da edição por engano. Perdi o cadastro dela?** Não. "Tirar da edição" remove só a inscrição naquele carnaval; o cadastro da pessoa e o histórico dela em outros anos continuam intactos. Ela aparece na seção "Cadastrados sem inscrição nesta edição" e pode se inscrever de novo entrando no site.
 
 **Por que o campo de calendário pode mostrar mm/dd/aaaa em vez de dd/mm/aaaa?** Todo texto de data que o próprio site escreve (datas de nascimento, prazos de parcela, data de pagamento, data de ensaio) está sempre em dd/mm/aaaa. Só o "calendário" clicável (o ícone 📅 dentro do campo, ao editar) é um componente do navegador da pessoa, não do site — a grande maioria dos navegadores em português já mostra esse seletor em dd/mm/aaaa, mas em algum navegador configurado em outro idioma ele pode aparecer diferente. Isso não afeta o valor salvo, só a aparência do seletor.

@@ -96,16 +96,23 @@ function resolveSentinels(data, existing) {
 
 export const db = { __mockFirestore: true };
 
-export function collection(_db, name) { return { __type: "collection", name }; }
+// Aceita caminhos com subcoleções, igual ao SDK real:
+//   collection(db, "pessoas")
+//   collection(db, "edicoes", "2027-1", "inscricoes")
+// Internamente o "nome" da coleção é o caminho inteiro ("edicoes/2027-1/inscricoes"),
+// o que basta para o mock isolar uma coleção da outra.
+export function collection(_db, ...segs) { return { __type: "collection", name: segs.join("/") }; }
 
-export function doc(a, b, c) {
+export function doc(a, ...rest) {
   if (a && a.__type === "collection") {
-    const name = a.name;
-    const id = b || "mockdoc" + (++docIdCounter);
-    return { __type: "doc", name, id };
+    // doc(collectionRef) -> id automático; doc(collectionRef, id)
+    const id = rest[0] || "mockdoc" + (++docIdCounter);
+    return { __type: "doc", name: a.name, id };
   }
-  // doc(db, name, id)
-  return { __type: "doc", name: b, id: c };
+  // doc(db, ...segmentos, id)
+  const segs = [...rest];
+  const id = segs.pop();
+  return { __type: "doc", name: segs.join("/"), id };
 }
 
 export function query(collectionRef, ...constraints) {
@@ -239,12 +246,25 @@ if (typeof window !== "undefined") {
     grantAdminAccessByEmail(email) {
       const authUser = authUsersByEmail.get(email.toLowerCase());
       if (!authUser) return false;
-      const users = collMap("users");
-      const existing = users.get(authUser.uid);
+      const pessoas = collMap("pessoas");
+      const existing = pessoas.get(authUser.uid);
       if (!existing) return false;
-      users.set(authUser.uid, { ...existing, adminAccess: true });
-      notifyCollection("users");
+      pessoas.set(authUser.uid, { ...existing, adminAccess: true });
+      notifyCollection("pessoas");
       return true;
+    },
+    // Ajuda só para testes: monta dados no FORMATO ANTIGO (tudo solto na raiz,
+    // como era antes da separação por edições) para exercitar a migração.
+    seedFormatoAntigo(dados) {
+      Object.entries(dados).forEach(([nomeColecao, docs]) => {
+        const map = collMap(nomeColecao);
+        Object.entries(docs).forEach(([id, valor]) => map.set(id, valor));
+        notifyCollection(nomeColecao);
+      });
+    },
+    uidPorEmail(email) {
+      const u = authUsersByEmail.get(email.toLowerCase());
+      return u ? u.uid : null;
     },
   };
 }

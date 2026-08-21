@@ -1,14 +1,24 @@
 rules_version = '2';
 
 // Regras de segurança do Firestore para o site do Carnaval do Fogo e Paixão.
-// Modelo de confiança: é um grupo pequeno e conhecido (a bateria). Qualquer
-// pessoa logada pode VER o nome/posição/presença de todos, mas só pode
-// MARCAR presença quem tem adminAccess ou presencaAccess = true no próprio
-// documento em /users (concedido pelo admin, pessoa por pessoa). Dados
-// financeiros individuais (pix/data/valor de cada pagamento) só podem ser
-// lidos pelo próprio dono. Ações administrativas (editar posições, ensaios,
-// repertório de músicas, preços, conceder acesso admin/presença ou isenção
-// manual, remover cadastros) exigem que o usuário tenha adminAccess = true.
+//
+// ESTRUTURA
+// Os dados permanentes de cada pessoa (nome, nascimento, contato e os acessos de
+// organização) ficam em /pessoas/{uid}. Tudo o que muda de um carnaval para o
+// outro vive dentro da edição correspondente, em /edicoes/{eid}/... — inscrições,
+// posições, ensaios, músicas, valores, pagamentos e presenças.
+//
+// MODELO DE CONFIANÇA
+// É um grupo pequeno e conhecido (a bateria). Qualquer pessoa logada pode VER o
+// nome/posição/presença de todos, mas só pode MARCAR presença quem tem
+// adminAccess ou presencaAccess. Dados financeiros individuais (pix/data/valor de
+// cada pagamento) só podem ser lidos pelo próprio dono. Ações administrativas
+// exigem adminAccess = true.
+//
+// EDIÇÃO ENCERRADA É IMUTÁVEL
+// Uma edição com status "encerrada" não aceita mais nenhuma escrita nas suas
+// subcoleções — nem do admin. Para corrigir algo depois do carnaval, o admin
+// reabre a edição (volta para "preparando") e só então consegue editar.
 
 service cloud.firestore {
   match /databases/{database}/documents {
@@ -21,93 +31,153 @@ service cloud.firestore {
       return isSignedIn() && request.auth.uid == uid;
     }
 
-    // true se o usuário logado tem acesso ao painel admin (co-organizador ou organizador principal)
+    // true se o usuário logado tem acesso ao painel admin.
+    // A segunda metade cobre o período de transição: enquanto a migração do
+    // formato antigo não foi feita, o cadastro do admin ainda está em /users.
+    // Depois de migrar, essa parte pode ser removida.
     function isAdmin() {
-      return isSignedIn()
-        && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.adminAccess == true;
+      return isSignedIn() && (
+        (exists(/databases/$(database)/documents/pessoas/$(request.auth.uid))
+          && get(/databases/$(database)/documents/pessoas/$(request.auth.uid)).data.adminAccess == true)
+        || (exists(/databases/$(database)/documents/users/$(request.auth.uid))
+          && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.adminAccess == true)
+      );
     }
 
-    // true se o usuário logado pode marcar presença nos ensaios: todo admin
-    // pode, e além deles quem recebeu individualmente presencaAccess = true.
+    // true se o usuário logado pode marcar presença nos ensaios: todo admin pode,
+    // e além deles quem recebeu individualmente presencaAccess = true.
     function podeEditarPresenca() {
       return isAdmin()
         || (isSignedIn()
-            && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.presencaAccess == true);
+            && exists(/databases/$(database)/documents/pessoas/$(request.auth.uid))
+            && get(/databases/$(database)/documents/pessoas/$(request.auth.uid)).data.presencaAccess == true);
     }
 
-    // ---------- cadastro de cada batuqueiro ----------
-    match /users/{uid} {
+    function statusDaEdicao(eid) {
+      return get(/databases/$(database)/documents/edicoes/$(eid)).data.status;
+    }
+    function edicaoNaoEncerrada(eid) {
+      return statusDaEdicao(eid) != 'encerrada';
+    }
+    function edicaoAberta(eid) {
+      return statusDaEdicao(eid) == 'aberta';
+    }
+
+    // ---------- cadastro permanente de cada pessoa ----------
+    match /pessoas/{uid} {
       allow read: if isSignedIn();
 
-      // no cadastro inicial, a pessoa só pode criar o PRÓPRIO documento,
-      // e não pode nascer com privilégios (isso evita que alguém se
-      // autopromova a admin, se autoconceda isenção ou acesso à presença
-      // no próprio cadastro).
-      allow create: if isOwner(uid)
-        && request.resource.data.adminAccess == false
-        && request.resource.data.isentoManual == false
-        && request.resource.data.presencaAccess == false
-        && request.resource.data.totalPago == 0;
+      // no cadastro inicial, a pessoa só pode criar o PRÓPRIO documento e não
+      // pode nascer com privilégios (evita que alguém se autopromova a admin ou
+      // se autoconceda o acesso de marcar presença).
+      // O admin também pode criar cadastros de terceiros — é o que a importação
+      // do formato antigo faz ao trazer as pessoas que já existiam.
+      allow create: if isAdmin()
+        || (isOwner(uid)
+            && request.resource.data.adminAccess == false
+            && request.resource.data.presencaAccess == false);
 
-      // o dono pode editar os próprios dados (inclusive registrar
-      // pagamentos, que atualizam totalPago), mas não pode mudar
-      // adminAccess, isentoManual nem presencaAccess por conta própria —
+      // o dono edita os próprios dados, mas não pode mudar os acessos —
       // só um admin pode.
       allow update: if isAdmin()
         || (isOwner(uid)
             && request.resource.data.adminAccess == resource.data.adminAccess
-            && request.resource.data.isentoManual == resource.data.isentoManual
             && request.resource.data.presencaAccess == resource.data.presencaAccess);
 
       allow delete: if isAdmin();
     }
 
-    // ---------- lista de posições/instrumentos (isenção automática) ----------
-    match /posicoes/{id} {
+    // ---------- edições do carnaval ----------
+    match /edicoes/{eid} {
       allow read: if isSignedIn();
       allow write: if isAdmin();
+
+      // ---------- inscrição de cada pessoa naquele carnaval ----------
+      match /inscricoes/{uid} {
+        allow read: if isSignedIn();
+
+        // a pessoa se inscreve sozinha só numa edição ABERTA, e não pode nascer
+        // isenta nem com pagamento já lançado.
+        allow create: if (isAdmin() && edicaoNaoEncerrada(eid))
+          || (isOwner(uid) && edicaoAberta(eid)
+              && request.resource.data.isentoManual == false
+              && request.resource.data.totalPago == 0);
+
+        // o dono atualiza os próprios dados da inscrição (inclusive totalPago,
+        // ao registrar um pagamento), mas a isenção só o admin concede.
+        allow update: if (isAdmin() && edicaoNaoEncerrada(eid))
+          || (isOwner(uid) && edicaoAberta(eid)
+              && request.resource.data.isentoManual == resource.data.isentoManual);
+
+        allow delete: if isAdmin() && edicaoNaoEncerrada(eid);
+      }
+
+      // ---------- posições, ensaios, músicas e valores daquele carnaval ----------
+      match /posicoes/{id} {
+        allow read: if isSignedIn();
+        allow write: if isAdmin() && edicaoNaoEncerrada(eid);
+      }
+      match /ensaios/{id} {
+        allow read: if isSignedIn();
+        allow write: if isAdmin() && edicaoNaoEncerrada(eid);
+      }
+      match /musicas/{id} {
+        allow read: if isSignedIn();
+        allow write: if isAdmin() && edicaoNaoEncerrada(eid);
+      }
+      match /config/{id} {
+        allow read: if isSignedIn();
+        allow write: if isAdmin() && edicaoNaoEncerrada(eid);
+      }
+
+      // ---------- pagamentos individuais (pix/data/valor) ----------
+      // só o próprio dono lê os detalhes; o admin usa o total já somado na
+      // inscrição para o relatório, então não precisa ler aqui.
+      match /pagamentos/{id} {
+        allow read: if isSignedIn() && resource.data.uid == request.auth.uid;
+        allow create: if isSignedIn()
+          && request.resource.data.uid == request.auth.uid
+          && edicaoNaoEncerrada(eid)
+          && request.resource.data.valor is number
+          && request.resource.data.valor > 0;
+        allow update, delete: if false; // histórico de pagamento não é editável nem removível
+      }
+
+      // ---------- presença nos ensaios ----------
+      // qualquer pessoa logada VÊ a presença de todos; só quem tem
+      // podeEditarPresenca() marca/desmarca, e apenas em edição não encerrada.
+      // O admin tem um caminho próprio, sem a exigência de updatedBy == ele
+      // mesmo, porque a importação do formato antigo traz registros históricos
+      // marcados por outras pessoas.
+      match /presencas/{id} {
+        allow read: if isSignedIn();
+        allow create, update: if (isAdmin() && edicaoNaoEncerrada(eid))
+          || (podeEditarPresenca()
+              && edicaoNaoEncerrada(eid)
+              && request.resource.data.updatedBy == request.auth.uid
+              && request.resource.data.presente is bool);
+        allow delete: if false;
+      }
     }
 
-    // ---------- datas de ensaio ----------
-    match /ensaios/{id} {
+    // ============================================================
+    // FORMATO ANTIGO (antes da separação por edições)
+    // Mantido só para leitura, para que a importação única consiga ler os dados
+    // que já existiam. Depois de importar e conferir tudo, estes blocos podem ser
+    // apagados — e, junto com eles, as coleções antigas no Firebase Console.
+    // ============================================================
+    match /users/{uid} {
       allow read: if isSignedIn();
-      allow write: if isAdmin();
+      allow write: if false;
     }
-
-    // ---------- repertório de músicas ----------
-    match /musicas/{id} {
-      allow read: if isSignedIn();
-      allow write: if isAdmin();
-    }
-
-    // ---------- valores/prazos da anuidade (doc único "precos") ----------
-    match /config/{id} {
-      allow read: if isSignedIn();
-      allow write: if isAdmin();
-    }
-
-    // ---------- pagamentos individuais (pix/data/valor) ----------
-    // só o próprio dono lê os detalhes; o admin usa o total já somado em
-    // users/{uid}.totalPago para o relatório, então não precisa ler aqui.
+    match /posicoes/{id}   { allow read: if isSignedIn(); allow write: if false; }
+    match /ensaios/{id}    { allow read: if isSignedIn(); allow write: if false; }
+    match /musicas/{id}    { allow read: if isSignedIn(); allow write: if false; }
+    match /config/{id}     { allow read: if isSignedIn(); allow write: if false; }
+    match /presencas/{id}  { allow read: if isSignedIn(); allow write: if false; }
     match /pagamentos/{id} {
       allow read: if isSignedIn() && resource.data.uid == request.auth.uid;
-      allow create: if isSignedIn()
-        && request.resource.data.uid == request.auth.uid
-        && request.resource.data.valor is number
-        && request.resource.data.valor > 0;
-      allow update, delete: if false; // histórico de pagamento não é editável nem removível
-    }
-
-    // ---------- presença nos ensaios ----------
-    // qualquer pessoa logada pode VER a presença de todos, mas só quem tem
-    // podeEditarPresenca() (admin ou presencaAccess concedido individualmente)
-    // pode marcar/desmarcar a presença de qualquer pessoa.
-    match /presencas/{id} {
-      allow read: if isSignedIn();
-      allow create, update: if podeEditarPresenca()
-        && request.resource.data.updatedBy == request.auth.uid
-        && request.resource.data.presente is bool;
-      allow delete: if false;
+      allow write: if false;
     }
   }
 }
