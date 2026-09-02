@@ -38,7 +38,7 @@ async function fillDataEmTresCampos(page, idPrefix, iso) {
 
 /* Cadastro completo. O passo 2 pede só os dados permanentes; havendo carnaval
    aberto, vem em seguida o passo 3, a inscrição naquele carnaval. */
-async function registrar(page, { email, nome, sobrenome, posicao, posicaoOutro, camisa, dataNascimento = '1996-05-10', celular = '(21) 90000-0000', comEdicaoAberta = true }) {
+async function registrar(page, { email, nome, sobrenome, apelido, posicao, posicaoOutro, camisa, dataNascimento = '1996-05-10', celular = '(21) 90000-0000', comEdicaoAberta = true }) {
   await page.click('#btn-goto-register');
   await page.waitForSelector('#form-register1');
   await page.fill('#reg-email', email);
@@ -48,6 +48,7 @@ async function registrar(page, { email, nome, sobrenome, posicao, posicaoOutro, 
   await page.waitForSelector('#form-register2', { timeout: 5000 });
   await page.fill('#c-nome', nome);
   await page.fill('#c-sobrenome', sobrenome);
+  if (apelido) await page.fill('#c-apelido', apelido);
   await page.fill('#c-celular', celular);
   await fillDataEmTresCampos(page, 'c-datanasc', dataNascimento);
   await page.click('#form-register2 button[type=submit]');
@@ -113,6 +114,26 @@ async function main() {
   // admin, senão fica sem saída (ninguém pode criar a primeira edição).
   ok('Site sem admin nenhum explica o passo único do Firebase Console', html.includes('É você quem organiza a bateria?'));
   await logout(page);
+
+  console.log('\n== 1b. Erro de login não apaga o e-mail nem fica preso na tela ==');
+  await page.click('#btn-goto-login');
+  await page.waitForSelector('#form-login');
+  await page.fill('#log-email', 'bruno@example.com');
+  await page.fill('#log-senha', 'senha-errada');
+  await page.click('#form-login button[type=submit]');
+  await page.waitForTimeout(400);
+  ok('A mensagem de erro aparece', (await appHtml(page)).includes('E-mail ou senha incorretos'));
+  ok('O e-mail digitado continua no campo depois do erro', (await page.locator('#log-email').inputValue()) === 'bruno@example.com');
+  // "Esqueci minha senha" lê o campo de e-mail: se ele fosse apagado, a
+  // recuperação de senha ficava inacessível logo depois de errar a senha.
+  ok('O link de recuperar senha ainda enxerga o e-mail', (await page.locator('#log-email').inputValue()).length > 0);
+  await page.click('#back-to-landing2');
+  await page.waitForTimeout(200);
+  await page.click('#btn-goto-login');
+  await page.waitForTimeout(200);
+  ok('Ao voltar para o login, o erro antigo não está mais lá', !(await appHtml(page)).includes('E-mail ou senha incorretos'));
+  await page.click('#back-to-landing2');
+  await page.waitForSelector('#btn-goto-login');
 
   console.log('\n== 2. Bootstrap do primeiro admin (passo único documentado no SETUP.md) ==');
   await page.evaluate(() => window.__mock.grantAdminAccessByEmail('bruno@example.com'));
@@ -184,6 +205,29 @@ async function main() {
   // edição cadastrada" — mesmo tendo uma em preparação, que é o caso normal de
   // quem está montando o carnaval do ano seguinte.
   ok('Depois de sair e voltar, o admin continua vendo a edição em preparação', html.includes('Carnaval do Fogo e Paixão 2027') && !html.includes('Nenhuma edição do carnaval cadastrada ainda'));
+
+  console.log('\n== 3c. Nada do que está sendo digitado se perde quando chegam dados de outra pessoa ==');
+  // O render() roda a cada dado que chega em tempo real. Antes, isso destruía os
+  // campos preenchidos e o foco — a pessoa seguia digitando no vazio.
+  await page.click('#btn-goto-edicoes');
+  await page.waitForTimeout(200);
+  await page.click('#btn-toggle-nova-edicao');
+  await page.waitForTimeout(150);
+  await page.click('#nova-edicao-nome');
+  await page.type('#nova-edicao-nome', 'Carnaval do Fog');
+  await page.evaluate(async () => {
+    const fb = await import('./firebase-init.mock.js');
+    const ref = await fb.addDoc(fb.collection(fb.db, 'pessoas'), { nome: 'zz', sobrenome: 'externo', adminAccess: false });
+    await fb.deleteDoc(fb.doc(fb.db, 'pessoas', ref.id));
+  });
+  await page.waitForTimeout(250);
+  ok('O foco continua no campo depois do redesenho', (await page.evaluate(() => document.activeElement && document.activeElement.id)) === 'nova-edicao-nome');
+  await page.type('#nova-edicao-nome', 'o e Paixão 2027');
+  ok('As letras digitadas depois do redesenho entram no campo certo', (await page.locator('#nova-edicao-nome').inputValue()) === 'Carnaval do Fogo e Paixão 2027');
+  await page.click('#btn-toggle-nova-edicao');
+  await page.waitForTimeout(150);
+  await page.click('#btn-back-admin7');
+  await page.waitForTimeout(200);
 
   console.log('\n== 4. Seed de posições e valores padrão dentro da edição ==');
   html = await appHtml(page);
@@ -276,7 +320,25 @@ async function main() {
 
   await registrar(page, { email: 'carla@example.com', nome: 'Carla', sobrenome: 'Dias', posicao: 'Voz', camisa: 'P' });
   await logout(page);
-  await registrar(page, { email: 'duda@example.com', nome: 'Duda', sobrenome: 'Reis', posicao: 'Repique', camisa: 'GG' });
+  await registrar(page, { email: 'duda@example.com', nome: 'Duda', sobrenome: 'Reis', apelido: 'Dudinha do Repique', posicao: 'Repique', camisa: 'GG' });
+  html = await appHtml(page);
+  ok('O site chama a pessoa pelo apelido na saudação', html.includes('Bem-vindo(a), Dudinha do Repique!'));
+  ok('A lista de presença mostra o apelido junto do nome completo', html.includes('Duda Reis') && html.includes('Dudinha do Repique'));
+  // O apelido é permanente, então fica em "Meus dados" e pode ser mudado ali.
+  await page.click('#btn-edit-data');
+  await page.waitForTimeout(200);
+  ok('O apelido aparece preenchido ao editar meus dados', (await page.locator('#e-apelido').inputValue()) === 'Dudinha do Repique');
+  await page.fill('#e-apelido', 'Dudinha');
+  await page.click('#form-edit-mydata button[type=submit]');
+  await page.waitForTimeout(300);
+  html = await appHtml(page);
+  ok('Apelido alterado passa a valer na saudação', html.includes('Bem-vindo(a), Dudinha!'));
+  await logout(page);
+
+  await login(page, 'carla@example.com');
+  html = await appHtml(page);
+  ok('Quem não preencheu apelido continua sendo chamado pelo primeiro nome', html.includes('Bem-vindo(a), Carla!'));
+  ok('E na lista aparece só o nome, sem aspas vazias', html.includes('Carla Dias') && !html.includes('Carla Dias</td>”'));
   await logout(page);
 
   await login(page, 'bruno@example.com');
@@ -720,22 +782,22 @@ async function main() {
   ok('Cabeçalho da coluna mostra também a data do desfile', colunas[1].includes('09/02/2027'));
 
   // Ana tocou nos dois anos, com posições diferentes; Duda só em 2027.
-  const linhaAna = await page.locator('#hist-pessoas-tbody tr[data-hist-nome="ana silva"]').innerHTML();
+  const linhaAna = await page.locator('#hist-pessoas-tbody tr[data-hist-nome*="ana silva"]').innerHTML();
   ok('Ana aparece com a posição de 2027 (Surdo 1) e a de 2028 (Caixa)', linhaAna.includes('Surdo 1') && linhaAna.includes('Caixa'));
-  const linhaDuda = await page.locator('#hist-pessoas-tbody tr[data-hist-nome="duda reis"]').innerHTML();
+  const linhaDuda = await page.locator('#hist-pessoas-tbody tr[data-hist-nome*="duda reis"]').innerHTML();
   ok('Duda tocou em 2027', linhaDuda.includes('Repique'));
   ok('Duda não tem inscrição em 2028 (célula vazia, não "não tocou")', linhaDuda.includes('—'));
   // Os três estados possíveis da célula precisam ser distinguíveis entre si.
-  const linhaCarla = await page.locator('#hist-pessoas-tbody tr[data-hist-nome="carla dias"]').innerHTML();
+  const linhaCarla = await page.locator('#hist-pessoas-tbody tr[data-hist-nome*="carla dias"]').innerHTML();
   ok('Carla, inscrita em 2028 mas que não vai tocar, aparece como "Não tocou"', linhaCarla.includes('Não tocou'));
   ok('"Não tocou" (inscrito) é visualmente diferente de "—" (sem inscrição)', linhaCarla.includes('badge-warning') && linhaDuda.includes('<span class="hint">—'));
-  ok('Carla conta 1 carnaval tocado (2027), não 2', (await page.locator('#hist-pessoas-tbody tr[data-hist-nome="carla dias"] .hist-total-pessoa').textContent()) === '1');
-  ok('Coluna "Carnavais" conta em quantos a pessoa tocou', (await page.locator('#hist-pessoas-tbody tr[data-hist-nome="ana silva"] .hist-total-pessoa').textContent()) === '2');
+  ok('Carla conta 1 carnaval tocado (2027), não 2', (await page.locator('#hist-pessoas-tbody tr[data-hist-nome*="carla dias"] .hist-total-pessoa').textContent()) === '1');
+  ok('Coluna "Carnavais" conta em quantos a pessoa tocou', (await page.locator('#hist-pessoas-tbody tr[data-hist-nome*="ana silva"] .hist-total-pessoa').textContent()) === '2');
 
-  const linhaMusica = await page.locator('#hist-musicas-tbody tr[data-hist-nome="ventania"]').innerHTML();
+  const linhaMusica = await page.locator('#hist-musicas-tbody tr[data-hist-nome*="ventania"]').innerHTML();
   ok('Música ensaiada em 2027 mostra em quantos ensaios foi tocada', linhaMusica.includes('1 ensaio'));
   ok('Música que não existe no repertório de 2028 aparece vazia naquele ano', linhaMusica.includes('—'));
-  const linhaAquarela = await page.locator('#hist-musicas-tbody tr[data-hist-nome="aquarela (editada)"]').innerHTML();
+  const linhaAquarela = await page.locator('#hist-musicas-tbody tr[data-hist-nome*="aquarela (editada)"]').innerHTML();
   ok('Música cadastrada mas nunca ensaiada aparece como "No repertório"', linhaAquarela.includes('No repertório'));
 
   console.log('\n== 26d. Filtro do histórico geral (sem perder o foco do campo) ==');
@@ -749,6 +811,9 @@ async function main() {
   ok('Filtro deixa só a Ana na tabela de batuqueiros', visiveis === 1);
   const rodapeDepois = await page.locator('.hist-rodape-pessoas').first().textContent();
   ok('Rodapé recalcula com o filtro aplicado (1)', rodapeDepois === '1');
+  await page.fill('#hist-filtro', 'dudinha');
+  await page.waitForTimeout(250);
+  ok('A busca também encontra a pessoa pelo apelido', (await page.locator('#hist-pessoas-tbody tr[data-hist-nome]:visible').count()) === 1);
   await page.fill('#hist-filtro', '');
   await page.waitForTimeout(250);
   ok('Limpar o filtro traz todo mundo de volta', (await page.locator('#hist-pessoas-tbody tr[data-hist-nome]:visible').count()) === 4);
@@ -870,6 +935,58 @@ async function main() {
   ok('O repertório antigo foi importado', html.includes('1 música cadastrada'));
   ok('Os valores da anuidade antigos foram importados', html.includes('210,00'));
   ok('O total já pago foi preservado (R$ 210 arrecadados)', html.includes('210,00'));
+
+  console.log('\n== 29b. A importação não pode ser rodada duas vezes ==');
+  // As coleções antigas continuam existindo depois de importar, então "ainda há
+  // dados antigos" não serve de guarda. Sem o bloqueio, um segundo clique criava
+  // uma edição duplicada, sobrescrevia os cadastros com os dados antigos —
+  // rebaixando quem tivesse virado admin depois — e deixava dois carnavais abertos.
+  const edicoesAntes = await page.evaluate(() => Object.keys(window.__mock.dumpStore().edicoes || {}).length);
+  await page.click('#btn-goto-edicoes');
+  await page.waitForTimeout(250);
+  await page.click('#btn-migrar-legado');
+  await page.waitForTimeout(600);
+  const edicoesDepois = await page.evaluate(() => Object.keys(window.__mock.dumpStore().edicoes || {}).length);
+  ok('Rodar a importação de novo não cria uma segunda edição', edicoesDepois === edicoesAntes);
+  const abertasAposImportar = await page.evaluate(() => Object.values(window.__mock.dumpStore().edicoes || {}).filter(e => e.status === 'aberta').length);
+  ok('Continua havendo no máximo um carnaval aberto', abertasAposImportar === 1);
+  // Um acesso concedido DEPOIS da importação não pode ser desfeito por ela.
+  await page.evaluate(async () => {
+    const fb = await import('./firebase-init.mock.js');
+    const uid = window.__mock.uidPorEmail('pedro@example.com');
+    await fb.updateDoc(fb.doc(fb.db, 'pessoas', uid), { apelido: 'Pedrão' });
+  });
+  await page.waitForTimeout(250);
+  await page.click('#btn-migrar-legado');
+  await page.waitForTimeout(600);
+  const apelidoDepois = await page.evaluate(() => {
+    const uid = window.__mock.uidPorEmail('pedro@example.com');
+    return window.__mock.dumpStore().pessoas[uid].apelido;
+  });
+  ok('Mudanças feitas depois da importação não são desfeitas por um novo clique', apelidoDepois === 'Pedrão');
+
+  // Com o carnaval importado ENCERRADO, a barreira de "já existe um aberto" não
+  // vale mais — o que segura é a marca de importação na própria edição. Sem ela,
+  // um clique aqui recriaria tudo numa edição nova.
+  await page.click('[data-encerrar-edicao="2027-1"]');
+  await page.waitForTimeout(400);
+  await page.click('#btn-migrar-legado');
+  await page.waitForTimeout(600);
+  const edicoesAposEncerrar = await page.evaluate(() => Object.keys(window.__mock.dumpStore().edicoes || {}).length);
+  ok('Mesmo sem carnaval aberto, a importação segue bloqueada por já ter sido feita', edicoesAposEncerrar === edicoesAntes);
+  const apelidoFinal = await page.evaluate(() => {
+    const uid = window.__mock.uidPorEmail('pedro@example.com');
+    return window.__mock.dumpStore().pessoas[uid].apelido;
+  });
+  ok('E os cadastros continuam intactos', apelidoFinal === 'Pedrão');
+  // devolve a edição ao ar para o restante da checagem: encerrada → reabrir
+  // (volta a "em preparação") → abrir para os batuqueiros
+  await page.click('[data-reabrir-edicao="2027-1"]');
+  await page.waitForTimeout(400);
+  await page.click('[data-abrir-edicao="2027-1"]');
+  await page.waitForTimeout(400);
+  await page.click('#btn-back-admin7');
+  await page.waitForTimeout(250);
 
   await page.click('#btn-back-batuqueiro');
   await page.waitForTimeout(300);

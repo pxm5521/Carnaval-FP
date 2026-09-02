@@ -110,7 +110,7 @@ A partir daí, você (como admin) pode conceder acesso admin a outras pessoas di
 
 ## Parte 5 — Criar a primeira edição do carnaval
 
-O site guarda um carnaval por **edição** (2027, 2028, ...). Cada edição tem as próprias posições, ensaios, músicas, valores de anuidade, inscrições e presenças — é isso que permite acumular um histórico ano após ano sem misturar os dados de um carnaval com os do outro. Os dados permanentes de cada pessoa (nome, sobrenome, celular, data de nascimento) ficam fora das edições e nunca precisam ser redigitados.
+O site guarda um carnaval por **edição** (2027, 2028, ...). Cada edição tem as próprias posições, ensaios, músicas, valores de anuidade, inscrições e presenças — é isso que permite acumular um histórico ano após ano sem misturar os dados de um carnaval com os do outro. Os dados permanentes de cada pessoa (nome, sobrenome, apelido, celular, data de nascimento) ficam fora das edições e nunca precisam ser redigitados.
 
 No painel admin, vá em **"Gerenciar edições" → "Criar nova edição"**:
 
@@ -135,7 +135,7 @@ Se precisar corrigir algo depois do carnaval, use **"Reabrir"** na tela de ediç
 
 Quando você abre uma edição nova, quem já tem cadastro entra no site e vê uma tela de **"Confirmar inscrição"**, já preenchida com os dados do último carnaval em que a pessoa participou (posição, camisa, se vai tocar). Ela só confere, ajusta o que mudou e confirma. Nome e data de nascimento não são pedidos de novo.
 
-Quem é novo na bateria passa pelos mesmos passos, em ordem: cria o login, preenche o cadastro (só o que vale para sempre — nome, sobrenome, celular, nascimento) e então faz a inscrição no carnaval que estiver aberto. Ou seja, **posição, camisa e "vai tocar" nunca são perguntados como se fossem parte do cadastro** — eles pertencem a um carnaval específico, e é por isso que aparecem numa tela própria, a mesma que a pessoa vai reencontrar a cada ano. Se não houver carnaval aberto no momento, o cadastro é concluído normalmente e a inscrição fica para quando você abrir a próxima edição.
+Quem é novo na bateria passa pelos mesmos passos, em ordem: cria o login, preenche o cadastro (só o que vale para sempre — nome, sobrenome, apelido, celular, nascimento) e então faz a inscrição no carnaval que estiver aberto. Ou seja, **posição, camisa e "vai tocar" nunca são perguntados como se fossem parte do cadastro** — eles pertencem a um carnaval específico, e é por isso que aparecem numa tela própria, a mesma que a pessoa vai reencontrar a cada ano. Se não houver carnaval aberto no momento, o cadastro é concluído normalmente e a inscrição fica para quando você abrir a próxima edição.
 
 Cada pessoa também passa a ter um **"Meu histórico de carnavais"**, com a posição de cada ano, a situação da anuidade e quantos ensaios frequentou.
 
@@ -178,11 +178,15 @@ Se você tiver o Node.js instalado, também há um script de teste automatizado 
 
 **E se eu esquecer minha senha?** Na tela de login há um link "Esqueci minha senha", que envia um e-mail de redefinição pelo próprio Firebase.
 
+**Um batuqueiro pode adulterar o próprio valor pago?** Tecnicamente sim, e é uma limitação conhecida de um site sem servidor próprio. O total pago fica no cadastro da pessoa naquele carnaval, e as regras precisam deixar ela mesma gravar ali (é o que acontece quando registra um pagamento). Alguém com conhecimento técnico conseguiria escrever um valor diferente por fora do site. O comprovante de cada pagamento, esse sim, é registro separado e não pode ser alterado nem apagado por ninguém — então uma divergência entre o total e a lista de pagamentos é detectável. Para o tamanho e a confiança de uma bateria isso é aceitável; eliminar de vez exigiria um servidor próprio (plano pago do Firebase).
+
+**Apaguei alguém de um carnaval por engano; e os pagamentos dela?** Os comprovantes ficam guardados (por segurança, pagamento não é apagável). Se a pessoa se inscrever de novo naquele mesmo carnaval, o total pago recomeça do zero enquanto a lista de comprovantes antigos continua aparecendo para ela — nesse caso, registre o acerto ou peça para conferirem juntos, porque o site não recalcula sozinho.
+
 **Como adiciono mais um organizador?** Painel admin → Cadastros → editar a pessoa → marcar "Acesso ao painel admin". Ela continua aparecendo normalmente nas listas de presença e pagamento, só ganha também a visão de admin.
 
 **Como registro quais músicas foram ensaiadas?** Painel admin → "Repertório / músicas" cadastra o repertório (nome, tom e cantor(a) de cada música, em ordem alfabética). Depois, em Painel admin → Ensaios, cada data tem um botão "Editar músicas" onde você marca quais músicas dessa lista foram tocadas naquele ensaio. Tanto o repertório quanto as marcações valem só para a edição em que foram feitos.
 
-**O que exatamente é guardado por carnaval e o que é permanente?** Permanente (vale para sempre, em `/pessoas`): nome, sobrenome, e-mail, celular, data de nascimento, acesso ao painel admin e acesso para marcar presença. Por carnaval (dentro de `/edicoes/{id}`): posição/instrumento, tamanho da camisa, se vai tocar, isenção individual, forma de pagamento e valor pago, além das posições disponíveis, ensaios, repertório, valores da anuidade e presenças daquele ano.
+**O que exatamente é guardado por carnaval e o que é permanente?** Permanente (vale para sempre, em `/pessoas`): nome, sobrenome, apelido, e-mail, celular, data de nascimento, acesso ao painel admin e acesso para marcar presença. Por carnaval (dentro de `/edicoes/{id}`): posição/instrumento, tamanho da camisa, se vai tocar, isenção individual, forma de pagamento e valor pago, além das posições disponíveis, ensaios, repertório, valores da anuidade e presenças daquele ano.
 
 **Posso ver os dados de um carnaval antigo?** Sim. No painel admin, o seletor **"Estou vendo os dados de"** troca a edição que está sendo exibida — todas as telas (ensaios, posições, músicas, relatório, cadastros) passam a mostrar aquele carnaval. Se a edição estiver encerrada, tudo fica só leitura, com um aviso no topo. Cada batuqueiro também tem o próprio "Meu histórico de carnavais".
 

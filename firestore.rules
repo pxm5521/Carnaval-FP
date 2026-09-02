@@ -46,11 +46,17 @@ service cloud.firestore {
 
     // true se o usuário logado pode marcar presença nos ensaios: todo admin pode,
     // e além deles quem recebeu individualmente presencaAccess = true.
+    // Igual ao isAdmin(): durante a transição o acesso pode estar só no cadastro
+    // antigo. Sem essa segunda origem, quem recebeu o acesso antes da importação
+    // via os botões SIM/NÃO na tela mas levava erro de permissão ao clicar.
     function podeEditarPresenca() {
       return isAdmin()
         || (isSignedIn()
             && exists(/databases/$(database)/documents/pessoas/$(request.auth.uid))
-            && get(/databases/$(database)/documents/pessoas/$(request.auth.uid)).data.presencaAccess == true);
+            && get(/databases/$(database)/documents/pessoas/$(request.auth.uid)).data.presencaAccess == true)
+        || (isSignedIn()
+            && exists(/databases/$(database)/documents/users/$(request.auth.uid))
+            && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.presencaAccess == true);
     }
 
     function statusDaEdicao(eid) {

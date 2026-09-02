@@ -34,7 +34,7 @@ const DEFAULT_PRECOS = {
 
 /* Estados possíveis de uma edição do carnaval. */
 const EDICAO_STATUS = {
-  preparando: { label: "Em preparação", cls: "badge-warning", sub: "Só o admin vê — os batuqueiros ainda não têm acesso" },
+  preparando: { label: "Em preparação", cls: "badge-warning", sub: "Ainda não liberada — não aparece para os batuqueiros no site" },
   aberta:     { label: "Aberta",        cls: "badge-good",    sub: "Em andamento — os batuqueiros estão usando" },
   encerrada:  { label: "Encerrada",     cls: "badge-isenta",  sub: "Histórico — ninguém edita mais, nem o admin" },
 };
@@ -96,6 +96,12 @@ let myPagamentos = [];      // só os pagamentos do próprio usuário logado, na
 const unsub = { myPessoa: null, pessoas: null, edicoes: null };
 const unsubEd = { inscricoes: null, posicoes: null, ensaios: null, musicas: null, precos: null, presencas: null, myPagamentos: null };
 let edicaoListenersFor = null;  // id da edição para a qual os listeners acima estão ativos
+/* Quais listeners da edição já entregaram o primeiro resultado. Enquanto não
+   entregaram, os caches estão vazios porque ainda não carregaram — e não porque
+   a edição esteja vazia de verdade. Confundir as duas coisas fazia a caixa
+   "carregar padrões" piscar a cada troca de edição; um clique nesse instante
+   duplicava as 17 posições e sobrescrevia os valores da anuidade. */
+let edicaoCarregou = { posicoes: false, precos: false };
 const pagamentosMigradosPara = new Set(); // edições cuja migração de pagamentos próprios já foi tentada
 
 const session = {
@@ -119,6 +125,7 @@ const session = {
   novaEdicaoAno: null,
   novaEdicaoNome: "",
   novaEdicaoData: "",
+  emailDigitado: "",
   historico: null,            // carregado sob demanda em "Meu histórico"
   historicoBusy: false,
   histGeral: null,            // carregado sob demanda no "Histórico geral" do admin
@@ -275,6 +282,7 @@ function limparEstadoDeSessao() {
     novaEdicaoAno: null,
     novaEdicaoNome: "",
     novaEdicaoData: "",
+    emailDigitado: "",
     historico: null,
     historicoBusy: false,
     histGeral: null,
@@ -300,18 +308,18 @@ function setupUserListeners(uid) {
   unsub.myPessoa = onSnapshot(P.pessoa(uid), snap => {
     myPessoa = snap.exists() ? { id: snap.id, ...snap.data() } : null;
     pessoaLoaded = true;
-    render();
+    renderExterno();
   }, onErr("perfil"));
 
   unsub.pessoas = onSnapshot(P.pessoas(), snap => {
     pessoasCache = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-    render();
+    renderExterno();
   }, onErr("lista de pessoas"));
 
   unsub.edicoes = onSnapshot(P.edicoes(), snap => {
     edicoesCache = snap.docs.map(d => ({ id: d.id, ...d.data() }));
     ensureEdicaoListeners();
-    render();
+    renderExterno();
   }, onErr("edições do carnaval"));
 }
 
@@ -332,6 +340,7 @@ function ensureEdicaoListeners() {
   teardownEdicaoListeners();
   edicaoListenersFor = eid;
   limparCachesDaEdicao();
+  edicaoCarregou = { posicoes: false, precos: false };
   if (!eid || !fbUser) return;
 
   unsubEd.inscricoes = onSnapshot(P.inscricoes(eid), snap => {
@@ -344,27 +353,29 @@ function ensureEdicaoListeners() {
       pagamentosMigradosPara.add(eid);
       migrarMeusPagamentos(eid);
     }
-    render();
+    renderExterno();
   }, onErr("inscrições"));
 
   unsubEd.posicoes = onSnapshot(P.posicoes(eid), snap => {
     posicoesCache = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-    render();
+    edicaoCarregou.posicoes = true;
+    renderExterno();
   }, onErr("posições"));
 
   unsubEd.ensaios = onSnapshot(P.ensaios(eid), snap => {
     ensaiosCache = snap.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => (a.data || "").localeCompare(b.data || ""));
-    render();
+    renderExterno();
   }, onErr("ensaios"));
 
   unsubEd.musicas = onSnapshot(P.musicas(eid), snap => {
     musicasCache = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-    render();
+    renderExterno();
   }, onErr("músicas"));
 
   unsubEd.precos = onSnapshot(P.precos(eid), snap => {
     precosCache = snap.exists() ? snap.data() : null;
-    render();
+    edicaoCarregou.precos = true;
+    renderExterno();
   }, onErr("valores da anuidade"));
 
   unsubEd.presencas = onSnapshot(P.presencas(eid), snap => {
@@ -375,12 +386,12 @@ function ensureEdicaoListeners() {
       map[v.uid][v.ensaioId] = !!v.presente;
     });
     presencasCache = map;
-    render();
+    renderExterno();
   }, onErr("presenças"));
 
   unsubEd.myPagamentos = onSnapshot(query(P.pagamentos(eid), where("uid", "==", fbUser.uid)), snap => {
     myPagamentos = snap.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => (a.data || "").localeCompare(b.data || ""));
-    render();
+    renderExterno();
   }, onErr("pagamentos"));
 }
 
@@ -436,6 +447,16 @@ const esc = v => String(v == null ? "" : v)
 const currency = v => (v || 0).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
 const dateBR = iso => { if (!iso) return "—"; const [y, m, d] = iso.split("-"); return `${d}/${m}/${y}`; };
 const fullName = u => `${u.nome || ""} ${u.sobrenome || ""}`.trim();
+/* Como a pessoa prefere ser chamada. Numa bateria quase todo mundo se conhece
+   pelo apelido, então é ele que aparece na saudação; o nome completo continua
+   sendo o registro formal nas listas e relatórios. */
+const apelidoDe = u => ((u && u.apelido) || "").trim();
+const nomeExibicao = u => apelidoDe(u) || (u && u.nome) || "";
+/* Nome completo com o apelido ao lado, em texto secundário, para as listas em
+   que é preciso reconhecer a pessoa sem perder o registro formal. */
+const nomeComApelido = u => `${esc(fullName(u))}${apelidoDe(u) ? ` <span class="muted-sm">“${esc(apelidoDe(u))}”</span>` : ""}`;
+/* Texto usado para busca: encontra tanto pelo nome quanto pelo apelido. */
+const textoBusca = u => `${fullName(u)} ${apelidoDe(u)}`.trim().toLowerCase();
 const hojeISO = () => new Date().toISOString().slice(0, 10);
 const ensaioLabel = e => dateBR(e.data);
 function calcIdade(dataNascISO) {
@@ -606,12 +627,91 @@ function showToast(msg) {
   toastTimer = setTimeout(() => { host.style.display = "none"; }, 3500);
 }
 
-function go(view, extra = {}) { Object.assign(session, { view }, extra); render(); }
+function go(view, extra = {}) {
+  // Mensagens de erro pertencem à tela onde aconteceram: sem isso, um "e-mail ou
+  // senha incorretos" continuava aparecendo sobre o formulário limpo depois de
+  // navegar para outra tela e voltar.
+  session.errors = {};
+  Object.assign(session, { view }, extra);
+  render();
+}
 
 /* ============================================================
    RENDER — roteador principal
    ============================================================ */
 const VIEWS_ADMIN = ["admin", "admin-edicoes", "admin-historico", "admin-precos", "admin-ensaios", "admin-relatorio", "admin-posicoes", "admin-musicas", "admin-pessoas"];
+
+/* ============================================================
+   REDESENHO POR DADOS QUE CHEGAM DE FORA
+   ------------------------------------------------------------
+   render() reconstrói a tela inteira, e ele é chamado a cada dado que chega em
+   tempo real — presença marcada por outra pessoa, um pagamento registrado, um
+   cadastro novo. Se isso acontece enquanto alguém preenche um formulário, o que
+   estava digitado é destruído junto com os elementos, e o foco vai para o corpo
+   da página: a pessoa continua digitando e as letras não aparecem em lugar
+   nenhum. Guardar campo por campo em session resolveria só os formulários que
+   alguém lembrou de cobrir; aqui a proteção é geral — antes de um redesenho
+   causado por dados externos, o conteúdo dos campos, o foco e a posição do
+   cursor são fotografados e recolocados depois.
+
+   Redesenhos disparados por uma ação da própria pessoa continuam usando
+   render() puro: ali limpar o formulário costuma ser o comportamento desejado
+   (por exemplo, o campo "nova posição" tem que esvaziar depois de adicionar).
+   ============================================================ */
+function seletorDoCampo(el) {
+  if (el.id) return `#${CSS.escape(el.id)}`;
+  const dados = Object.entries(el.dataset || {});
+  if (!dados.length) return null;
+  const classe = (el.className || "").split(/\s+/).filter(Boolean)[0];
+  const attrs = dados
+    .map(([k, v]) => `[data-${k.replace(/[A-Z]/g, m => "-" + m.toLowerCase())}="${CSS.escape(v)}"]`)
+    .join("");
+  return `${el.tagName.toLowerCase()}${classe ? "." + CSS.escape(classe) : ""}${attrs}`;
+}
+
+function fotografarFormularios() {
+  const app = document.getElementById("app");
+  if (!app) return null;
+  const valores = [];
+  app.querySelectorAll("input, select, textarea").forEach(el => {
+    const sel = seletorDoCampo(el);
+    if (!sel) return;
+    valores.push({ sel, valor: el.type === "checkbox" || el.type === "radio" ? el.checked : el.value });
+  });
+  const ativo = document.activeElement;
+  const foco = ativo && app.contains(ativo) ? seletorDoCampo(ativo) : null;
+  let selInicio = null, selFim = null;
+  if (foco && typeof ativo.selectionStart === "number") { selInicio = ativo.selectionStart; selFim = ativo.selectionEnd; }
+  return { valores, foco, selInicio, selFim };
+}
+
+function restaurarFormularios(foto) {
+  if (!foto) return;
+  const app = document.getElementById("app");
+  if (!app) return;
+  foto.valores.forEach(({ sel, valor }) => {
+    let el;
+    try { el = app.querySelector(sel); } catch { return; }
+    if (!el) return;
+    if (el.type === "checkbox" || el.type === "radio") el.checked = valor;
+    else el.value = valor;
+  });
+  if (!foto.foco) return;
+  let alvo;
+  try { alvo = app.querySelector(foto.foco); } catch { return; }
+  if (!alvo) return;
+  alvo.focus();
+  if (foto.selInicio !== null && typeof alvo.setSelectionRange === "function") {
+    try { alvo.setSelectionRange(foto.selInicio, foto.selFim); } catch { /* campos que não aceitam seleção */ }
+  }
+}
+
+/* Usado por todos os listeners onSnapshot: redesenha sem atropelar quem digita. */
+function renderExterno() {
+  const foto = fotografarFormularios();
+  render();
+  restaurarFormularios(foto);
+}
 
 function render() {
   const app = document.getElementById("app");
@@ -698,7 +798,7 @@ function viewRegister1() {
       <p class="card-sub">Escolha um e-mail e uma senha para acessar sua área de batuqueiro.</p>
       ${err ? `<div class="error-box">${err}</div>` : ""}
       <form id="form-register1">
-        <div class="field"><label>E-mail</label><input type="email" id="reg-email" required placeholder="seuemail@exemplo.com" ${busy ? "disabled" : ""}></div>
+        <div class="field"><label>E-mail</label><input type="email" id="reg-email" required placeholder="seuemail@exemplo.com" value="${esc(session.emailDigitado)}" ${busy ? "disabled" : ""}></div>
         <div class="field"><label>Senha</label><input type="password" id="reg-senha" required placeholder="Mínimo 6 caracteres" ${busy ? "disabled" : ""}></div>
         <div class="field"><label>Confirmar senha</label><input type="password" id="reg-senha2" required ${busy ? "disabled" : ""}></div>
         <button class="btn-primary" style="width:100%" type="submit" ${busy ? "disabled" : ""}>${busy ? "Enviando..." : "Continuar"}</button>
@@ -737,6 +837,7 @@ function viewRegister2() {
           <div class="field"><label>Nome</label><input type="text" id="c-nome" required value="${esc(d.nome)}"></div>
           <div class="field"><label>Sobrenome</label><input type="text" id="c-sobrenome" required value="${esc(d.sobrenome)}"></div>
         </div>
+        <div class="field"><label>Apelido / como prefere ser chamado(a)</label><input type="text" id="c-apelido" placeholder="Opcional — é assim que a bateria vai te chamar no site" value="${esc(d.apelido)}"></div>
         <div class="field"><label>Celular</label><input type="tel" id="c-celular" required placeholder="(21) 90000-0000" value="${esc(d.celular)}"></div>
         <div class="field">
           <label>Data de nascimento</label>
@@ -761,7 +862,7 @@ function viewLogin() {
       <h2>Entrar na minha conta</h2>
       ${err ? `<div class="error-box">${err}</div>` : ""}
       <form id="form-login">
-        <div class="field"><label>E-mail</label><input type="email" id="log-email" required ${busy ? "disabled" : ""}></div>
+        <div class="field"><label>E-mail</label><input type="email" id="log-email" required value="${esc(session.emailDigitado)}" ${busy ? "disabled" : ""}></div>
         <div class="field"><label>Senha</label><input type="password" id="log-senha" required ${busy ? "disabled" : ""}></div>
         <button class="btn-primary" style="width:100%" type="submit" ${busy ? "disabled" : ""}>${busy ? "Entrando..." : "Entrar"}</button>
       </form>
@@ -827,15 +928,26 @@ function viewConfirmarInscricao(u) {
   const jaParticipou = !!session.draftInscricaoDeEdicao;
 
   if (ed.status !== "aberta") {
+    // Dois casos caem aqui e o texto precisa dizer a verdade sobre cada um: um
+    // carnaval encerrado do qual a pessoa não participou, e um carnaval ainda em
+    // preparação (o admin acabou de criar e voltou para a própria área). Antes,
+    // os dois diziam "está encerrado" e a tela não tinha nenhuma saída.
+    const emPreparacao = ed.status === "preparando";
     return `
     ${headerBar(u)}
     <div class="wrap">
+      ${bannerEdicao(ed)}
       <div class="center-wrap card">
-        <h2 style="text-align:center">Você não participou desta edição</h2>
-        <p class="card-sub" style="text-align:center">O ${esc(edicaoLabel(ed))} está encerrado e você não tinha inscrição nele.</p>
-        <div style="display:flex; justify-content:center; gap:8px;">
+        <h2 style="text-align:center">${emPreparacao ? "Este carnaval ainda não foi aberto" : "Você não participou desta edição"}</h2>
+        <p class="card-sub" style="text-align:center">${emPreparacao
+          ? `O ${esc(edicaoLabel(ed))} está em preparação, então ainda não dá para se inscrever nele. Abra-o em "Gerenciar edições" quando estiver pronto.`
+          : `O ${esc(edicaoLabel(ed))} está encerrado e você não tinha inscrição nele.`}</p>
+        <div style="display:flex; justify-content:center; gap:8px; flex-wrap:wrap;">
           <button class="btn-secondary btn-sm" id="btn-goto-historico">Ver meu histórico</button>
         </div>
+        <p class="hint" style="text-align:center; margin-top:10px;">${edicaoAberta()
+          ? `Use o botão acima para voltar ao ${esc(edicaoLabel(edicaoAberta()))}, o carnaval em andamento.`
+          : "Nenhum carnaval está aberto no momento."}</p>
       </div>
     </div>`;
   }
@@ -951,7 +1063,7 @@ function viewBatuqueiro() {
           <tbody>
             ${pessoasFiltradas.map(p => `
               <tr class="${p.id === u.id ? "me" : ""}">
-                <td class="name-cell">${esc(fullName(p))}${p.id === u.id ? ' <span class="muted-sm">(você)</span>' : ""}</td>
+                <td class="name-cell">${nomeComApelido(p)}${p.id === u.id ? ' <span class="muted-sm">(você)</span>' : ""}</td>
                 <td>${esc(p.posicao)}</td>
                 ${ensaios.map(e => {
                   const on = !!(presencasCache[p.id] && presencasCache[p.id][e.id]);
@@ -1079,6 +1191,7 @@ function renderViewMyData(u, ed) {
   return `
     <div class="grid-2">
       <div><div class="hint">Nome completo</div><div>${esc(fullName(u))}</div></div>
+      <div><div class="hint">Apelido</div><div>${esc(apelidoDe(u)) || "—"}</div></div>
       <div><div class="hint">E-mail</div><div>${esc(u.email)}</div></div>
       <div><div class="hint">Celular</div><div>${esc(u.celular)}</div></div>
       <div><div class="hint">Data de nascimento</div><div>${dateBR(u.dataNascimento)}${calcIdade(u.dataNascimento) !== null ? ` (${calcIdade(u.dataNascimento)} anos)` : ""}</div></div>
@@ -1097,6 +1210,7 @@ function renderEditMyData(u) {
         <div class="field"><label>Nome</label><input type="text" id="e-nome" value="${esc(u.nome)}" required></div>
         <div class="field"><label>Sobrenome</label><input type="text" id="e-sobrenome" value="${esc(u.sobrenome)}" required></div>
       </div>
+      <div class="field"><label>Apelido / como prefere ser chamado(a)</label><input type="text" id="e-apelido" placeholder="Opcional" value="${esc(apelidoDe(u))}"></div>
       <div class="field"><label>Celular</label><input type="tel" id="e-celular" value="${esc(u.celular)}" required></div>
       <div class="field">
         <label>Data de nascimento</label>
@@ -1137,7 +1251,7 @@ function headerBar(u) {
         <img src="logo.png" alt="Logo Carnaval do Fogo e Paixão" class="brand-logo brand-logo-sm">
         <div>
           <h1 style="font-size:22px; margin:0;">Área do Batuqueiro</h1>
-          <p style="margin:0;">Bem-vindo(a), ${esc(u.nome)}!${ed ? ` · ${esc(edicaoLabel(ed))}` : ""}</p>
+          <p style="margin:0;">Bem-vindo(a), ${esc(nomeExibicao(u))}!${ed ? ` · ${esc(edicaoLabel(ed))}` : ""}</p>
         </div>
       </div>
       <div style="display:flex; gap:8px;">
@@ -1229,21 +1343,22 @@ async function prepararDraftInscricao() {
    Não usa listeners em tempo real de propósito: é uma tela de consulta, e manter
    listeners abertos em todas as edições passadas custaria leituras à toa. */
 async function carregarHistorico() {
-  if (!fbUser) return;
+  if (!fbUser || session.historicoBusy) return;
+  const uid = fbUser.uid;            // fixado antes dos awaits: pode sair no meio
   session.historicoBusy = true;
   render();
   const out = [];
   try {
     for (const ed of edicoesOrdenadas()) {
-      const inscSnap = await getDoc(P.inscricao(ed.id, fbUser.uid));
+      const inscSnap = await getDoc(P.inscricao(ed.id, uid));
       if (!inscSnap.exists()) continue;
-      const inscricao = { id: fbUser.uid, ...inscSnap.data() };
+      const inscricao = { id: uid, ...inscSnap.data() };
 
       const [posSnap, precoSnap, ensaiosSnap, presSnap] = await Promise.all([
         getDocs(P.posicoes(ed.id)),
         getDoc(P.precos(ed.id)),
         getDocs(P.ensaios(ed.id)),
-        getDocs(query(P.presencas(ed.id), where("uid", "==", fbUser.uid))),
+        getDocs(query(P.presencas(ed.id), where("uid", "==", uid))),
       ]);
       const posicoes = posSnap.docs.map(d => ({ id: d.id, ...d.data() }));
       const precos = precoSnap.exists() ? precoSnap.data() : null;
@@ -1258,14 +1373,17 @@ async function carregarHistorico() {
         statusPagamento: statusPagamentoHistorico(inscricao, posicoes, precos),
       });
     }
-    session.historico = out;
+    if (fbUser && fbUser.uid === uid) session.historico = out;
   } catch (err) {
     console.error("histórico", err);
-    session.historico = [];
-    showToast("Não foi possível carregar o histórico: " + friendlyFirestoreError(err));
+    // Se a pessoa saiu no meio do carregamento, o erro é dela e não interessa a
+    // quem estiver na tela agora — some sem avisar ninguém.
+    if (fbUser && fbUser.uid === uid) {
+      session.historico = [];
+      showToast("Não foi possível carregar o histórico: " + friendlyFirestoreError(err));
+    }
   }
-  session.historicoBusy = false;
-  render();
+  if (fbUser && fbUser.uid === uid) { session.historicoBusy = false; render(); }
 }
 
 /* Mesma regra de paymentStatus(), mas calculada com as posições/preços de uma
@@ -1305,7 +1423,8 @@ function viewAdmin() {
   const hoje = hojeISO();
   const ensaiosRealizados = ensaiosCache.filter(e => e.data <= hoje);
   const statusCounts = contagemPorStatus(todos);
-  const precisaSeed = ed && (!precosCache || posicoesCache.length === 0);
+  const precisaSeed = ed && edicaoEditavel(ed) && edicaoCarregou.posicoes && edicaoCarregou.precos
+    && (!precosCache || posicoesCache.length === 0);
 
   if (!ed) {
     return `
@@ -1485,7 +1604,7 @@ function viewAdminEdicoes() {
                 <td class="name-cell">${esc(edicaoLabel(e))} <span class="muted-sm">(${esc(e.id)})</span></td>
                 <td><input type="date" class="edicao-data-input" data-edicao-id="${e.id}" value="${e.dataDoCarnaval || ""}" ${e.status === "encerrada" ? "disabled" : ""}></td>
                 <td><span class="badge ${statusInfo(e).cls}">${statusInfo(e).label}</span></td>
-                <td>${emCtx ? inscricoesCache.length : "—"}</td>
+                <td>${emCtx ? batuqueirosDaEdicao().length : "—"}</td>
                 <td class="row-actions">
                   ${e.status !== "encerrada" ? `<button class="btn-secondary btn-sm" data-save-edicao="${e.id}">Salvar data</button>` : ""}
                   ${!emCtx ? `<button class="btn-ghost btn-sm" data-ver-edicao="${e.id}">Ver dados</button>` : `<span class="muted-sm">visualizando</span>`}
@@ -1521,6 +1640,8 @@ function viewAdminEdicoes() {
    custaria leituras à toa.
    ============================================================ */
 async function carregarHistoricoGeral() {
+  if (!fbUser || session.histGeralBusy) return;
+  const uid = fbUser.uid;
   session.histGeralBusy = true;
   render();
   try {
@@ -1557,18 +1678,21 @@ async function carregarHistoricoGeral() {
       });
     }
 
-    session.histGeral = {
-      edicoes: eds,
-      porPessoa,
-      musicas: [...musicasPorNome.values()].sort((a, b) => a.nome.localeCompare(b.nome, "pt-BR", { sensitivity: "base" })),
-    };
+    if (fbUser && fbUser.uid === uid) {
+      session.histGeral = {
+        edicoes: eds,
+        porPessoa,
+        musicas: [...musicasPorNome.values()].sort((a, b) => a.nome.localeCompare(b.nome, "pt-BR", { sensitivity: "base" })),
+      };
+    }
   } catch (err) {
     console.error("histórico geral", err);
-    session.histGeral = null;
-    showToast("Não foi possível carregar o histórico geral: " + friendlyFirestoreError(err));
+    if (fbUser && fbUser.uid === uid) {
+      session.histGeral = null;
+      showToast("Não foi possível carregar o histórico geral: " + friendlyFirestoreError(err));
+    }
   }
-  session.histGeralBusy = false;
-  render();
+  if (fbUser && fbUser.uid === uid) { session.histGeralBusy = false; render(); }
 }
 
 /* Recalcula os totais do rodapé a partir das linhas que estão visíveis, para que
@@ -1601,7 +1725,7 @@ function viewAdminHistorico() {
 
   const eds = dados.edicoes;
   const pessoas = [...pessoasCache].sort((a, b) => fullName(a).localeCompare(fullName(b), "pt-BR", { sensitivity: "base" }));
-  const pessoasFiltradas = termo ? pessoas.filter(p => fullName(p).toLowerCase().includes(termo)) : pessoas;
+  const pessoasFiltradas = termo ? pessoas.filter(p => textoBusca(p).includes(termo)) : pessoas;
   const musicasFiltradas = termo ? dados.musicas.filter(m => m.nome.toLowerCase().includes(termo)) : dados.musicas;
 
   const tocou = (uid, edId) => {
@@ -1645,8 +1769,8 @@ function viewAdminHistorico() {
           <tbody id="hist-pessoas-tbody">
             ${pessoasFiltradas.map(p => {
               const total = eds.filter(e => tocou(p.id, e.id)).length;
-              return `<tr data-hist-nome="${esc(fullName(p).toLowerCase())}">
-                <td class="name-cell">${esc(fullName(p))}</td>
+              return `<tr data-hist-nome="${esc(textoBusca(p))}">
+                <td class="name-cell">${nomeComApelido(p)}</td>
                 ${eds.map(e => {
                   const reg = dados.porPessoa[p.id] && dados.porPessoa[p.id][e.id];
                   if (!reg) return `<td><span class="hint">—</span></td>`;
@@ -1727,7 +1851,7 @@ function viewAdminEnsaios() {
   const ed = edicaoCtx();
   const editavel = edicaoEditavel(ed);
   const hoje = hojeISO();
-  const totalPessoas = inscricoesCache.length;
+  const totalPessoas = batuqueirosDaEdicao().length;
   return `
   ${headerBar(u)}
   <div class="wrap">
@@ -1873,7 +1997,12 @@ function viewAdminPrecos() {
 }
 
 function pricingPlanFieldset(planoKey, precos, editavel = true) {
-  const plano = PLANOS[planoKey], cfg = precos[planoKey];
+  const plano = PLANOS[planoKey];
+  // Tolera um documento de preços incompleto (por exemplo vindo da importação):
+  // sem isso, a tela inteira ficava em branco por causa de um campo faltando.
+  const base = (precos && precos[planoKey]) || DEFAULT_PRECOS[planoKey];
+  const cfg = { valor: base.valor, prazos: Array.isArray(base.prazos) ? base.prazos : [] };
+  while (cfg.prazos.length < plano.parcelas) cfg.prazos.push("");
   const dis = editavel ? "" : "disabled";
   return `
     <div style="border:1px solid var(--gridline); border-radius:10px; padding:12px; margin-bottom:12px;">
@@ -2014,7 +2143,7 @@ function viewAdminPessoas() {
       </div>
       ${lista.length === 0 ? '<div class="hint">Nenhuma pessoa encontrada com esse filtro.</div>' : lista.map(p => `
         <div class="list-row">
-          <span class="grow"><b>${esc(fullName(p))}</b> <span class="muted-sm">— ${esc(p.posicao)} · ${esc(p.email)} · camisa ${esc(p.camisa)} · vai tocar: ${esc(p.vaiTocar)}${isIsento(p) ? ` · <span class="badge badge-isenta">Isento — ${esc(isentoMotivo(p))}</span>` : ""}${p.adminAccess ? ` · <span class="badge badge-good">Acesso admin</span>` : ""}${!p.adminAccess && p.presencaAccess ? ` · <span class="badge badge-good">Edita presença</span>` : ""}</span></span>
+          <span class="grow"><b>${nomeComApelido(p)}</b> <span class="muted-sm">— ${esc(p.posicao)} · ${esc(p.email)} · camisa ${esc(p.camisa)} · vai tocar: ${esc(p.vaiTocar)}${isIsento(p) ? ` · <span class="badge badge-isenta">Isento — ${esc(isentoMotivo(p))}</span>` : ""}${p.adminAccess ? ` · <span class="badge badge-good">Acesso admin</span>` : ""}${!p.adminAccess && p.presencaAccess ? ` · <span class="badge badge-good">Edita presença</span>` : ""}</span></span>
           <button class="btn-secondary btn-sm" data-edit-user="${p.id}">Editar</button>
           ${editavel ? `<button class="btn-danger btn-sm" data-remove-user="${p.id}">Tirar da edição</button>` : ""}
         </div>
@@ -2031,7 +2160,7 @@ function viewAdminPessoas() {
       </div>
       ${naoInscritos.map(p => `
         <div class="list-row">
-          <span class="grow"><b>${esc(fullName(p))}</b> <span class="muted-sm">— ${esc(p.email)}</span></span>
+          <span class="grow"><b>${nomeComApelido(p)}</b> <span class="muted-sm">— ${esc(p.email)}</span></span>
           <span class="badge badge-warning">Sem inscrição</span>
         </div>`).join("")}
       <p class="hint" style="margin-top:10px;">Elas continuam com login e cadastro; basta entrarem no site e confirmarem a inscrição nesta edição.</p>
@@ -2047,6 +2176,7 @@ function renderAdminEditUserForm(p, editavel = true) {
         <div class="field"><label>Nome</label><input type="text" id="ae-nome-${p.id}" value="${esc(p.nome)}" ${dis}></div>
         <div class="field"><label>Sobrenome</label><input type="text" id="ae-sobrenome-${p.id}" value="${esc(p.sobrenome)}" ${dis}></div>
       </div>
+      <div class="field"><label>Apelido / como prefere ser chamado(a)</label><input type="text" id="ae-apelido-${p.id}" value="${esc(apelidoDe(p))}"></div>
       <div class="field"><label>Celular</label><input type="tel" id="ae-celular-${p.id}" value="${esc(p.celular)}" ${dis}></div>
       <div class="field">
         <label>Data de nascimento</label>
@@ -2098,8 +2228,38 @@ function renderAdminEditUserForm(p, editavel = true) {
    ver migrarMeusPagamentos(). O total pago vai junto na inscrição, então
    nenhum saldo fica errado nesse meio-tempo.
    ============================================================ */
+/* Grava uma lista de [referência, dados] respeitando o limite de 500 operações
+   por lote do Firestore. Cada bloco é atômico; o conjunto não é — se um bloco
+   falhar, quem chama decide o que fazer com o que já entrou. */
+async function gravarEmBlocos(escritas, tamanhoDoBloco = 400) {
+  for (let i = 0; i < escritas.length; i += tamanhoDoBloco) {
+    const batch = writeBatch(db);
+    escritas.slice(i, i + tamanhoDoBloco).forEach(([ref, dados]) => batch.set(ref, dados));
+    await batch.commit();
+  }
+}
+
 async function migrarDoFormatoAntigo() {
-  if (!confirm("Importar os dados do formato antigo para uma edição nova?\n\nIsso reorganiza os cadastros, posições, ensaios, músicas, valores e presenças que já existem. Rode só uma vez.")) return;
+  // As coleções antigas continuam existindo depois da importação (são só de
+  // leitura, e o próprio SETUP.md orienta apagá-las à mão só depois de conferir
+  // tudo). Por isso "existem dados antigos" NÃO serve de guarda: sem o teste
+  // abaixo, um segundo clique recriaria tudo numa edição nova, sobrescreveria
+  // cada /pessoas com os dados antigos — rebaixando admins promovidos depois —
+  // e deixaria dois carnavais abertos ao mesmo tempo.
+  const jaImportada = edicoesCache.find(e => e.migradaDoFormatoAntigo);
+  if (jaImportada) {
+    alert(`A importação já foi feita: os dados antigos estão no ${edicaoLabel(jaImportada)}.\n\nRodar de novo criaria uma edição duplicada e desfaria mudanças feitas depois (inclusive acessos concedidos no painel), por isso está bloqueado.\n\nSe precisar mesmo refazer, apague antes essa edição no Firebase Console.`);
+    return;
+  }
+  // A edição importada nasce aberta. Se já houver outra aberta, o site passaria a
+  // ter dois carnavais em andamento e qual deles os batuqueiros veem viraria
+  // sorteio — então esse caso é barrado antes de começar.
+  const aberta = edicaoAberta();
+  if (aberta) {
+    alert(`O ${edicaoLabel(aberta)} está aberto agora.\n\nA importação cria um carnaval já aberto, e o site não pode ter dois ao mesmo tempo. Encerre esse carnaval em "Gerenciar edições" antes de importar os dados antigos.`);
+    return;
+  }
+  if (!confirm("Importar os dados do formato antigo para uma edição nova?\n\nIsso reorganiza os cadastros, posições, ensaios, músicas, valores e presenças que já existem. É feito uma única vez.")) return;
   try {
     const usersSnap = await getDocs(collection(db, "users"));
     if (usersSnap.docs.length === 0) {
@@ -2134,36 +2294,44 @@ async function migrarDoFormatoAntigo() {
       criadaEm: serverTimestamp(), migradaDoFormatoAntigo: true,
     });
 
-    const batch = writeBatch(db);
+    // Um writeBatch do Firestore aceita no máximo 500 operações. Uma bateria de
+    // tamanho real estoura isso fácil só com as presenças (uma por pessoa por
+    // ensaio: 40 pessoas × 12 ensaios já são 480), e o lote inteiro seria
+    // recusado. Por isso as escritas são montadas numa lista e enviadas em
+    // blocos.
+    const escritas = [];
     usersSnap.docs.forEach(d => {
       const v = d.data();
-      batch.set(P.pessoa(d.id), {
-        nome: v.nome || "", sobrenome: v.sobrenome || "", email: v.email || "",
+      escritas.push([P.pessoa(d.id), {
+        nome: v.nome || "", sobrenome: v.sobrenome || "", apelido: v.apelido || "", email: v.email || "",
         celular: v.celular || "", dataNascimento: v.dataNascimento || "",
         adminAccess: !!v.adminAccess, presencaAccess: !!v.presencaAccess,
         criadoEm: v.createdAt || serverTimestamp(),
-      });
-      batch.set(P.inscricao(eid, d.id), {
+      }]);
+      escritas.push([P.inscricao(eid, d.id), {
         vaiTocar: v.vaiTocar || "", posicao: v.posicao || "", posicaoOutro: v.posicaoOutro || "",
         camisa: v.camisa || "", isentoManual: !!v.isentoManual,
         formaPagamento: v.formaPagamento || null, totalPago: v.totalPago || 0,
         inscritoEm: serverTimestamp(),
-      });
+      }]);
     });
 
-    posSnap.docs.forEach(d => batch.set(P.posicao(eid, d.id), d.data()));
-    ensSnap.docs.forEach(d => batch.set(P.ensaio(eid, d.id), d.data()));
-    musSnap.docs.forEach(d => batch.set(P.musica(eid, d.id), d.data()));
-    if (precoSnap.exists()) batch.set(P.precos(eid), precoSnap.data());
-    presSnap.docs.forEach(d => batch.set(P.presenca(eid, d.id), d.data()));
+    posSnap.docs.forEach(d => escritas.push([P.posicao(eid, d.id), d.data()]));
+    ensSnap.docs.forEach(d => escritas.push([P.ensaio(eid, d.id), d.data()]));
+    musSnap.docs.forEach(d => escritas.push([P.musica(eid, d.id), d.data()]));
+    if (precoSnap.exists()) escritas.push([P.precos(eid), precoSnap.data()]);
+    presSnap.docs.forEach(d => escritas.push([P.presenca(eid, d.id), d.data()]));
 
     try {
-      await batch.commit();
+      await gravarEmBlocos(escritas);
     } catch (err) {
-      // Se o conteúdo falhar, não deixa uma edição vazia para trás — assim é
-      // seguro tentar de novo depois de resolver o motivo da falha.
+      // Apagar o documento da edição desfaz a marca "já importada", deixando o
+      // admin tentar de novo depois de resolver a causa. O que já tiver entrado
+      // nas subcoleções é reescrito por cima na próxima tentativa, porque o id
+      // da edição volta a ficar livre.
       await deleteDoc(P.edicao(eid)).catch(() => {});
-      throw err;
+      alert("A importação não foi concluída: " + friendlyFirestoreError(err) + "\n\nNada ficou valendo — pode tentar de novo.");
+      return;
     }
 
     session.edicaoId = eid;
@@ -2200,6 +2368,10 @@ function wireEvents() {
   // LANDING
   on("#btn-goto-register", "click", () => { session.draftUser = {}; go("register1"); });
   on("#btn-goto-login", "click", () => go("login"));
+  // O e-mail digitado fica na sessão para não se perder quando um erro de
+  // validação redesenha a tela. Senhas nunca são guardadas.
+  on("#log-email", "input", e => { session.emailDigitado = e.target.value; });
+  on("#reg-email", "input", e => { session.emailDigitado = e.target.value; });
   on("#back-to-landing", "click", () => go("landing"));
   on("#back-to-landing2", "click", () => go("landing"));
   on("#goto-register-from-login", "click", () => { session.draftUser = {}; go("register1"); });
@@ -2228,7 +2400,7 @@ function wireEvents() {
   // A participação em um carnaval específico é o passo seguinte, na tela de
   // inscrição. Cada campo alterado atualiza o rascunho local (session.draftUser)
   // para que um redesenho em segundo plano não apague o que já foi preenchido.
-  Object.entries({ "c-nome": "nome", "c-sobrenome": "sobrenome", "c-celular": "celular" })
+  Object.entries({ "c-nome": "nome", "c-sobrenome": "sobrenome", "c-apelido": "apelido", "c-celular": "celular" })
     .forEach(([id, campo]) => { on(`#${id}`, "input", e => { draftUser()[campo] = e.target.value; }); });
   ["c-datanasc-dia", "c-datanasc-mes", "c-datanasc-ano"].forEach(id => {
     on(`#${id}`, "change", () => { draftUser().dataNascimento = lerDataNascimento("c-datanasc"); });
@@ -2240,6 +2412,7 @@ function wireEvents() {
     const pessoa = {
       email: fbUser.email,
       nome: $("#c-nome").value.trim(), sobrenome: $("#c-sobrenome").value.trim(),
+      apelido: $("#c-apelido").value.trim(),
       celular: $("#c-celular").value.trim(), dataNascimento,
       adminAccess: false, presencaAccess: false,
       criadoEm: serverTimestamp(),
@@ -2394,6 +2567,7 @@ function wireEvents() {
     // para a inscrição daquela edição.
     const pessoaPatch = {
       nome: $("#e-nome").value.trim(), sobrenome: $("#e-sobrenome").value.trim(),
+      apelido: $("#e-apelido").value.trim(),
       celular: $("#e-celular").value.trim(),
       dataNascimento: lerDataNascimento("e-datanasc") || u.dataNascimento,
     };
@@ -2405,8 +2579,20 @@ function wireEvents() {
     };
     try {
       const batch = writeBatch(db);
-      batch.update(P.pessoa(fbUser.uid), pessoaPatch);
-      if (eid) batch.update(P.inscricao(eid, fbUser.uid), inscricaoPatch);
+      if (myPessoa) {
+        batch.update(P.pessoa(fbUser.uid), pessoaPatch);
+      } else {
+        // Cadastro ainda só no formato antigo: um update falharia por não existir
+        // documento. Cria o registro novo já preservando os acessos do antigo.
+        batch.set(P.pessoa(fbUser.uid), {
+          ...pessoaPatch,
+          email: (myLegado && myLegado.email) || fbUser.email,
+          adminAccess: !!(myLegado && myLegado.adminAccess),
+          presencaAccess: !!(myLegado && myLegado.presencaAccess),
+          criadoEm: serverTimestamp(),
+        });
+      }
+      if (eid && estouInscrito()) batch.update(P.inscricao(eid, fbUser.uid), inscricaoPatch);
       await batch.commit();
       session.editingMyData = false;
     } catch (err) { alert(friendlyFirestoreError(err)); }
@@ -2552,6 +2738,10 @@ function wireEvents() {
   // ADMIN — seed de dados iniciais da edição
   on("#btn-seed-defaults", "click", async () => {
     const eid = edicaoCtxId();
+    if (posicoesCache.length > 0 || precosCache) {
+      alert("Esta edição já tem posições ou valores cadastrados — não vou carregar os padrões por cima.");
+      return;
+    }
     try {
       const batch = writeBatch(db);
       DEFAULT_POSICOES.forEach(p => { batch.set(doc(P.posicoes(eid)), p); });
@@ -2604,7 +2794,7 @@ function wireEvents() {
       session.ensaioMusicasDraft = session.ensaioMusicasDraft.filter(x => x !== id);
     }
   });
-  on("[data-cancel-musicas-ensaio]", "click", () => {
+  onAll("[data-cancel-musicas-ensaio]", "click", () => {
     session.ensaioMusicasAberto = null;
     session.ensaioMusicasDraft = null;
     render();
@@ -2700,6 +2890,12 @@ function wireEvents() {
   onAll("[data-remove-posicao]", "click", async el => {
     const id = el.dataset.removePosicao;
     const pos = posicoesCache.find(p => p.id === id);
+    if (!pos) {
+      // Alguém já removeu essa posição de outro navegador; tira da lista local.
+      if (session.posicoesDraft) session.posicoesDraft = session.posicoesDraft.filter(p => p.id !== id);
+      render();
+      return;
+    }
     const emUso = inscricoesCache.filter(i => i.posicao === pos.nome).length;
     if (emUso > 0 && !confirm(`${emUso} pessoa(s) estão inscritas com "${pos.nome}". Remover mesmo assim? Elas continuam com essa posição na inscrição, mas ela deixa de aparecer nas listas.`)) return;
     try {
@@ -2800,6 +2996,7 @@ function wireEvents() {
       const pessoaPatch = {
         nome: $(`#ae-nome-${id}`).value.trim(),
         sobrenome: $(`#ae-sobrenome-${id}`).value.trim(),
+        apelido: $(`#ae-apelido-${id}`).value.trim(),
         celular: $(`#ae-celular-${id}`).value.trim(),
         dataNascimento: lerDataNascimento(`ae-datanasc-${id}`) || (original && original.dataNascimento) || "",
         adminAccess: $(`#ae-adminaccess-${id}`).checked,
