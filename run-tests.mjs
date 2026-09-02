@@ -187,6 +187,18 @@ async function main() {
   ok('Aviso de seed some após carregar os padrões', !html.includes('Primeiro acesso desta edição'));
   ok('Resumo mostra 17 posições, 8 isentas automaticamente', html.includes('17 posições') && html.includes('8 isentas'));
 
+  console.log('\n== 4b. Painel admin separa "um carnaval" de "todos os carnavais" ==');
+  ok('Existe a área de acompanhar um carnaval', html.includes('Acompanhar um carnaval'));
+  ok('Existe a área do consolidado', html.includes('Todos os carnavais juntos'));
+  ok('O seletor de carnaval aparece mesmo havendo só uma edição', (await page.locator('#admin-troca-edicao').count()) === 1);
+  // A ordem importa: tudo o que é específico do carnaval vem antes do consolidado,
+  // para as duas coisas não se misturarem no meio da página.
+  ok('O consolidado vem depois de tudo que é específico do carnaval',
+     html.indexOf('Acompanhar um carnaval') < html.indexOf('Cadastros')
+     && html.indexOf('Cadastros') < html.indexOf('Todos os carnavais juntos'));
+  ok('O histórico geral está dentro da área do consolidado', html.indexOf('Todos os carnavais juntos') < html.indexOf('btn-goto-historico-geral'));
+  ok('O consolidado mostra quantos carnavais existem', html.includes('Carnavais registrados'));
+
   console.log('\n== 5. Abrir a edição para os batuqueiros ==');
   await page.click('#btn-goto-edicoes');
   await page.waitForTimeout(150);

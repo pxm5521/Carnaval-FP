@@ -1327,28 +1327,21 @@ function viewAdmin() {
   <div class="wrap">
     <p><button class="link-btn" id="btn-back-batuqueiro">← Voltar para minha área</button></p>
 
-    <div class="card">
-      <div class="card-head">
-        <div>
-          <h2>${esc(edicaoLabel(ed))} <span class="badge ${statusInfo(ed).cls}">${statusInfo(ed).label}</span></h2>
-          <p class="card-sub" style="margin-bottom:0">${ed.dataDoCarnaval ? `Desfile em ${dateBR(ed.dataDoCarnaval)} · ` : ""}${statusInfo(ed).sub}</p>
-        </div>
-        <button class="btn-secondary btn-sm" id="btn-goto-edicoes">Gerenciar edições</button>
-      </div>
-      ${edicoesCache.length > 1 ? `
-      <div class="filter-row" style="margin-top:6px;">
-        <div><label>Estou vendo os dados de</label>
-          <select id="admin-troca-edicao">
-            ${edicoesOrdenadas().map(e => `<option value="${esc(e.id)}" ${e.id === ed.id ? "selected" : ""}>${esc(edicaoLabel(e))} — ${statusInfo(e).label}</option>`).join("")}
-          </select>
-        </div>
-      </div>` : ""}
-    </div>
+    <!-- ÁREA 1: um carnaval por vez ------------------------------------- -->
+    <h2 class="section-title">Acompanhar um carnaval</h2>
+    <p class="section-sub">Escolha o carnaval e trabalhe nele: inscritos, ensaios, valores, posições, repertório e pagamentos daquele ano.</p>
 
     <div class="card">
       <div class="card-head">
-        <div><h2>Histórico geral</h2><p class="card-sub" style="margin-bottom:0">Todos os carnavais lado a lado: quem tocou em cada um e o repertório de cada ano</p></div>
-        <button class="btn-secondary btn-sm" id="btn-goto-historico-geral">Ver histórico geral</button>
+        <div style="flex:1; min-width:220px;">
+          <label style="display:block; margin-bottom:6px;">Carnaval selecionado</label>
+          <select id="admin-troca-edicao" style="max-width:420px;">
+            ${edicoesOrdenadas().map(e => `<option value="${esc(e.id)}" ${e.id === ed.id ? "selected" : ""}>${esc(edicaoLabel(e))} — ${statusInfo(e).label}</option>`).join("")}
+          </select>
+          <p class="card-sub" style="margin:8px 0 0;">${ed.dataDoCarnaval ? `Desfile em ${dateBR(ed.dataDoCarnaval)} · ` : ""}${statusInfo(ed).sub}</p>
+          ${ed.status !== "aberta" && edicaoAberta() ? `<p class="hint" style="margin-top:6px;">O carnaval em andamento para os batuqueiros é o ${esc(edicaoLabel(edicaoAberta()))}. Aqui você está olhando outro.</p>` : ""}
+        </div>
+        <button class="btn-secondary btn-sm" id="btn-goto-edicoes">Gerenciar edições</button>
       </div>
     </div>
 
@@ -1415,6 +1408,23 @@ function viewAdmin() {
           <thead><tr><th>Posição</th><th>Pessoas</th></tr></thead>
           <tbody>${contagemPorPosicao(todos).map(([nome, n]) => `<tr><td>${esc(nome)}</td><td>${n}</td></tr>`).join("")}</tbody>
         </table>
+      </div>
+    </div>
+
+    <!-- ÁREA 2: todos os carnavais juntos -------------------------------- -->
+    <div style="border-top:1px solid var(--gridline); margin:34px 0 22px;"></div>
+    <h2 class="section-title">Todos os carnavais juntos</h2>
+    <p class="section-sub">Visão consolidada, que não muda conforme o carnaval selecionado acima.</p>
+
+    <div class="card">
+      <div class="card-head">
+        <div><h2>Histórico geral</h2><p class="card-sub" style="margin-bottom:0">Uma coluna por carnaval: quem tocou em cada um, com a posição daquele ano, e o repertório de cada edição</p></div>
+        <button class="btn-secondary btn-sm" id="btn-goto-historico-geral">Ver histórico geral</button>
+      </div>
+      <div class="stat-row" style="margin-top:4px;">
+        <div class="stat-tile"><div class="label">Carnavais registrados</div><div class="value">${edicoesCache.length}</div></div>
+        <div class="stat-tile"><div class="label">Pessoas já cadastradas</div><div class="value">${pessoasCache.length}</div></div>
+        <div class="stat-tile"><div class="label">Carnavais já encerrados</div><div class="value">${edicoesCache.filter(e => e.status === "encerrada").length}</div></div>
       </div>
     </div>
   </div>`;
