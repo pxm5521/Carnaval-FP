@@ -135,6 +135,8 @@ Se precisar corrigir algo depois do carnaval, use **"Reabrir"** na tela de ediç
 
 Quando você abre uma edição nova, quem já tem cadastro entra no site e vê uma tela de **"Confirmar inscrição"**, já preenchida com os dados do último carnaval em que a pessoa participou (posição, camisa, se vai tocar). Ela só confere, ajusta o que mudou e confirma. Nome e data de nascimento não são pedidos de novo.
 
+Quem é novo na bateria passa pelos mesmos passos, em ordem: cria o login, preenche o cadastro (só o que vale para sempre — nome, sobrenome, celular, nascimento) e então faz a inscrição no carnaval que estiver aberto. Ou seja, **posição, camisa e "vai tocar" nunca são perguntados como se fossem parte do cadastro** — eles pertencem a um carnaval específico, e é por isso que aparecem numa tela própria, a mesma que a pessoa vai reencontrar a cada ano. Se não houver carnaval aberto no momento, o cadastro é concluído normalmente e a inscrição fica para quando você abrir a próxima edição.
+
 Cada pessoa também passa a ter um **"Meu histórico de carnavais"**, com a posição de cada ano, a situação da anuidade e quantos ensaios frequentou.
 
 ---

@@ -127,6 +127,7 @@ const session = {
   draftInscricao: null,           // pré-preenchimento da tela de confirmar inscrição
   draftInscricaoDeEdicao: null,   // de qual edição veio esse pré-preenchimento
   draftInscricaoCarregadaPara: null,
+  acabouDeCadastrar: false,
   busy: {},
 };
 
@@ -158,7 +159,16 @@ function edicaoAberta() { return edicoesCache.find(e => e.status === "aberta") |
 function edicaoCtxId() {
   if (session.edicaoId && edicoesCache.some(e => e.id === session.edicaoId)) return session.edicaoId;
   const aberta = edicaoAberta();
-  return aberta ? aberta.id : null;
+  if (aberta) return aberta.id;
+  // Sem nenhum carnaval aberto, o admin continua vendo o mais recente — que
+  // costuma ser justamente o que ele está preparando. Sem isso, bastava sair e
+  // voltar para o painel afirmar que não havia edição nenhuma cadastrada.
+  // Para o batuqueiro comum não há contexto: não existe carnaval em andamento.
+  if (souAdmin()) {
+    const maisRecente = edicoesOrdenadas()[0];
+    return maisRecente ? maisRecente.id : null;
+  }
+  return null;
 }
 function edicaoCtx() { const id = edicaoCtxId(); return id ? edicoesCache.find(e => e.id === id) || null : null; }
 function edicaoEditavel(ed) { return !!(ed && ed.status !== "encerrada"); }
@@ -190,7 +200,7 @@ onAuthStateChanged(auth, (user) => {
   // que ir embora: rascunhos de formulário, filtros, telas carregadas sob demanda
   // e a edição que estava sendo visualizada. Sem isso, a pessoa seguinte herda
   // estado que não é dela.
-  if (!user || user.uid !== uidAnterior) limparEstadoDeSessao();
+  if (!user || user.uid !== uidAnterior) { limparEstadoDeSessao(); esconderToast(); }
   uidAnterior = user ? user.uid : null;
 
   if (!user) {
@@ -245,6 +255,7 @@ function limparEstadoDeSessao() {
     draftInscricao: null,
     draftInscricaoDeEdicao: null,
     draftInscricaoCarregadaPara: null,
+    acabouDeCadastrar: false,
     errors: {},
     busy: {},
     editingMyData: false,
@@ -580,6 +591,13 @@ function toastHost() {
   }
   return host;
 }
+/* Some com o aviso na hora — usado ao trocar de usuário, para que um aviso do
+   organizador não fique pendurado na tela de quem entra em seguida. */
+function esconderToast() {
+  clearTimeout(toastTimer);
+  const host = document.getElementById("toast-host");
+  if (host) host.style.display = "none";
+}
 function showToast(msg) {
   const host = toastHost();
   host.textContent = msg;   // textContent, não innerHTML: nada de marcação vinda de texto digitado
@@ -673,10 +691,9 @@ function viewRegister1() {
   const err = session.errors.register1;
   const busy = !!session.busy.register1;
   return `
-  <div class="hero"><div class="hero-inner"><h1>Criar cadastro</h1><p>Passo 1 de 2 — seu login individual</p></div></div>
+  <div class="hero"><div class="hero-inner"><h1>Criar cadastro</h1><p>Passo 1 — seu login individual</p></div></div>
   <div class="wrap">
     <div class="center-wrap card">
-      <div class="step-dots"><div class="step-dot active"></div><div class="step-dot"></div></div>
       <h2>Crie seu login e senha</h2>
       <p class="card-sub">Escolha um e-mail e uma senha para acessar sua área de batuqueiro.</p>
       ${err ? `<div class="error-box">${err}</div>` : ""}
@@ -701,13 +718,18 @@ function viewRegister2() {
   const err = session.errors.register2;
   const busy = !!session.busy.register2;
   const ed = edicaoAberta();
+  // Só o que é permanente. Posição, camisa e "vai tocar" mudam a cada carnaval e
+  // são pedidos na tela de inscrição — a mesma que a pessoa vai reencontrar todo
+  // ano. Assim quem se cadastra dentro ou fora de temporada segue o mesmo caminho,
+  // e esses três campos existem num lugar só no site inteiro.
+  const totalPassos = ed ? 3 : 2;
   return `
-  <div class="hero"><div class="hero-inner"><h1>Criar cadastro</h1><p>Passo 2 de 2 — seus dados de batuqueiro</p></div></div>
+  <div class="hero"><div class="hero-inner"><h1>Criar cadastro</h1><p>Passo 2 de ${totalPassos} — seus dados</p></div></div>
   <div class="wrap">
     <div class="center-wrap card" style="max-width:560px">
-      <div class="step-dots"><div class="step-dot"></div><div class="step-dot active"></div></div>
+      <div class="step-dots"><div class="step-dot"></div><div class="step-dot active"></div>${ed ? `<div class="step-dot"></div>` : ""}</div>
       <h2>Complete seu cadastro</h2>
-      <p class="card-sub">Logado como <b>${esc(d.email)}</b></p>
+      <p class="card-sub">Logado como <b>${esc(d.email)}</b>. Estes dados valem para sempre — você não precisa preenchê-los de novo a cada carnaval.</p>
       ${err ? `<div class="error-box">${err}</div>` : ""}
       ${!ed ? `<div class="seed-box" style="text-align:left;">As inscrições para o próximo carnaval ainda não estão abertas. Você pode deixar seu cadastro pronto agora — quando a organização abrir, é só entrar e confirmar sua inscrição.</div>` : ""}
       <form id="form-register2">
@@ -720,28 +742,7 @@ function viewRegister2() {
           <label>Data de nascimento</label>
           ${dataNascimentoFieldsHtml("c-datanasc", d.dataNascimento)}
         </div>
-        ${ed ? `
-        <div class="field">
-          <label>Vai tocar no ${esc(edicaoLabel(ed))}?</label>
-          <div class="radio-row" id="radio-vaitocar">
-            <div class="radio-pill ${d.vaiTocar === "Sim" ? "active" : ""}" data-val="Sim">Sim</div>
-            <div class="radio-pill ${d.vaiTocar === "Não" ? "active" : ""}" data-val="Não">Não</div>
-          </div>
-        </div>
-        <div class="field">
-          <label>Posição / instrumento</label>
-          <select id="c-posicao">${posicaoOptionsHtml(d.posicao)}</select>
-        </div>
-        <div class="field" id="wrap-posicao-outro" style="display:${d.posicao === "Outro" ? "block" : "none"}">
-          <label>Qual?</label><input type="text" id="c-posicao-outro" value="${esc(d.posicaoOutro)}">
-        </div>
-        <div class="field">
-          <label>Tamanho da camisa</label>
-          <div class="radio-row" id="radio-camisa">
-            ${CAMISAS.map(c => `<div class="radio-pill ${d.camisa === c ? "active" : ""}" data-val="${c}">${c}</div>`).join("")}
-          </div>
-        </div>` : ""}
-        <button class="btn-primary" style="width:100%" type="submit" ${busy ? "disabled" : ""}>${busy ? "Salvando..." : "Finalizar cadastro"}</button>
+        <button class="btn-primary" style="width:100%" type="submit" ${busy ? "disabled" : ""}>${busy ? "Salvando..." : (ed ? "Continuar" : "Finalizar cadastro")}</button>
       </form>
     </div>
   </div>`;
@@ -839,12 +840,18 @@ function viewConfirmarInscricao(u) {
     </div>`;
   }
 
+  // A mesma tela serve a dois momentos: o último passo de quem acabou de se
+  // cadastrar, e a renovação anual de quem já é da bateria. Muda só o texto.
+  const recemCadastrado = !!session.acabouDeCadastrar;
   return `
   ${headerBar(u)}
   <div class="wrap">
     <div class="center-wrap card" style="max-width:560px">
-      <h2>Confirmar inscrição — ${esc(edicaoLabel(ed))}</h2>
-      <p class="card-sub">${jaParticipou
+      ${recemCadastrado ? `<div class="step-dots"><div class="step-dot"></div><div class="step-dot"></div><div class="step-dot active"></div></div>` : ""}
+      <h2>${recemCadastrado ? "Sua inscrição no" : "Confirmar inscrição —"} ${esc(edicaoLabel(ed))}</h2>
+      <p class="card-sub">${recemCadastrado
+        ? `Falta só dizer como você vai participar deste carnaval. A cada novo carnaval o site pergunta isso de novo, porque instrumento, camisa e disponibilidade mudam de um ano para o outro — seu cadastro em si já está pronto.`
+        : jaParticipou
         ? `Preenchemos abaixo com os seus dados do ${esc(edicaoLabel(session.draftInscricaoDeEdicao))}. Confira, ajuste o que mudou e confirme para participar deste carnaval.`
         : `Preencha os dados da sua participação neste carnaval.`}</p>
       ${ed.dataDoCarnaval ? `<p class="hint" style="margin-top:-10px;">Desfile em ${dateBR(ed.dataDoCarnaval)}</p>` : ""}
@@ -2217,46 +2224,19 @@ function wireEvents() {
     render();
   });
 
-  // REGISTER STEP 2 — cria /pessoas/{uid} e, se houver edição aberta, a inscrição nela.
-  // Assim como na tela de inscrição, cada campo alterado atualiza o rascunho local
-  // (session.draftUser) para que um redesenho em segundo plano não apague o que já
-  // foi preenchido.
-  Object.entries({ "c-nome": "nome", "c-sobrenome": "sobrenome", "c-celular": "celular", "c-posicao-outro": "posicaoOutro" })
+  // REGISTER STEP 2 — cria só /pessoas/{uid}, com os dados que valem para sempre.
+  // A participação em um carnaval específico é o passo seguinte, na tela de
+  // inscrição. Cada campo alterado atualiza o rascunho local (session.draftUser)
+  // para que um redesenho em segundo plano não apague o que já foi preenchido.
+  Object.entries({ "c-nome": "nome", "c-sobrenome": "sobrenome", "c-celular": "celular" })
     .forEach(([id, campo]) => { on(`#${id}`, "input", e => { draftUser()[campo] = e.target.value; }); });
   ["c-datanasc-dia", "c-datanasc-mes", "c-datanasc-ano"].forEach(id => {
     on(`#${id}`, "change", () => { draftUser().dataNascimento = lerDataNascimento("c-datanasc"); });
   });
-  on("#c-posicao", "change", e => {
-    $("#wrap-posicao-outro").style.display = e.target.value === "Outro" ? "block" : "none";
-    draftUser().posicao = e.target.value;
-  });
-  onAll("#radio-vaitocar .radio-pill", "click", el => {
-    $("#radio-vaitocar").querySelectorAll(".radio-pill").forEach(x => x.classList.remove("active"));
-    el.classList.add("active");
-    draftUser().vaiTocar = el.dataset.val;
-  });
-  onAll("#radio-camisa .radio-pill", "click", el => {
-    $("#radio-camisa").querySelectorAll(".radio-pill").forEach(x => x.classList.remove("active"));
-    el.classList.add("active");
-    draftUser().camisa = el.dataset.val;
-  });
   on("#form-register2", "submit", async e => {
     e.preventDefault();
-    const ed = edicaoAberta();
     const dataNascimento = lerDataNascimento("c-datanasc");
     if (!dataNascimento) { session.errors.register2 = "Preencha dia, mês e ano de nascimento."; render(); return; }
-    let inscricao = null;
-    if (ed) {
-      const vaiTocar = $("#radio-vaitocar .radio-pill.active")?.dataset.val;
-      const camisa = $("#radio-camisa .radio-pill.active")?.dataset.val;
-      if (!vaiTocar || !camisa) { session.errors.register2 = "Preencha se vai tocar neste carnaval e o tamanho da camisa."; render(); return; }
-      inscricao = {
-        vaiTocar, posicao: $("#c-posicao").value,
-        posicaoOutro: $("#c-posicao-outro") ? $("#c-posicao-outro").value.trim() : "",
-        camisa, isentoManual: false, formaPagamento: null, totalPago: 0,
-        inscritoEm: serverTimestamp(),
-      };
-    }
     const pessoa = {
       email: fbUser.email,
       nome: $("#c-nome").value.trim(), sobrenome: $("#c-sobrenome").value.trim(),
@@ -2266,11 +2246,11 @@ function wireEvents() {
     };
     session.busy.register2 = true; render();
     try {
-      const batch = writeBatch(db);
-      batch.set(P.pessoa(fbUser.uid), pessoa);
-      if (ed && inscricao) batch.set(P.inscricao(ed.id, fbUser.uid), inscricao);
-      await batch.commit();
+      await setDoc(P.pessoa(fbUser.uid), pessoa);
       session.errors.register2 = null;
+      // Marca que a próxima tela (inscrição) é a continuação do cadastro, e não a
+      // renovação anual de quem já é da bateria — muda só o texto e os passinhos.
+      session.acabouDeCadastrar = !!edicaoAberta();
       session.view = "batuqueiro";
     } catch (err) {
       session.errors.register2 = friendlyFirestoreError(err);
@@ -2317,6 +2297,7 @@ function wireEvents() {
       session.errors.inscricao = null;
       session.draftInscricao = null;
       session.draftInscricaoDeEdicao = null;
+      session.acabouDeCadastrar = false;
       showToast(`Inscrição confirmada no ${edicaoLabel(ed)}!`);
     } catch (err) {
       session.errors.inscricao = friendlyFirestoreError(err);

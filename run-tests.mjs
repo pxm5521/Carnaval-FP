@@ -36,8 +36,8 @@ async function fillDataEmTresCampos(page, idPrefix, iso) {
   await page.fill(`#${idPrefix}-ano`, ano);
 }
 
-/* Cadastro completo. Se houver uma edição aberta, o passo 2 também pede os dados
-   daquele carnaval (vai tocar / posição / camisa). */
+/* Cadastro completo. O passo 2 pede só os dados permanentes; havendo carnaval
+   aberto, vem em seguida o passo 3, a inscrição naquele carnaval. */
 async function registrar(page, { email, nome, sobrenome, posicao, posicaoOutro, camisa, dataNascimento = '1996-05-10', celular = '(21) 90000-0000', comEdicaoAberta = true }) {
   await page.click('#btn-goto-register');
   await page.waitForSelector('#form-register1');
@@ -50,14 +50,11 @@ async function registrar(page, { email, nome, sobrenome, posicao, posicaoOutro, 
   await page.fill('#c-sobrenome', sobrenome);
   await page.fill('#c-celular', celular);
   await fillDataEmTresCampos(page, 'c-datanasc', dataNascimento);
-  if (comEdicaoAberta) {
-    await page.click('#radio-vaitocar .radio-pill[data-val="Sim"]');
-    await page.selectOption('#c-posicao', posicao);
-    if (posicao === 'Outro' && posicaoOutro) await page.fill('#c-posicao-outro', posicaoOutro);
-    await page.click(`#radio-camisa .radio-pill[data-val="${camisa}"]`);
-  }
   await page.click('#form-register2 button[type=submit]');
   await page.waitForSelector('#btn-logout', { timeout: 5000 });
+  if (comEdicaoAberta) {
+    await confirmarInscricao(page, { vaiTocar: 'Sim', posicao, posicaoOutro, camisa });
+  }
 }
 
 /* Confirma a inscrição na edição aberta (tela que aparece a cada novo carnaval). */
@@ -173,10 +170,20 @@ async function main() {
   await page.waitForTimeout(3800);                   // espera o aviso expirar
   ok('O aviso some sozinho', await page.locator('#toast-host:visible').count() === 0);
   ok('O que estava sendo digitado continua lá depois do aviso sumir', (await page.locator('#nova-edicao-nome').inputValue()) === 'Rascunho que não pode sumir');
-  await page.click('#btn-toggle-nova-edicao');       // fecha e limpa o rascunho
-  await page.waitForTimeout(150);
-  await page.click('#btn-back-admin7');
+  // Um aviso não pode ficar pendurado na tela do próximo usuário do navegador.
+  await page.click('[data-save-edicao="2027-1"]');
   await page.waitForTimeout(200);
+  ok('Aviso visível antes de sair', await page.locator('#toast-host:visible').count() === 1);
+  await logout(page);
+  ok('Ao sair, o aviso da sessão anterior some da tela', await page.locator('#toast-host:visible').count() === 0);
+  await login(page, 'bruno@example.com');
+  await page.click('#btn-goto-admin');
+  await page.waitForTimeout(300);
+  html = await appHtml(page);
+  // Regressão: ao sair e voltar sem nenhum carnaval aberto, o admin via "nenhuma
+  // edição cadastrada" — mesmo tendo uma em preparação, que é o caso normal de
+  // quem está montando o carnaval do ano seguinte.
+  ok('Depois de sair e voltar, o admin continua vendo a edição em preparação', html.includes('Carnaval do Fogo e Paixão 2027') && !html.includes('Nenhuma edição do carnaval cadastrada ainda'));
 
   console.log('\n== 4. Seed de posições e valores padrão dentro da edição ==');
   html = await appHtml(page);
@@ -220,7 +227,29 @@ async function main() {
   await logout(page);
 
   console.log('\n== 7. Cadastro de mais 3 pessoas com a edição já aberta ==');
-  await registrar(page, { email: 'ana@example.com', nome: 'Ana', sobrenome: 'Silva', posicao: 'Surdo 1', camisa: 'M', dataNascimento: '1998-03-15' });
+  // O cadastro (dados permanentes) e a inscrição no carnaval são passos separados:
+  // o que muda todo ano não é perguntado como se fosse parte do cadastro.
+  await page.click('#btn-goto-register');
+  await page.waitForSelector('#form-register1');
+  await page.fill('#reg-email', 'ana@example.com');
+  await page.fill('#reg-senha', 'senha123');
+  await page.fill('#reg-senha2', 'senha123');
+  await page.click('#form-register1 button[type=submit]');
+  await page.waitForSelector('#form-register2', { timeout: 5000 });
+  html = await appHtml(page);
+  ok('O cadastro não pergunta posição/camisa/vai tocar', !html.includes('c-posicao') && !html.includes('radio-camisa') && !html.includes('radio-vaitocar'));
+  ok('O cadastro deixa claro que esses dados valem para sempre', html.includes('valem para sempre'));
+  ok('Com carnaval aberto, o cadastro anuncia 3 passos', html.includes('Passo 2 de 3'));
+  await page.fill('#c-nome', 'Ana');
+  await page.fill('#c-sobrenome', 'Silva');
+  await page.fill('#c-celular', '(21) 90000-0000');
+  await fillDataEmTresCampos(page, 'c-datanasc', '1998-03-15');
+  await page.click('#form-register2 button[type=submit]');
+  await page.waitForSelector('#form-inscricao', { timeout: 5000 });
+  html = await appHtml(page);
+  ok('Depois do cadastro vem a inscrição no carnaval, como passo 3', html.includes('Sua inscrição no Carnaval do Fogo e Paixão 2027'));
+  ok('A tela explica por que isso é perguntado a cada carnaval', html.includes('a cada novo carnaval o site pergunta isso de novo') || html.includes('A cada novo carnaval o site pergunta isso de novo'));
+  await confirmarInscricao(page, { vaiTocar: 'Sim', posicao: 'Surdo 1', camisa: 'M' });
   html = await appHtml(page);
   ok('Ana entra direto na área do batuqueiro (cadastro + inscrição no mesmo passo)', html.includes('Bem-vindo(a), Ana') && html.includes('Presença em ensaios'));
   ok('Sem acesso admin, botão painel admin não aparece', !html.includes('Painel admin'));
