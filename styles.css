@@ -240,3 +240,11 @@
   .verify-box .big-icon { font-size: 40px; margin-bottom: 6px; }
   .toast { position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%); background: var(--text-primary); color: var(--surface-1); padding: 10px 18px; border-radius: 10px; font-size: 13.5px; box-shadow: var(--shadow); z-index: 50; }
   .seed-box { border: 1px dashed var(--brand-fire); border-radius: 12px; padding: 14px; text-align: center; margin-bottom: 20px; background: color-mix(in srgb, var(--brand-fire) 6%, transparent); }
+
+  /* ---------- chave pix na área de pagamento ---------- */
+  .pix-box {
+    display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;
+    margin-top: 14px; padding: 12px 14px; border-radius: 10px;
+    border: 1px dashed var(--brand-fire); background: color-mix(in srgb, var(--brand-fire) 6%, transparent);
+  }
+  .pix-box .pix-chave { font-weight: 700; font-size: 15px; word-break: break-all; }

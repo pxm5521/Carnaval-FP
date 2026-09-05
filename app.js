@@ -27,6 +27,7 @@ const DEFAULT_POSICOES = [
   { nome: "Produção", isenta: true }, { nome: "Metais", isenta: true },
 ];
 const DEFAULT_PRECOS = {
+  chavePix: "",
   avista:    { valor: 210, prazos: [""] },
   duasVezes: { valor: 230, prazos: ["", ""] },
   tresVezes: { valor: 250, prazos: ["", "", ""] },
@@ -501,12 +502,17 @@ function temAcessoAdmin(u) { return !!(u && u.adminAccess); }
 /* Admins sempre podem editar presença; além deles, só quem recebeu o acesso individual (presencaAccess). */
 function temAcessoPresenca(u) { return !!(u && (u.adminAccess || u.presencaAccess)); }
 function posicaoInfo(nome) { return posicoesCache.find(p => p.nome === nome); }
+/* Quem não vai tocar no carnaval não paga anuidade — é a regra da bateria.
+   Isso vale junto com as outras duas isenções: por função (Voz, Mestre, Apoio...)
+   e a individual, concedida caso a caso pela organização. */
+function naoVaiTocar(u) { return u && u.vaiTocar === "Não"; }
 function isIsento(u) {
   const info = posicaoInfo(u.posicao);
-  return !!(info && info.isenta) || !!u.isentoManual;
+  return naoVaiTocar(u) || !!(info && info.isenta) || !!u.isentoManual;
 }
 function isentoMotivo(u) {
   const info = posicaoInfo(u.posicao);
+  if (naoVaiTocar(u)) return "você não vai tocar neste carnaval";
   if (info && info.isenta) return `isento pela função de ${u.posicao}`;
   if (u.isentoManual) return "isenção especial concedida pela organização";
   return "";
@@ -519,6 +525,7 @@ function posicaoOptionsHtml(selected) {
   }
   return opts;
 }
+function chavePixDaEdicao() { return ((precosCache && precosCache.chavePix) || "").trim(); }
 function valorDoPlano(k) { return precosCache && precosCache[k] ? precosCache[k].valor : 0; }
 function prazosDoPlano(k) { return precosCache && precosCache[k] ? precosCache[k].prazos : []; }
 function totalDevido(u) { return planoValido(u.formaPagamento) ? valorDoPlano(u.formaPagamento) : null; }
@@ -1128,7 +1135,23 @@ function bannerEdicao(ed) {
 
 function renderPaymentBoxBody(u, editavel = true) {
   if (isIsento(u)) {
-    return `<div class="isenta-box">🎉 Anuidade ISENTA<div class="sub">Você está isento(a) — ${esc(isentoMotivo(u))}.</div></div>`;
+    // Se a pessoa já tinha pago algo antes de ficar isenta (por exemplo, pagou e
+    // depois avisou que não vai tocar), o valor continua à vista dela — some da
+    // cobrança, não do registro.
+    const jaPagou = totalPago(u) > 0;
+    return `<div class="isenta-box">Anuidade ISENTA<div class="sub">Você está isento(a) — ${esc(isentoMotivo(u))}.</div></div>
+    ${jaPagou ? `
+    <p class="card-sub" style="margin:14px 0 6px;">Pagamentos que você já tinha registrado</p>
+    <div>
+      ${myPagamentos.map(p => `
+        <div class="pay-row">
+          <span>${dateBR(p.data)}</span>
+          <span class="muted-sm">Pix: ${esc(p.pix) || "—"}</span>
+          <span class="pv">${currency(p.valor)}</span>
+        </div>`).join("")}
+      <div class="pay-total"><span>Total registrado</span><span class="amt">${currency(totalPago(u))}</span></div>
+    </div>
+    <p class="hint">Como você está isento(a), esse valor não é mais cobrado. Fale com a organização para combinar a devolução ou o crédito.</p>` : ""}`;
   }
   if (!precosCache) {
     return `<div class="hint">O organizador ainda não configurou os valores da anuidade. Volte em breve.</div>`;
@@ -1172,11 +1195,22 @@ function renderPaymentBoxBody(u, editavel = true) {
         </div>`).join("")}
     </div>
 
+    ${chavePixDaEdicao() ? `
+    <div class="pix-box">
+      <div>
+        <div class="hint">Chave Pix da bateria</div>
+        <div class="pix-chave">${esc(chavePixDaEdicao())}</div>
+      </div>
+      <button class="btn-secondary btn-sm" id="btn-copiar-pix">Copiar</button>
+    </div>
+    <p class="hint">Faça o pix por aqui e depois registre o pagamento abaixo — só entra na sua conta o que for registrado.</p>` : ""}
+
     ${editavel ? `
     <div style="display:flex; gap:8px; margin-top:14px; flex-wrap:wrap;">
       <button class="btn-secondary btn-sm" id="btn-toggle-addpay">+ Adicionar pagamento</button>
-      <button class="btn-ghost btn-sm" id="btn-change-plan">Alterar forma de pagamento</button>
+      ${totalPago(u) > 0 ? "" : `<button class="btn-ghost btn-sm" id="btn-change-plan">Alterar forma de pagamento</button>`}
     </div>
+    ${totalPago(u) > 0 ? `<p class="hint">A forma de pagamento não pode mais ser trocada, porque você já registrou um pagamento nela.</p>` : ""}
     <div class="add-pay-form ${session.addPayOpenFor === u.id ? "open" : ""}" id="add-pay-form">
       <div class="grid-3">
         <div class="field"><label>Data</label><input type="date" id="pay-data"></div>
@@ -1954,7 +1988,10 @@ function viewAdminRelatorio() {
               return okStatus && okPos;
             }).map(p => {
               const status = paymentStatus(p);
-              if (isIsento(p)) return `<tr><td class="name-cell">${esc(fullName(p))}</td><td>${esc(p.posicao)}</td><td>—</td><td>—</td><td>Isenta</td><td>—</td><td><span class="badge ${status.cls}">${status.label}</span></td></tr>`;
+              // Coluna "Pago" preenchida mesmo para isentos: alguém pode ter pago
+              // antes de ficar isento (por exemplo, avisou depois que não vai
+              // tocar), e esse dinheiro não pode sumir do relatório.
+              if (isIsento(p)) return `<tr><td class="name-cell">${esc(fullName(p))}</td><td>${esc(p.posicao)}</td><td>—</td><td>${totalPago(p) > 0 ? currency(totalPago(p)) : "—"}</td><td>Isenta</td><td>—</td><td><span class="badge ${status.cls}">${status.label}</span></td></tr>`;
               if (!planoValido(p.formaPagamento)) return `<tr><td class="name-cell">${esc(fullName(p))}</td><td>${esc(p.posicao)}</td><td colspan="4">Ainda não escolheu a forma de pagamento</td><td><span class="badge ${status.cls}">${status.label}</span></td></tr>`;
               const pago = totalPago(p), meta = totalDevido(p);
               return `<tr>
@@ -1990,6 +2027,11 @@ function viewAdminPrecos() {
     <div class="card">
       <h2>Valores e datas-limite da anuidade — ${esc(edicaoLabel(ed))}</h2>
       <p class="card-sub">Preço total e prazo de cada parcela, conforme a forma de pagamento. Valem só para este carnaval.</p>
+      <div class="field">
+        <label>Chave Pix para receber a anuidade</label>
+        <input type="text" id="admin-chave-pix" value="${esc(precos.chavePix)}" placeholder="e-mail, telefone, CPF/CNPJ ou chave aleatória" ${editavel ? "" : "disabled"}>
+        <p class="hint">Aparece na área de pagamento de cada batuqueiro, com um botão de copiar. Deixe em branco para não mostrar nada.</p>
+      </div>
       ${Object.keys(PLANOS).map(k => pricingPlanFieldset(k, precos, editavel)).join("")}
       ${editavel ? `<button class="btn-primary btn-sm" id="btn-save-precos">Salvar valores e prazos</button>` : `<p class="hint">Edição encerrada — os valores ficam como registro histórico.</p>`}
     </div>
@@ -2188,6 +2230,14 @@ function renderAdminEditUserForm(p, editavel = true) {
       </div>
       <div class="field"><label>Camisa</label>
         <select id="ae-camisa-${p.id}" ${dis}>${CAMISAS.map(x => `<option ${x === p.camisa ? "selected" : ""}>${esc(x)}</option>`).join("")}</select>
+      </div>
+      <div class="field">
+        <label>Forma de pagamento</label>
+        <select id="ae-formapagamento-${p.id}" ${dis}>
+          <option value="" ${!p.formaPagamento ? "selected" : ""}>Ainda não escolheu</option>
+          ${Object.entries(PLANOS).map(([k, v]) => `<option value="${esc(k)}" ${k === p.formaPagamento ? "selected" : ""}>${esc(v.label)}</option>`).join("")}
+        </select>
+        <p class="hint">O próprio batuqueiro só troca isso enquanto não registrou nenhum pagamento. Você pode trocar a qualquer momento — o valor já pago continua contando, e o total devido é recalculado pelo novo plano.</p>
       </div>
       <div class="field">
         <label style="display:flex; align-items:center; gap:8px; font-weight:400; cursor:pointer;">
@@ -2606,6 +2656,13 @@ function wireEvents() {
     catch (err) { alert(friendlyFirestoreError(err)); }
   });
   on("#btn-change-plan", "click", async () => {
+    // Segunda barreira, além de o botão nem ser desenhado nesse caso: trocar de
+    // plano depois de já ter pago mudaria o valor devido deixando o pagamento
+    // registrado no ar.
+    if (totalPago(perfilMesclado()) > 0) {
+      alert("Você já registrou um pagamento nesta forma de pagamento, então ela não pode mais ser trocada.");
+      return;
+    }
     if (!confirm("Alterar a forma de pagamento? O valor total devido será recalculado.")) return;
     const eid = edicaoCtxId();
     try { await updateDoc(P.inscricao(eid, fbUser.uid), { formaPagamento: null }); }
@@ -2613,6 +2670,17 @@ function wireEvents() {
   });
 
   // BATUQUEIRO — pagamento
+  on("#btn-copiar-pix", "click", async () => {
+    const valor = chavePixDaEdicao();
+    try {
+      await navigator.clipboard.writeText(valor);
+      showToast("Chave Pix copiada!");
+    } catch {
+      // Navegador sem permissão de área de transferência (acontece em alguns
+      // celulares): mostra a chave para copiar à mão em vez de falhar calado.
+      alert("Copie a chave Pix:\n\n" + valor);
+    }
+  });
   on("#btn-toggle-addpay", "click", () => {
     session.addPayOpenFor = session.addPayOpenFor === fbUser.uid ? null : fbUser.uid;
     render();
@@ -2813,6 +2881,7 @@ function wireEvents() {
   // ADMIN — valores/prazos
   on("#btn-save-precos", "click", async () => {
     const novo = { avista: {}, duasVezes: {}, tresVezes: {} };
+    novo.chavePix = ($("#admin-chave-pix")?.value || "").trim();
     Object.keys(PLANOS).forEach(k => {
       const valor = parseFloat($(`#admin-preco-${k}`).value);
       novo[k].valor = valor > 0 ? valor : (precosCache?.[k]?.valor || 0);
@@ -3005,6 +3074,9 @@ function wireEvents() {
       const inscricaoPatch = {
         posicao: $(`#ae-posicao-${id}`).value,
         camisa: $(`#ae-camisa-${id}`).value,
+        // O admin é a única saída quando alguém escolhe o plano errado e já
+        // registrou um pagamento (aí o botão do próprio batuqueiro some).
+        formaPagamento: $(`#ae-formapagamento-${id}`).value || null,
         isentoManual: $(`#ae-isento-${id}`).checked,
       };
       try {

@@ -567,8 +567,113 @@ async function main() {
   await page.waitForTimeout(400);
   html = await appHtml(page);
   ok('Pagamento de R$115 registrado na lista', html.includes('ana@pix'));
+  // A forma de pagamento trava no primeiro pagamento: trocar depois mudaria o
+  // valor devido deixando o que já foi pago sem referência.
+  ok('O botão de trocar a forma de pagamento some depois do 1º pagamento', !html.includes('btn-change-plan'));
+  ok('E o site explica por que sumiu', html.includes('não pode mais ser trocada'));
   ok('Total pago (115 de 230, 50%) refletido na barra de progresso', html.includes('50%'));
   ok('Status muda para "No prazo" (não quitado ainda)', html.includes('No prazo'));
+
+  console.log('\n== 16a. O admin destrava a forma de pagamento que travou para o batuqueiro ==');
+  // Como o botão do batuqueiro some no 1º pagamento, o painel de Cadastros é a
+  // única saída quando alguém escolheu o plano errado.
+  await logout(page);
+  await login(page, 'bruno@example.com');
+  await page.click('#btn-goto-admin');
+  await page.click('#btn-goto-pessoas');
+  await page.waitForTimeout(200);
+  await page.click(`[data-edit-user="${uids.ana}"]`);
+  await page.waitForTimeout(200);
+  html = await appHtml(page);
+  ok('O formulário de Cadastros tem o campo de forma de pagamento', html.includes(`ae-formapagamento-${uids.ana}`));
+  await page.selectOption(`#ae-formapagamento-${uids.ana}`, 'avista');
+  await page.click(`[data-admin-edit-form="${uids.ana}"] button[type=submit]`);
+  await page.waitForTimeout(350);
+  await logout(page);
+
+  await login(page, 'ana@example.com');
+  await page.waitForTimeout(300);
+  html = await appHtml(page);
+  ok('Ana passa a ver o plano à vista trocado pelo admin', html.includes('Parcela 1/1'));
+  ok('E o que ela já pagou continua contando (115 de 210 = 55%)', html.includes('55%'));
+
+  // devolve o plano 2x para as seções seguintes continuarem valendo
+  await logout(page);
+  await login(page, 'bruno@example.com');
+  await page.click('#btn-goto-admin');
+  await page.click('#btn-goto-pessoas');
+  await page.waitForTimeout(200);
+  await page.click(`[data-edit-user="${uids.ana}"]`);
+  await page.waitForTimeout(200);
+  await page.selectOption(`#ae-formapagamento-${uids.ana}`, 'duasVezes');
+  await page.click(`[data-admin-edit-form="${uids.ana}"] button[type=submit]`);
+  await page.waitForTimeout(350);
+  await logout(page);
+
+  await login(page, 'ana@example.com');
+  await page.waitForTimeout(300);
+  html = await appHtml(page);
+  ok('E o admin consegue devolver o plano 2x (volta para 50%)', html.includes('50%'));
+
+  console.log('\n== 16b. Chave Pix configurada pelo admin aparece para quem vai pagar ==');
+  await logout(page);
+  await login(page, 'bruno@example.com');
+  await page.click('#btn-goto-admin');
+  await page.waitForTimeout(200);
+  await page.click('#btn-goto-precos');
+  await page.waitForTimeout(250);
+  await page.fill('#admin-chave-pix', 'bateria@pix.com');
+  await page.click('#btn-save-precos');
+  await page.waitForTimeout(350);
+  await logout(page);
+
+  await login(page, 'ana@example.com');
+  await page.waitForTimeout(300);
+  html = await appHtml(page);
+  ok('A chave Pix aparece na área de pagamento do batuqueiro', html.includes('bateria@pix.com'));
+  ok('Com botão para copiar', html.includes('btn-copiar-pix'));
+  ok('E a instrução de que o pix só conta depois de registrado', html.includes('só entra na sua conta o que for registrado'));
+
+  console.log('\n== 16c. Quem não vai tocar fica isento da anuidade ==');
+  // Regra da bateria: só paga quem desfila. A isenção por não tocar convive com
+  // as outras duas (por função e a individual).
+  await page.click('#btn-edit-data');
+  await page.waitForTimeout(250);
+  await page.click('#edit-radio-vaitocar .radio-pill[data-val="Não"]');
+  await page.click('#form-edit-mydata button[type=submit]');
+  await page.waitForTimeout(400);
+  html = await appHtml(page);
+  ok('Ao marcar que não vai tocar, a anuidade fica isenta', html.includes('Anuidade ISENTA'));
+  ok('O motivo mostrado é o certo', html.includes('você não vai tocar neste carnaval'));
+  ok('Não aparece mais escolha de forma de pagamento', !html.includes('plan-picker'));
+  // Ela já tinha pago R$115 antes: esse dinheiro não pode sumir da tela dela.
+  ok('O que ela já tinha pago continua visível', html.includes('Pagamentos que você já tinha registrado') && html.includes('ana@pix'));
+  ok('Com orientação de procurar a organização', html.includes('devolução ou o crédito'));
+
+  await logout(page);
+  await login(page, 'bruno@example.com');
+  await page.click('#btn-goto-admin');
+  await page.waitForTimeout(250);
+  html = await appHtml(page);
+  ok('No painel, ela deixa de contar como pagante na adimplência', html.includes('inscritos são isentos de anuidade'));
+  await page.click('#btn-goto-relatorio');
+  await page.waitForTimeout(250);
+  html = await appHtml(page);
+  ok('No relatório ela aparece como Isenta', html.includes('Isenta'));
+  ok('Mas o valor que ela já pagou continua no relatório', html.includes('115'));
+  await page.click('#btn-back-admin5');
+  await page.waitForTimeout(200);
+  await logout(page);
+
+  // devolve a Ana ao estado anterior para o restante da suíte
+  await login(page, 'ana@example.com');
+  await page.click('#btn-edit-data');
+  await page.waitForTimeout(250);
+  await page.click('#edit-radio-vaitocar .radio-pill[data-val="Sim"]');
+  await page.click('#form-edit-mydata button[type=submit]');
+  await page.waitForTimeout(400);
+  html = await appHtml(page);
+  ok('Voltando a tocar, a cobrança volta com o valor já pago preservado', html.includes('50%'));
 
   console.log('\n== 17. Presença: Ana (admin) marca presença de Duda ==');
   await page.waitForTimeout(150);
