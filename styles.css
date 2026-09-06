@@ -256,8 +256,14 @@
     background: var(--surface-2);
     font-size: 12.5px; line-height: 1.6; color: var(--text-secondary);
   }
-  .rodape h3 { margin: 0 0 10px; font-size: 13px; letter-spacing: 0.04em; text-transform: uppercase; color: var(--text-primary); }
-  .rodape p { margin: 0 0 8px; max-width: 70ch; }
+  .rodape h3 { margin: 0 0 14px; font-size: 13px; letter-spacing: 0.04em; text-transform: uppercase; color: var(--text-primary); }
+  /* Quatro blocos curtos lado a lado em telas largas: o texto corrido numa
+     coluna só de 70ch ficava espremido à esquerda, com metade da página vazia. */
+  .rodape .rodape-blocos { display: grid; gap: 10px 32px; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); }
+  .rodape p { margin: 0; }
   .rodape b { color: var(--text-primary); font-weight: 600; }
-  .rodape .rodape-fim { margin-top: 14px; color: var(--muted); }
-  .rodape .rodape-fim { border-top: 1px solid var(--gridline); padding-top: 12px; }
+  .rodape .rodape-fim {
+    grid-column: 1 / -1;
+    margin-top: 6px; padding-top: 12px;
+    border-top: 1px solid var(--gridline); color: var(--muted);
+  }

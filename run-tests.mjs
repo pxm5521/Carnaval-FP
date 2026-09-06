@@ -12,6 +12,7 @@
 // - isolamento entre edições (dados de um ano não vazam para o outro)
 // - importação única dos dados do formato antigo
 import { chromium } from 'playwright';
+import { readFileSync } from 'node:fs';
 
 const BASE = 'http://localhost:8934/test.html';
 let pass = 0, fail = 0;
@@ -674,6 +675,10 @@ async function main() {
   // Ela já tinha pago R$115 antes: esse dinheiro não pode sumir da tela dela.
   ok('O que ela já tinha pago continua visível', html.includes('Pagamentos que você já tinha registrado') && html.includes('ana@pix'));
   ok('Com orientação de procurar a organização', html.includes('devolução ou o crédito'));
+  // Quem não vai tocar não vai a ensaio: a linha dela sai da tabela de presença,
+  // que antes ficava cheia de gente que nunca seria marcada.
+  ok('Ela sai da tabela de presença dos ensaios', !html.includes(`data-uid="${uids.ana}"`));
+  ok('Mas a tabela continua lá, com quem vai desfilar', html.includes(`data-uid="${uids.duda}"`));
 
   // O histórico calculava a isenção com só duas das três regras e esquecia a
   // principal — a de não ir tocar. Ana está com plano 2x e prazos em aberto,
@@ -692,13 +697,56 @@ async function main() {
   await page.click('#btn-goto-admin');
   await page.waitForTimeout(250);
   html = await appHtml(page);
-  ok('No painel, ela deixa de contar como pagante na adimplência', html.includes('inscritos são isentos de anuidade'));
+  ok('Ela sai das listas do carnaval e vira contagem à parte no painel', html.includes('Avisaram que não vão tocar'));
+  ok('E o painel avisa onde ela foi parar', html.includes('aparece em Cadastros, num bloco separado'));
+  ok('O painel passa a contar 3 pessoas para desfilar, não 4', html.includes('3 pessoas vão desfilar neste carnaval'));
+  ok('E registra 1 pessoa fora deste carnaval', html.includes('1 avisaram que não vão tocar'));
+  // Camisa é do desfile: quem não vai tocar não entra na encomenda. Ana usa M,
+  // e ela era a única M — o tamanho tem que sumir da tabela de camisas.
+  const tabelaCamisas = await page.evaluate(() => {
+    const t = [...document.querySelectorAll('#app table')].find(x => x.textContent.includes('Camisa') && x.textContent.includes('Quantas'));
+    return t ? t.textContent : '';
+  });
+  ok('A encomenda de camisas conta só quem vai desfilar', tabelaCamisas && !/\bM\b/.test(tabelaCamisas.replace('Camisa', '')));
+
+  await page.click('#btn-goto-pessoas');
+  await page.waitForTimeout(300);
+  html = await appHtml(page);
+  ok('Em Cadastros existe um bloco próprio para quem não vai tocar', html.includes('Não vão tocar no Carnaval do Fogo e Paixão 2027'));
+  ok('O bloco explica que o cadastro e o histórico continuam intactos', html.includes('o cadastro e o histórico delas continuam intactos'));
+  // A lista principal ("Quem vai desfilar") não pode mais conter a Ana; o bloco
+  // separado, sim. Compara a posição das duas ocorrências no HTML.
+  const posBloco = html.indexOf('Não vão tocar no Carnaval');
+  const ocorrenciasAna = [...html.matchAll(/Ana Silva/g)].map(m => m.index);
+  ok('Ana saiu da lista de quem vai desfilar', ocorrenciasAna.every(i => i > posBloco));
+  ok('E aparece no bloco separado', ocorrenciasAna.length > 0);
+  ok('Com aviso de que ela pagou e o valor precisa ser resolvido', html.includes('ver devolução'));
+  await page.click('#btn-back-admin2');
+  await page.waitForTimeout(200);
+
   await page.click('#btn-goto-relatorio');
   await page.waitForTimeout(250);
   html = await appHtml(page);
-  ok('No relatório ela aparece como Isenta', html.includes('Isenta'));
-  ok('Mas o valor que ela já pagou continua no relatório', html.includes('115'));
+  ok('O relatório de cobrança não lista mais quem não vai tocar', html.indexOf('Ana Silva') > html.indexOf('Pagaram, mas não vão tocar'));
+  ok('Mas há um bloco de quem pagou e não vai desfilar', html.includes('Pagaram, mas não vão tocar'));
+  ok('Com o valor que precisa ser devolvido ou creditado', html.includes('115'));
   await page.click('#btn-back-admin5');
+  await page.waitForTimeout(200);
+
+  // O admin também consegue corrigir o "vai tocar" de alguém, sem depender de a
+  // própria pessoa entrar no site.
+  await page.click('#btn-goto-pessoas');
+  await page.waitForTimeout(300);
+  await page.click(`[data-edit-user="${uids.ana}"]`);
+  await page.waitForTimeout(250);
+  ok('O formulário do admin tem o campo "vai tocar"', (await page.locator(`#ae-vaitocar-${uids.ana}`).inputValue()) === 'Não');
+  await page.selectOption(`#ae-vaitocar-${uids.ana}`, 'Sim');
+  await page.click(`[data-admin-edit-form="${uids.ana}"] button[type=submit]`);
+  await page.waitForTimeout(400);
+  html = await appHtml(page);
+  ok('Trocando para Sim pelo painel, ela volta para a lista de quem desfila', html.indexOf('Ana Silva') < (html.indexOf('Não vão tocar no Carnaval') === -1 ? Infinity : html.indexOf('Não vão tocar no Carnaval')));
+  ok('E o bloco de quem não vai tocar some quando esvazia', !html.includes('Não vão tocar no Carnaval'));
+  await page.click('#btn-back-admin2');
   await page.waitForTimeout(200);
   await logout(page);
 
@@ -806,6 +854,110 @@ async function main() {
   ok('O valor entrou uma vez só no total', depoisDoDuplo.total === antesDoDuplo.total + 10);
   ok('E gerou um único comprovante', depoisDoDuplo.lancamentos === antesDoDuplo.lancamentos + 1);
 
+  console.log('\n== 16g. Exportar a lista de cadastros ==');
+  await page.click('#btn-goto-admin');
+  await page.click('#btn-goto-pessoas');
+  await page.waitForTimeout(300);
+  const [baixadoCsv] = await Promise.all([
+    page.waitForEvent('download'),
+    page.click('#btn-exportar-csv'),
+  ]);
+  ok('O arquivo CSV sai com o carnaval e a data no nome', /^batuqueiros-2027-1-\d{4}-\d{2}-\d{2}\.csv$/.test(baixadoCsv.suggestedFilename()));
+  const csv = readFileSync(await baixadoCsv.path(), 'utf8');
+  const linhasCsv = csv.replace(/^\uFEFF/, '').split('\r\n');
+  // Sem o BOM o Excel abre "Jos<C3><A9>" no lugar de "José"; sem o ponto-e-vírgula
+  // ele joga a linha inteira numa coluna só, porque aqui a vírgula é decimal.
+  ok('Começa com o BOM que faz o Excel ler os acentos', csv.charCodeAt(0) === 0xFEFF);
+  ok('A primeira linha avisa que há dados pessoais no arquivo', linhasCsv[0].includes('contém dados pessoais'));
+  const colunasCsv = linhasCsv[1].split(';');
+  ok('O cabeçalho traz os dados permanentes e os do carnaval', colunasCsv.includes('Nome') && colunasCsv.includes('Celular') && colunasCsv.includes('Posição') && colunasCsv.includes('Situação'));
+  ok('E também presença e acessos', colunasCsv.includes('Presenças') && colunasCsv.includes('Acesso admin'));
+  const linhaAnaCsv = linhasCsv.find(l => l.startsWith('Ana;'));
+  ok('Ana aparece na planilha', !!linhaAnaCsv);
+  const celulasAna = linhaAnaCsv.split(';');
+  ok('Com o celular dela, que só o admin enxerga', celulasAna[colunasCsv.indexOf('Celular')] === '(21) 90000-0000');
+  ok('Com a posição do carnaval selecionado', celulasAna[colunasCsv.indexOf('Posição')] === 'Surdo 1');
+  // Valor com vírgula decimal: 230 devido, 125 pagos (115 + os 10 do teste 16f).
+  ok('Valor devido no formato brasileiro', celulasAna[colunasCsv.indexOf('Valor devido')] === '230');
+  ok('Saldo calculado (230 - 125)', celulasAna[colunasCsv.indexOf('Saldo')] === '105');
+  ok('Uma linha por pessoa inscrita, mais aviso e cabeçalho', linhasCsv.length === 4 + 2);
+
+  // Um apelido com ponto-e-vírgula quebraria a planilha em colunas erradas, e um
+  // com aspas quebraria o campo — os dois precisam sair escapados.
+  await page.click(`[data-edit-user="${uids.duda}"]`);
+  await page.waitForTimeout(250);
+  await page.fill(`#ae-apelido-${uids.duda}`, 'Dudinha "do; Repique"');
+  await page.click(`[data-admin-edit-form="${uids.duda}"] button[type=submit]`);
+  await page.waitForTimeout(400);
+  const [baixadoEscape] = await Promise.all([
+    page.waitForEvent('download'),
+    page.click('#btn-exportar-csv'),
+  ]);
+  const csvEscape = readFileSync(await baixadoEscape.path(), 'utf8').replace(/^\uFEFF/, '').split('\r\n');
+  const linhaDudaCsv = csvEscape.find(l => l.startsWith('Duda;'));
+  ok('Ponto-e-vírgula e aspas no apelido saem escapados', linhaDudaCsv.includes('"Dudinha ""do; Repique"""'));
+  await page.click(`[data-edit-user="${uids.duda}"]`);
+  await page.waitForTimeout(250);
+  await page.fill(`#ae-apelido-${uids.duda}`, 'Dudinha');
+  await page.click(`[data-admin-edit-form="${uids.duda}"] button[type=submit]`);
+  await page.waitForTimeout(400);
+  // O filtro de posição da tela não pode encolher o arquivo: quem exporta quer a
+  // lista inteira, e o filtro é só uma lente para olhar a tela.
+  await page.selectOption('#admin-pessoas-filtro', 'Repique');
+  await page.waitForTimeout(250);
+  const [baixadoFiltrado] = await Promise.all([
+    page.waitForEvent('download'),
+    page.click('#btn-exportar-csv'),
+  ]);
+  const csvFiltrado = readFileSync(await baixadoFiltrado.path(), 'utf8').replace(/^\uFEFF/, '').split('\r\n');
+  ok('O filtro de posição da tela não encolhe a planilha', csvFiltrado.length === linhasCsv.length);
+  await page.selectOption('#admin-pessoas-filtro', 'todas');
+  await page.waitForTimeout(200);
+
+  console.log('\n== 16h. Excel (.xlsx): geração e queda para CSV se a biblioteca não carregar ==');
+  // A biblioteca que gera .xlsx vem de um CDN e não faz parte do site. Aqui ela
+  // é substituída por uma dublê que só registra o que recebeu — assim dá para
+  // conferir o conteúdo da planilha sem depender da internet no teste.
+  await page.evaluate(() => {
+    window.__matrizXlsx = null;
+    window.XLSX = {
+      utils: {
+        aoa_to_sheet: m => { window.__matrizXlsx = m; return {}; },
+        book_new: () => ({ abas: [] }),
+        book_append_sheet: (livro, aba, nome) => { window.__nomeAba = nome; },
+      },
+      write: () => new Uint8Array([80, 75, 3, 4]),
+    };
+  });
+  const [baixadoXlsx] = await Promise.all([
+    page.waitForEvent('download'),
+    page.click('#btn-exportar-xlsx'),
+  ]);
+  ok('O arquivo Excel sai com extensão .xlsx', baixadoXlsx.suggestedFilename().endsWith('.xlsx'));
+  const matriz = await page.evaluate(() => window.__matrizXlsx);
+  ok('A aba tem nome', (await page.evaluate(() => window.__nomeAba)) === 'Batuqueiros');
+  ok('A planilha começa pelo aviso de dados pessoais', matriz[0][0].includes('contém dados pessoais'));
+  ok('Depois vem o cabeçalho', matriz[1][0] === 'Nome');
+  ok('E uma linha por pessoa inscrita', matriz.length === 4 + 2);
+  // No .xlsx os valores vão como NÚMERO, não texto: sem isso não dá para somar
+  // a coluna no Excel, que é metade do motivo de exportar.
+  const colDevido = matriz[1].indexOf('Valor devido');
+  ok('Os valores vão como número, para poderem ser somados no Excel', matriz.slice(2).every(l => typeof l[colDevido] === 'number'));
+
+  await page.evaluate(() => { delete window.XLSX; });
+  await page.route('**/xlsx.full.min.js', r => r.abort());
+  const [baixadoFallback] = await Promise.all([
+    page.waitForEvent('download'),
+    page.click('#btn-exportar-xlsx'),
+  ]);
+  ok('Se a biblioteca de Excel não carrega, o site entrega o CSV em vez de falhar', baixadoFallback.suggestedFilename().endsWith('.csv'));
+  await page.unroute('**/xlsx.full.min.js');
+
+  await page.click('#btn-back-admin2');
+  await page.waitForTimeout(200);
+  await page.click('#btn-back-batuqueiro');
+  await page.waitForTimeout(300);
+
   console.log('\n== 17. Presença: Ana (admin) marca presença de Duda ==');
   await page.waitForTimeout(150);
   html = await appHtml(page);
@@ -898,7 +1050,7 @@ async function main() {
   html = await appHtml(page);
   ok('Posições foram copiadas para a edição nova (não precisa recadastrar)', html.includes('18 posições'));
   ok('Valores da anuidade também vieram copiados', html.includes('R$&nbsp;210,00') || html.includes('210,00'));
-  ok('A edição nova começa sem ninguém inscrito', html.includes('0 pessoas inscritas nesta edição'));
+  ok('A edição nova começa sem ninguém inscrito', html.includes('0 pessoas vão desfilar neste carnaval'));
   ok('A edição nova começa sem ensaios', html.includes('0 de 0 ensaios já realizados'));
   ok('A edição nova começa sem repertório (dados de 2027 não vazam)', html.includes('0 músicas cadastradas'));
 
@@ -1065,7 +1217,7 @@ async function main() {
   await page.waitForTimeout(400);
   html = await appHtml(page);
   ok('Admin consegue voltar a visualizar a edição encerrada de 2027', html.includes('Carnaval do Fogo e Paixão 2027'));
-  ok('Os dados de 2027 continuam lá (4 inscritos)', html.includes('4 pessoas inscritas nesta edição'));
+  ok('Os dados de 2027 continuam lá (4 inscritos)', html.includes('4 pessoas vão desfilar neste carnaval'));
 
   await page.click('#btn-goto-ensaios');
   await page.waitForTimeout(250);
@@ -1173,7 +1325,7 @@ async function main() {
   ok('A importação já traz o contato para a área restrita', contatosImportados.contato.celular === '(21) 90000-0000');
   ok('E não deixa cópia no cadastro que todos leem', !(contatosImportados.pessoa.celular || '').trim());
   ok('Vale para quem nunca entrou no site novo também (Fred)', contatosImportados.fred.celular === '(21) 91111-1111');
-  ok('Os 2 cadastros antigos viraram inscrições da edição', html.includes('2 pessoas inscritas nesta edição'));
+  ok('Os 2 cadastros antigos viraram inscrições da edição', html.includes('2 pessoas vão desfilar neste carnaval'));
   ok('Os ensaios antigos foram importados', html.includes('2 de 2 ensaios já realizados'));
   ok('As posições antigas foram importadas', html.includes('2 posições cadastradas'));
   ok('O repertório antigo foi importado', html.includes('1 música cadastrada'));

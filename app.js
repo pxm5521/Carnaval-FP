@@ -497,6 +497,15 @@ function perfilMesclado() {
   const juntos = insc ? { ...base, ...insc, id } : { ...base, id };
   return { ...juntos, ...contatoDe(juntos) };
 }
+/* Quem vai desfilar neste carnaval — a lista que as telas operacionais usam.
+   Quem respondeu que NÃO vai tocar continua inscrito, com cadastro, isenção e
+   histórico preservados, mas não entra na presença, nos naipes nem na conta de
+   camisas: ele não vai ao ensaio nem desfila, e deixá-lo ali fazia a bateria
+   parecer maior do que é e a lista de presença ficar cheia de gente que nunca
+   seria marcada. Eles aparecem num bloco próprio na tela de Cadastros. */
+function vaoTocarNaEdicao() { return batuqueirosDaEdicao().filter(p => !naoVaiTocar(p)); }
+function naoVaoTocarNaEdicao() { return batuqueirosDaEdicao().filter(naoVaiTocar); }
+
 /* Lista de batuqueiros inscritos na edição em contexto (pessoa + inscrição). */
 function batuqueirosDaEdicao() {
   return inscricoesCache
@@ -665,6 +674,14 @@ function contagemPorStatus(pessoas) {
   pessoas.forEach(p => { const l = paymentStatus(p).label; map[l] = (map[l] || 0) + 1; });
   return map;
 }
+/* Quantas camisas de cada tamanho encomendar. Só de quem vai desfilar. */
+function contagemPorCamisa(pessoas) {
+  const mapa = {};
+  pessoas.forEach(p => { const c = (p.camisa || "").trim() || "Sem tamanho"; mapa[c] = (mapa[c] || 0) + 1; });
+  // Na ordem dos tamanhos, não alfabética — GG antes de P não ajuda ninguém.
+  return [...CAMISAS, "Sem tamanho"].filter(c => mapa[c]).map(c => [c, mapa[c]]);
+}
+
 function contagemPorPosicao(pessoas) {
   const map = {};
   pessoas.forEach(p => { map[p.posicao] = (map[p.posicao] || 0) + 1; });
@@ -885,11 +902,13 @@ function rodape() {
   <footer class="rodape">
     <div class="wrap">
       <h3>Privacidade</h3>
+      <div class="rodape-blocos">
       <p><b>O que é guardado:</b> nome, apelido, e-mail, celular e data de nascimento; e, a cada carnaval, sua posição, tamanho de camisa, se vai tocar, presença nos ensaios e os pagamentos da anuidade que você registrar.</p>
       <p><b>Para que serve:</b> só para organizar a bateria — montar os naipes, encomendar camisas, controlar a anuidade e acompanhar os ensaios. Nada é usado para outra finalidade, vendido ou enviado para fora do bloco.</p>
       <p><b>Quem enxerga o quê:</b> quem tem cadastro no site vê o nome, o apelido, a posição e a presença dos outros nos ensaios — é o que faz a lista de ensaio funcionar. Seu <b>celular e sua data de nascimento</b> só são vistos por você e pela organização. Seus <b>pagamentos</b> (valor, data e chave Pix) só por você: nem a organização vê o detalhe, só o total já pago.</p>
       <p><b>Seus direitos:</b> você pode ver e corrigir seus dados a qualquer momento em "Meus dados", e pode pedir a exclusão do seu cadastro falando com a organização do bloco. Os dados ficam guardados enquanto você fizer parte da bateria.</p>
       <p class="rodape-fim">Carnaval do Fogo e Paixão · site de uso interno da bateria</p>
+      </div>
     </div>
   </footer>`;
 }
@@ -1145,7 +1164,8 @@ function viewBatuqueiro() {
   // mentia sobre o próprio estado, e reselecionar "Todos" nem disparava change.
   const ensaioFiltro = ensaiosCache.some(e => e.id === session.presencaEnsaioFiltro) ? session.presencaEnsaioFiltro : "todos";
   const ensaios = ensaioFiltro === "todos" ? ensaiosCache : ensaiosCache.filter(e => e.id === ensaioFiltro);
-  const todos = batuqueirosDaEdicao();
+  // Quem avisou que não vai tocar não vai a ensaio: fora da tabela de presença.
+  const todos = vaoTocarNaEdicao();
   const editavel = edicaoEditavel(ed);
 
   return `
@@ -1579,6 +1599,139 @@ function statusPagamentoHistorico(insc, posicoes, precos) {
 }
 
 /* ============================================================
+   EXPORTAÇÃO DA LISTA DE CADASTROS (Excel / CSV)
+   ------------------------------------------------------------
+   Uma linha por pessoa INSCRITA no carnaval selecionado, juntando o que é
+   permanente (nome, contato) com o que é daquele ano (posição, camisa, dinheiro,
+   presença). Sai do painel de Cadastros, então só o admin gera — e é ele quem
+   tem permissão de ler o contato de todo mundo.
+
+   Repare que a planilha leva dados pessoais para fora do controle de acesso do
+   site: quem receber o arquivo passa a ter o telefone e o nascimento da bateria
+   inteira, sem nenhuma das restrições montadas aqui. Por isso a primeira linha
+   do arquivo é um aviso — não impede nada tecnicamente, mas fica registrado
+   para quem abrir.
+   ============================================================ */
+const AVISO_EXPORTACAO = "ATENÇÃO: esta planilha contém dados pessoais da bateria (telefone e data de nascimento). Use só para a organização do carnaval e não repasse para fora.";
+
+/* Linhas da planilha, já como texto pronto para exibição. A primeira é o
+   cabeçalho. Devolve também um nome de arquivo com o carnaval e a data. */
+function dadosDaExportacao() {
+  const ed = edicaoCtx();
+  const pessoas = batuqueirosDaEdicao();
+  const ensaios = ensaiosCache;
+  const totalEnsaios = ensaios.length;
+
+  const cabecalho = [
+    "Nome", "Sobrenome", "Apelido", "E-mail", "Celular", "Data de nascimento", "Idade",
+    "Vai tocar", "Posição", "Camisa",
+    "Isento", "Motivo da isenção",
+    "Forma de pagamento", "Valor devido", "Valor pago", "Saldo", "Situação",
+    "Presenças", "Total de ensaios", "% presença",
+    "Acesso admin", "Marca presença",
+  ];
+
+  const linhas = pessoas.map(p => {
+    const presencas = ensaios.filter(e => presencasCache[p.id] && presencasCache[p.id][e.id]).length;
+    const isento = isIsento(p);
+    // Quem é isento não deve nada, mesmo tendo plano escolhido antes da isenção.
+    const devido = isento ? 0 : (planoComValor(p) ? valorDoPlano(p.formaPagamento) : 0);
+    const pago = totalPago(p);
+    return [
+      p.nome || "", p.sobrenome || "", apelidoDe(p), p.email || "",
+      p.celular || "", p.dataNascimento ? dateBR(p.dataNascimento) : "",
+      calcIdade(p.dataNascimento) === null ? "" : String(calcIdade(p.dataNascimento)),
+      p.vaiTocar || "", p.posicao === "Outro" && p.posicaoOutro ? `Outro (${p.posicaoOutro})` : (p.posicao || ""),
+      p.camisa || "",
+      isento ? "Sim" : "Não", isento ? isentoMotivo(p) : "",
+      planoValido(p.formaPagamento) ? PLANOS[p.formaPagamento].label : "",
+      devido, pago, Math.max(0, devido - pago),
+      paymentStatus(p).label,
+      presencas, totalEnsaios,
+      totalEnsaios ? Math.round((presencas / totalEnsaios) * 100) + "%" : "",
+      p.adminAccess ? "Sim" : "Não", p.presencaAccess ? "Sim" : "Não",
+    ];
+  });
+
+  const nomeBase = `batuqueiros-${(ed && ed.id) || "carnaval"}-${hojeISO()}`;
+  return { cabecalho, linhas, nomeBase, ed, quantas: linhas.length };
+}
+
+/* Entrega um arquivo ao navegador. Um <a download> criado na hora é o caminho
+   que funciona em todos os navegadores usados pela bateria, inclusive celular. */
+function baixarArquivo(nomeArquivo, blob) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url; a.download = nomeArquivo;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  // Revogar na hora cortaria o download em alguns navegadores.
+  setTimeout(() => URL.revokeObjectURL(url), 4000);
+}
+
+/* CSV no dialeto que o Excel em português entende sem perguntar nada:
+   separador ponto-e-vírgula (vírgula é separador decimal aqui) e BOM UTF-8 no
+   começo, sem o qual o Excel abre "Jos<C3><A9>" em vez de "José". */
+function exportarCSV() {
+  const { cabecalho, linhas, nomeBase, quantas } = dadosDaExportacao();
+  if (quantas === 0) { alert("Não há ninguém inscrito neste carnaval para exportar."); return; }
+  const campo = v => {
+    const texto = typeof v === "number" ? String(v).replace(".", ",") : String(v == null ? "" : v);
+    // Aspas duplas dentro do campo viram duas aspas; qualquer campo com
+    // separador, aspas ou quebra de linha precisa ir entre aspas.
+    return /[";\n\r]/.test(texto) ? `"${texto.replace(/"/g, '""')}"` : texto;
+  };
+  const corpo = [[AVISO_EXPORTACAO], cabecalho, ...linhas]
+    .map(linha => linha.map(campo).join(";")).join("\r\n");
+  baixarArquivo(`${nomeBase}.csv`, new Blob(["\uFEFF" + corpo], { type: "text/csv;charset=utf-8;" }));
+}
+
+/* Carrega o SheetJS sob demanda — só quando alguém clica em "Excel (.xlsx)".
+   Não faz parte do site: se o CDN estiver fora do ar ou bloqueado, a promessa
+   falha e quem chamou cai para o CSV. */
+let promessaSheetJS = null;
+function carregarSheetJS() {
+  if (window.XLSX) return Promise.resolve(window.XLSX);
+  if (promessaSheetJS) return promessaSheetJS;
+  promessaSheetJS = new Promise((resolve, reject) => {
+    const script = document.createElement("script");
+    script.src = "https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js";
+    script.onload = () => (window.XLSX ? resolve(window.XLSX) : reject(new Error("SheetJS carregou sem se registrar")));
+    script.onerror = () => { promessaSheetJS = null; reject(new Error("não foi possível carregar a biblioteca de Excel")); };
+    document.head.appendChild(script);
+  });
+  return promessaSheetJS;
+}
+
+async function exportarXLSX() {
+  const { cabecalho, linhas, nomeBase, quantas } = dadosDaExportacao();
+  if (quantas === 0) { alert("Não há ninguém inscrito neste carnaval para exportar."); return; }
+  let XLSX;
+  try {
+    XLSX = await carregarSheetJS();
+  } catch (err) {
+    // Não deixa o admin na mão: entrega o mesmo conteúdo no formato que não
+    // depende de nada e explica o que aconteceu.
+    alert("Não consegui carregar a biblioteca que gera o arquivo .xlsx (pode ser a internet ou um bloqueio de rede).\n\nVou baixar a mesma planilha em CSV, que o Excel abre normalmente.");
+    exportarCSV();
+    return;
+  }
+  const matriz = [[AVISO_EXPORTACAO], cabecalho, ...linhas];
+  const aba = XLSX.utils.aoa_to_sheet(matriz);
+  // Largura das colunas pelo maior conteúdo, com teto para o aviso não esticar
+  // a primeira coluna até o infinito.
+  aba["!cols"] = cabecalho.map((titulo, i) => ({
+    wch: Math.min(38, Math.max(titulo.length + 2, ...linhas.map(l => String(l[i] == null ? "" : l[i]).length + 2))),
+  }));
+  aba["!merges"] = [{ s: { r: 0, c: 0 }, e: { r: 0, c: cabecalho.length - 1 } }];
+  const livro = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(livro, aba, "Batuqueiros");
+  const bytes = XLSX.write(livro, { bookType: "xlsx", type: "array" });
+  baixarArquivo(`${nomeBase}.xlsx`, new Blob([bytes], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }));
+}
+
+/* ============================================================
    VIEW: ADMIN — painel principal
    ============================================================ */
 /* Aviso no topo do painel enquanto houver contato guardado em local legível por
@@ -1599,17 +1752,22 @@ function boxContatosExpostos() {
 function viewAdmin() {
   const u = perfilMesclado();
   const ed = edicaoCtx();
-  const todos = batuqueirosDaEdicao();
+  // "todos" aqui é só quem vai desfilar: é dele que saem naipes, camisas,
+  // presença e cobrança. Quem avisou que não vai tocar tem contagem à parte.
+  const todos = vaoTocarNaEdicao();
+  const foraDesteCarnaval = naoVaoTocarNaEdicao();
   const pagantes = todos.filter(p => !isIsento(p));
   const isentos = todos.filter(isIsento);
   const totalInscritos = todos.length;
   const confirmados = todos.filter(p => p.vaiTocar === "Sim").length;
-  const arrecadado = todos.reduce((s, p) => s + totalPago(p), 0);
+  // O arrecadado precisa contar TODO MUNDO: quem pagou e depois avisou que não
+  // vai tocar continua com dinheiro no caixa, à espera de devolução ou crédito.
+  const arrecadado = batuqueirosDaEdicao().reduce((s, p) => s + totalPago(p), 0);
   const quitados = pagantes.filter(p => planoValido(p.formaPagamento) && precosCache && totalPago(p) >= totalDevido(p)).length;
   const adimplencia = pagantes.length ? Math.round((quitados / pagantes.length) * 100) : 0;
   const hoje = hojeISO();
   const ensaiosRealizados = ensaiosCache.filter(e => e.data <= hoje);
-  const statusCounts = contagemPorStatus(todos);
+  const statusCounts = contagemPorStatus(todos);   // "todos" = quem vai desfilar
   const precisaSeed = ed && edicaoEditavel(ed) && edicaoCarregou.posicoes && edicaoCarregou.precos
     // E, não OU: com posições cadastradas mas sem preços (ou o contrário) a
     // caixa aparecia e o botão sempre recusava, por checar a condição inversa.
@@ -1669,12 +1827,12 @@ function viewAdmin() {
     </div>` : ""}
 
     <div class="stat-row">
-      <div class="stat-tile"><div class="label">Inscritos</div><div class="value">${totalInscritos}</div></div>
-      <div class="stat-tile"><div class="label">Confirmados p/ desfilar</div><div class="value">${confirmados} <small>/ ${totalInscritos}</small></div></div>
+      <div class="stat-tile"><div class="label">Vão desfilar</div><div class="value">${totalInscritos}</div></div>
+      <div class="stat-tile"><div class="label">Avisaram que não vão tocar</div><div class="value">${foraDesteCarnaval.length}</div></div>
       <div class="stat-tile"><div class="label">Arrecadado</div><div class="value">${currency(arrecadado)}</div></div>
       <div class="stat-tile"><div class="label">Adimplência (pagantes)</div><div class="value">${adimplencia}<small>%</small></div></div>
     </div>
-    <p class="hint" style="margin:-10px 0 22px;">${isentos.length} de ${totalInscritos} inscritos são isentos de anuidade (não entram no cálculo de adimplência).</p>
+    <p class="hint" style="margin:-10px 0 22px;">${isentos.length} de ${totalInscritos} que vão desfilar são isentos de anuidade (não entram no cálculo de adimplência).${foraDesteCarnaval.length ? ` Quem avisou que não vai tocar fica fora das listas deste carnaval — naipes, camisas e presença — e aparece em Cadastros, num bloco separado.` : ""}</p>
 
     <div class="two-col">
       <div class="card">
@@ -1717,15 +1875,24 @@ function viewAdmin() {
 
     <div class="card">
       <div class="card-head">
-        <div><h2>Cadastros</h2><p class="card-sub" style="margin-bottom:0">${totalInscritos} pessoas inscritas nesta edição</p></div>
+        <div><h2>Cadastros</h2><p class="card-sub" style="margin-bottom:0">${totalInscritos} pessoa${totalInscritos === 1 ? "" : "s"} vão desfilar neste carnaval${foraDesteCarnaval.length ? ` · ${foraDesteCarnaval.length} avisaram que não vão tocar` : ""}</p></div>
         <button class="btn-secondary btn-sm" id="btn-goto-pessoas">Ver lista completa</button>
       </div>
-      <div class="table-scroll">
-        <table>
-          <thead><tr><th>Posição</th><th>Pessoas</th></tr></thead>
-          <tbody>${contagemPorPosicao(todos).map(([nome, n]) => `<tr><td>${esc(nome)}</td><td>${n}</td></tr>`).join("")}</tbody>
-        </table>
+      <div class="two-col">
+        <div class="table-scroll">
+          <table>
+            <thead><tr><th>Posição</th><th>Vão desfilar</th></tr></thead>
+            <tbody>${contagemPorPosicao(todos).map(([nome, n]) => `<tr><td>${esc(nome)}</td><td>${n}</td></tr>`).join("") || '<tr><td colspan="2" class="hint">Ninguém confirmado para desfilar ainda.</td></tr>'}</tbody>
+          </table>
+        </div>
+        <div class="table-scroll">
+          <table>
+            <thead><tr><th>Camisa</th><th>Quantas</th></tr></thead>
+            <tbody>${contagemPorCamisa(todos).map(([tam, n]) => `<tr><td>${esc(tam)}</td><td>${n}</td></tr>`).join("") || '<tr><td colspan="2" class="hint">Nenhuma camisa a encomendar ainda.</td></tr>'}</tbody>
+          </table>
+        </div>
       </div>
+      <p class="hint" style="margin-top:10px;">A encomenda de camisas conta só quem vai desfilar. Se alguém que não vai tocar quiser comprar, some à mão.</p>
     </div>
 
     <!-- ÁREA 2: todos os carnavais juntos -------------------------------- -->
@@ -1787,7 +1954,7 @@ function viewAdminEdicoes() {
       ${lista.length === 0 ? `<div class="hint">Nenhuma edição cadastrada ainda.</div>` : `
       <div class="table-scroll">
         <table>
-          <thead><tr><th>Edição</th><th>Data do desfile</th><th>Situação</th><th>Inscritos</th><th></th></tr></thead>
+          <thead><tr><th>Edição</th><th>Data do desfile</th><th>Situação</th><th>Vão desfilar</th><th></th></tr></thead>
           <tbody>
             ${lista.map(e => {
               const emCtx = e.id === edicaoCtxId();
@@ -1795,7 +1962,7 @@ function viewAdminEdicoes() {
                 <td class="name-cell">${esc(edicaoLabel(e))} <span class="muted-sm">(${esc(e.id)})</span></td>
                 <td><input type="date" class="edicao-data-input" data-edicao-id="${e.id}" value="${e.dataDoCarnaval || ""}" ${e.status === "encerrada" ? "disabled" : ""}></td>
                 <td><span class="badge ${statusInfo(e).cls}">${statusInfo(e).label}</span></td>
-                <td>${emCtx ? batuqueirosDaEdicao().length : "—"}</td>
+                <td>${emCtx ? vaoTocarNaEdicao().length : "—"}</td>
                 <td class="row-actions">
                   ${e.status !== "encerrada" ? `<button class="btn-secondary btn-sm" data-save-edicao="${e.id}">Salvar data</button>` : ""}
                   ${!emCtx ? `<button class="btn-ghost btn-sm" data-ver-edicao="${e.id}">Ver dados</button>` : `<span class="muted-sm">visualizando</span>`}
@@ -2042,7 +2209,7 @@ function viewAdminEnsaios() {
   const ed = edicaoCtx();
   const editavel = edicaoEditavel(ed);
   const hoje = hojeISO();
-  const totalPessoas = batuqueirosDaEdicao().length;
+  const totalPessoas = vaoTocarNaEdicao().length;
   return `
   ${headerBar(u)}
   <div class="wrap">
@@ -2111,7 +2278,11 @@ function viewAdminEnsaios() {
 function viewAdminRelatorio() {
   const u = perfilMesclado();
   const ed = edicaoCtx();
-  const todos = batuqueirosDaEdicao();
+  const todos = vaoTocarNaEdicao();
+  // Quem não vai tocar não é cobrado — mas se já tinha pago, esse dinheiro está
+  // no caixa e alguém precisa decidir se devolve ou credita. Some da lista de
+  // cobrança e reaparece embaixo, só quem tem valor pago.
+  const aDevolver = naoVaoTocarNaEdicao().filter(p => totalPago(p) > 0);
   return `
   ${headerBar(u)}
   <div class="wrap">
@@ -2164,7 +2335,27 @@ function viewAdminRelatorio() {
           </tbody>
         </table>
       </div>
+      <p class="hint" style="margin-top:10px;">A lista traz só quem vai desfilar. Quem avisou que não vai tocar está isento e não é cobrado.</p>
     </div>
+
+    ${aDevolver.length > 0 ? `
+    <div class="card">
+      <div class="card-head">
+        <div>
+          <h2>Pagaram, mas não vão tocar</h2>
+          <p class="card-sub" style="margin-bottom:0">${aDevolver.length} pessoa${aDevolver.length === 1 ? "" : "s"} registrou pagamento antes de avisar que não vai desfilar. O dinheiro está no caixa e precisa ser devolvido ou virar crédito para o próximo carnaval — o site não decide isso por você.</p>
+        </div>
+      </div>
+      <div class="table-scroll">
+        <table>
+          <thead><tr><th>Nome</th><th>Valor pago</th></tr></thead>
+          <tbody>
+            ${aDevolver.map(p => `<tr><td class="name-cell">${esc(fullName(p))}</td><td>${currency(totalPago(p))}</td></tr>`).join("")}
+            <tr><td><b>Total</b></td><td><b>${currency(aDevolver.reduce((soma, p) => soma + totalPago(p), 0))}</b></td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>` : ""}
   </div>`;
 }
 
@@ -2328,7 +2519,8 @@ function viewAdminPessoas() {
   const ed = edicaoCtx();
   const editavel = edicaoEditavel(ed);
   const filtro = session.adminPessoasFiltro || "todas";
-  const todos = batuqueirosDaEdicao();
+  const todos = vaoTocarNaEdicao();
+  const foraDesteCarnaval = naoVaoTocarNaEdicao();
   const posicoesPresentes = posicoesUnicasOrdenadas(todos);
   const lista = filtro === "todas" ? todos : todos.filter(p => p.posicao === filtro);
   const naoInscritos = pessoasCache.filter(p => !inscricoesCache.some(i => i.id === p.id));
@@ -2339,7 +2531,11 @@ function viewAdminPessoas() {
     ${bannerEdicao(ed)}
     <div class="card">
       <div class="card-head">
-        <div><h2>Cadastros — ${esc(edicaoLabel(ed))}</h2><p class="card-sub" style="margin-bottom:0">Editar dados, marcar isenção individual de anuidade, dar acesso admin ou tirar alguém desta edição</p></div>
+        <div><h2>Quem vai desfilar — ${esc(edicaoLabel(ed))}</h2><p class="card-sub" style="margin-bottom:0">${todos.length} pessoa${todos.length === 1 ? "" : "s"}. Editar dados, marcar isenção individual de anuidade, dar acesso admin ou tirar alguém desta edição</p></div>
+        <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center;">
+          <button class="btn-secondary btn-sm" id="btn-exportar-xlsx">Baixar Excel (.xlsx)</button>
+          <button class="btn-ghost btn-sm" id="btn-exportar-csv">Baixar CSV</button>
+        </div>
         <select id="admin-pessoas-filtro" style="width:auto;">
           <option value="todas" ${filtro === "todas" ? "selected" : ""}>Todas as posições</option>
           ${posicoesPresentes.map(p => `<option value="${esc(p)}" ${filtro === p ? "selected" : ""}>${esc(p)}</option>`).join("")}
@@ -2355,7 +2551,29 @@ function viewAdminPessoas() {
           ${session.adminEditingUser === p.id ? renderAdminEditUserForm(p, editavel) : ""}
         </div>
       `).join("")}
+      <p class="hint" style="margin-top:12px;">A planilha traz uma linha por pessoa inscrita neste carnaval — inclusive quem avisou que não vai tocar, identificado na coluna "Vai tocar", para você ter o registro de quem respondeu o quê. Vai com contato, posição, camisa, situação da anuidade e presença nos ensaios, sem o filtro de posição acima. Ela contém telefone e data de nascimento, então sai do controle de acesso do site: quem receber o arquivo passa a ver esses dados de todo mundo.</p>
     </div>
+
+    ${foraDesteCarnaval.length > 0 ? `
+    <div class="card">
+      <div class="card-head">
+        <div>
+          <h2>Não vão tocar no ${esc(edicaoLabel(ed))}</h2>
+          <p class="card-sub" style="margin-bottom:0">${foraDesteCarnaval.length} pessoa${foraDesteCarnaval.length === 1 ? "" : "s"} respondeu que não vai desfilar neste carnaval. Ficam de fora da presença, dos naipes e da encomenda de camisas, e são isentas da anuidade — mas o cadastro e o histórico delas continuam intactos, e no próximo carnaval a inscrição aparece normalmente.</p>
+        </div>
+      </div>
+      ${foraDesteCarnaval.map(p => `
+        <div class="list-row">
+          <span class="grow"><b>${nomeComApelido(p)}</b> <span class="muted-sm">— ${esc(p.email)}${totalPago(p) > 0 ? ` · <span class="badge badge-warning">Pagou ${currency(totalPago(p))} — ver devolução</span>` : ""}</span></span>
+          <button class="btn-secondary btn-sm" data-edit-user="${p.id}">Editar</button>
+          ${editavel ? `<button class="btn-danger btn-sm" data-remove-user="${p.id}">Tirar da edição</button>` : ""}
+        </div>
+        <div class="add-pay-form ${session.adminEditingUser === p.id ? "open" : ""}" id="admin-edit-${p.id}">
+          ${session.adminEditingUser === p.id ? renderAdminEditUserForm(p, editavel) : ""}
+        </div>
+      `).join("")}
+      <p class="hint" style="margin-top:10px;">Se alguém mudar de ideia, quem corrige é a própria pessoa em "Meus dados" — ou você, no botão Editar acima.</p>
+    </div>` : ""}
 
     ${naoInscritos.length > 0 ? `
     <div class="card">
@@ -2385,6 +2603,14 @@ function renderAdminEditUserForm(p, editavel = true) {
       <div class="field">
         <label>Data de nascimento</label>
         ${dataNascimentoFieldsHtml(`ae-datanasc-${p.id}`, p.dataNascimento)}
+      </div>
+      <div class="field">
+        <label>Vai tocar neste carnaval?</label>
+        <select id="ae-vaitocar-${p.id}" ${dis}>
+          <option value="Sim" ${p.vaiTocar === "Sim" ? "selected" : ""}>Sim</option>
+          <option value="Não" ${p.vaiTocar === "Não" ? "selected" : ""}>Não</option>
+        </select>
+        <p class="hint">Quem não vai tocar sai da presença, dos naipes e da encomenda de camisas, e fica isento da anuidade.</p>
       </div>
       <div class="field">
         <label>Posição</label>
@@ -2828,6 +3054,8 @@ function wireEvents() {
   });
   on("#btn-voltar-edicao-aberta", "click", () => { const a = edicaoAberta(); if (a) trocarEdicaoCtx(a.id); });
   on("#admin-pessoas-filtro", "change", e => { session.adminPessoasFiltro = e.target.value; render(); });
+  on("#btn-exportar-csv", "click", exportarCSV);
+  on("#btn-exportar-xlsx", "click", exportarXLSX);
   on("#relatorio-filtro-status", "change", e => { session.relatorioFiltroStatus = e.target.value; render(); });
   on("#relatorio-filtro-posicao", "change", e => { session.relatorioFiltroPosicao = e.target.value; render(); });
   on("#admin-troca-edicao", "change", e => trocarEdicaoCtx(e.target.value));
@@ -3359,6 +3587,7 @@ function wireEvents() {
         dataNascimento: lerDataNascimento(`ae-datanasc-${id}`) || (original && original.dataNascimento) || "",
       };
       const inscricaoPatch = {
+        vaiTocar: $(`#ae-vaitocar-${id}`).value,
         posicao: $(`#ae-posicao-${id}`).value,
         camisa: $(`#ae-camisa-${id}`).value,
         // O admin é a única saída quando alguém escolhe o plano errado e já

@@ -196,6 +196,17 @@ Se você tiver o Node.js instalado, também há um script de teste automatizado 
 
 **O que exatamente é guardado por carnaval e o que é permanente?** Permanente: em `/pessoas`, nome, sobrenome, apelido, e-mail, acesso ao painel admin e acesso para marcar presença; em `/contatos`, celular e data de nascimento (ver a pergunta sobre privacidade, abaixo). Por carnaval (dentro de `/edicoes/{id}`): posição/instrumento, tamanho da camisa, se vai tocar, isenção individual, forma de pagamento e valor pago, além das posições disponíveis, ensaios, repertório, valores da anuidade e presenças daquele ano.
 
+**Quem respondeu que NÃO vai tocar aparece onde?** Num bloco próprio na tela de **Cadastros**, chamado "Não vão tocar no [carnaval]". Essas pessoas ficam de fora de tudo que é operacional daquele carnaval: não aparecem na tabela de presença dos ensaios, não entram na contagem por naipe nem na encomenda de camisas, e não são cobradas (a regra da bateria é que quem não desfila é isento). O cadastro, o histórico e os pagamentos delas continuam intactos, e no carnaval seguinte a inscrição aparece normalmente — inclusive pré-preenchida com os dados do ano anterior.
+
+Duas consequências que valem saber:
+
+- Os números do painel passam a ser de quem vai desfilar. "Vão desfilar: 33" e "Avisaram que não vão tocar: 8" são coisas diferentes, e a soma é o total de respostas que você recebeu.
+- Se alguém pagou e depois avisou que não vai tocar, esse dinheiro continua no caixa. O relatório de pagamentos ganha um bloco **"Pagaram, mas não vão tocar"** com os nomes e o total — o site não decide se é devolução ou crédito, só garante que a quantia não desapareça da sua vista.
+
+Para corrigir o "vai tocar" de alguém, a própria pessoa muda em "Meus dados", ou você muda em **Cadastros → Editar → "Vai tocar neste carnaval?"**.
+
+**A planilha exportada também exclui quem não vai tocar?** Não — ali vai todo mundo que respondeu, com a coluna "Vai tocar" distinguindo. A planilha é o seu registro de quem respondeu o quê; as telas é que são a visão operacional do carnaval.
+
 **Quem consegue ver o quê, na prática?** O site é usado por um grupo pequeno e conhecido, então quase tudo é visível para quem tem cadastro — nome, apelido, posição e presença nos ensaios aparecem para todo mundo, porque é o que faz a lista de ensaio funcionar. Duas coisas fogem disso:
 
 - **Celular e data de nascimento** ficam em `/contatos`, uma área que só a própria pessoa e a organização conseguem ler.
@@ -208,6 +219,12 @@ Vale entender por que o contato precisou ficar separado, porque a mesma armadilh
 **Já tenho gente cadastrada. Como restrinjo o contato de quem se cadastrou antes?** O painel admin avisa sozinho quando encontra cadastros nessa situação, com um botão **"Restringir esses dados agora"**. Ele move o celular e a data de nascimento de todos os cadastros de uma vez, sem apagar nada, e o aviso some quando termina. Pode clicar mais de uma vez sem risco: quem já foi separado não entra na conta.
 
 **O site tem aviso de privacidade?** Sim, no rodapé de todas as telas: o que é guardado, para que serve, quem enxerga o quê e como pedir correção ou exclusão. Sobre a LGPD, vale a ressalva honesta: um bloco de carnaval fica numa zona cinzenta da lei (o art. 4º, I exclui tratamento feito por pessoa natural para fins particulares e não econômicos, mas há cobrança de anuidade aqui). O aviso e a restrição do contato não são um parecer jurídico — são o mínimo razoável, e existem principalmente porque as pessoas estão entregando telefone e data de nascimento para um site.
+
+**Como faço para exportar a lista para uma planilha?** No painel admin, em **Cadastros**, há dois botões: **"Baixar Excel (.xlsx)"** e **"Baixar CSV"**. Os dois trazem exatamente o mesmo conteúdo — uma linha por pessoa inscrita no carnaval que estiver selecionado, com nome, apelido, e-mail, celular, nascimento, idade, se vai tocar, posição, camisa, isenção e o motivo dela, forma de pagamento, valor devido, valor pago, saldo, situação, presenças e os acessos de organização. O filtro de posição da tela não muda o arquivo: a planilha sai sempre completa.
+
+Sobre os dois formatos: o **.xlsx** é a planilha nativa do Excel, com cabeçalho e colunas dimensionadas, mas ele precisa buscar uma biblioteca na internet no momento do clique. Se essa busca falhar (internet ruim, rede corporativa bloqueando), o site avisa e baixa o **CSV** no lugar, sem perder o clique. O **CSV** não depende de nada e abre no Excel em português já separado em colunas — ele é gravado com ponto-e-vírgula e com a marca de codificação que faz os acentos aparecerem certos. Se você abrir o CSV no Google Sheets em vez do Excel, escolha ponto-e-vírgula como separador na importação.
+
+A primeira linha do arquivo é um aviso de que ali há dados pessoais. Ele não protege nada tecnicamente — o ponto é que a planilha sai do controle de acesso do site: quem receber o arquivo passa a ter o telefone e a data de nascimento da bateria inteira, sem as restrições descritas acima. Vale mandar para quem realmente precisa, e não para o grupo do WhatsApp.
 
 **Posso ver os dados de um carnaval antigo?** Sim. No painel admin, o seletor **"Estou vendo os dados de"** troca a edição que está sendo exibida — todas as telas (ensaios, posições, músicas, relatório, cadastros) passam a mostrar aquele carnaval. Se a edição estiver encerrada, tudo fica só leitura, com um aviso no topo. Cada batuqueiro também tem o próprio "Meu histórico de carnavais".
 
