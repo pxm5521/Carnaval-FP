@@ -320,7 +320,20 @@ async function main() {
 
   await registrar(page, { email: 'carla@example.com', nome: 'Carla', sobrenome: 'Dias', posicao: 'Voz', camisa: 'P' });
   await logout(page);
-  await registrar(page, { email: 'duda@example.com', nome: 'Duda', sobrenome: 'Reis', apelido: 'Dudinha do Repique', posicao: 'Repique', camisa: 'GG' });
+  // celular próprio (diferente do padrão) para dar para provar, mais adiante, que
+  // o contato de uma pessoa não aparece na sessão de outra
+  await registrar(page, { email: 'duda@example.com', nome: 'Duda', sobrenome: 'Reis', apelido: 'Dudinha do Repique', posicao: 'Repique', camisa: 'GG', celular: '(21) 91234-5678' });
+  // Verificado aqui, logo depois do cadastro e antes de qualquer edição: é o
+  // momento em que um vazamento no formulário de cadastro apareceria.
+  const recemCadastrada = await page.evaluate(() => {
+    const s = window.__mock.dumpStore();
+    const uid = window.__mock.uidPorEmail('duda@example.com');
+    return { pessoa: s.pessoas[uid], contato: (s.contatos || {})[uid] };
+  });
+  ok('O cadastro recém-criado não grava celular na área de leitura geral', !(recemCadastrada.pessoa.celular || '').trim());
+  ok('Nem data de nascimento', !(recemCadastrada.pessoa.dataNascimento || '').trim());
+  ok('Os dois foram para a área restrita', recemCadastrada.contato.celular === '(21) 91234-5678' && recemCadastrada.contato.dataNascimento === '1996-05-10');
+
   html = await appHtml(page);
   ok('O site chama a pessoa pelo apelido na saudação', html.includes('Bem-vindo(a), Dudinha do Repique!'));
   ok('A lista de presença mostra o apelido junto do nome completo', html.includes('Duda Reis') && html.includes('Dudinha do Repique'));
@@ -640,6 +653,18 @@ async function main() {
   await page.click('#btn-edit-data');
   await page.waitForTimeout(250);
   await page.click('#edit-radio-vaitocar .radio-pill[data-val="Não"]');
+  // "Vai tocar" e "camisa" são <div> com classe .active, não <input> — não eram
+  // fotografados antes de um redesenho e voltavam para o valor salvo em
+  // silêncio. Qualquer dado chegando em tempo real (outra pessoa marcando
+  // presença, o admin mexendo em algo) redesenha a tela; aqui simulamos isso.
+  await page.evaluate(async () => {
+    const fb = await import('./firebase-init.mock.js');
+    const ref = await fb.addDoc(fb.collection(fb.db, 'edicoes', '2027-1', 'ensaios'), { data: '2030-03-03' });
+    await fb.deleteDoc(fb.doc(fb.db, 'edicoes', '2027-1', 'ensaios', ref.id));
+  });
+  await page.waitForTimeout(300);
+  const escolhaSobreviveu = await page.locator('#edit-radio-vaitocar .radio-pill.active').getAttribute('data-val');
+  ok('A escolha "não vou tocar" sobrevive a um re-render em segundo plano', escolhaSobreviveu === 'Não');
   await page.click('#form-edit-mydata button[type=submit]');
   await page.waitForTimeout(400);
   html = await appHtml(page);
@@ -649,6 +674,18 @@ async function main() {
   // Ela já tinha pago R$115 antes: esse dinheiro não pode sumir da tela dela.
   ok('O que ela já tinha pago continua visível', html.includes('Pagamentos que você já tinha registrado') && html.includes('ana@pix'));
   ok('Com orientação de procurar a organização', html.includes('devolução ou o crédito'));
+
+  // O histórico calculava a isenção com só duas das três regras e esquecia a
+  // principal — a de não ir tocar. Ana está com plano 2x e prazos em aberto,
+  // então sem a correção esta linha voltava como "No prazo", cobrando alguém
+  // que a própria tela anterior acabou de declarar isento.
+  await page.click('#btn-goto-historico');
+  await page.waitForTimeout(700);
+  html = await appHtml(page);
+  ok('No "meu histórico", o carnaval em que ela não vai tocar aparece como Isenta', html.includes('Isenta'));
+  ok('E não como cobrança em aberto', !html.includes('No prazo'));
+  await page.click('#btn-back-from-historico');
+  await page.waitForTimeout(300);
 
   await logout(page);
   await login(page, 'bruno@example.com');
@@ -674,6 +711,100 @@ async function main() {
   await page.waitForTimeout(400);
   html = await appHtml(page);
   ok('Voltando a tocar, a cobrança volta com o valor já pago preservado', html.includes('50%'));
+
+  console.log('\n== 16d. Celular e nascimento ficam fora do cadastro que todos leem ==');
+  // /pessoas é lido por qualquer pessoa logada (é o que monta a lista da bateria
+  // e a presença), e regra do Firestore não filtra campo, só documento. Por isso
+  // o contato mora em /contatos, cuja listagem exige admin — o mock reproduz
+  // exatamente essa regra, então um listener aberto para a pessoa errada falha.
+  const layout = await page.evaluate(() => {
+    const s = window.__mock.dumpStore();
+    const uid = window.__mock.uidPorEmail('ana@example.com');
+    return { pessoa: s.pessoas[uid], contato: (s.contatos || {})[uid] };
+  });
+  ok('O cadastro público não guarda celular', !(layout.pessoa.celular || '').trim());
+  ok('Nem data de nascimento', !(layout.pessoa.dataNascimento || '').trim());
+  ok('O celular está em /contatos', !!(layout.contato && layout.contato.celular));
+  ok('A data de nascimento também', !!(layout.contato && layout.contato.dataNascimento));
+
+  html = await appHtml(page);
+  ok('Ana continua vendo o próprio celular em "Meus dados"', html.includes('90000-0000'));
+
+  const negadasAntes = await page.evaluate(() => window.__mock.leiturasNegadas());
+  await logout(page);
+  await login(page, 'duda@example.com');
+  await page.waitForTimeout(400);
+  const negadasDepois = await page.evaluate(() => window.__mock.leiturasNegadas());
+  // O app nem chega a pedir a listagem quando não é admin — se pedisse, contra o
+  // Firestore de verdade viraria erro de permissão em produção.
+  ok('O site não tenta ler o contato dos outros quando quem entrou não é admin', negadasDepois === negadasAntes);
+  html = await appHtml(page);
+  ok('Duda vê o próprio celular normalmente', html.includes('91234-5678'));
+  ok('E o celular da Ana não chega em lugar nenhum da tela dela', !html.includes('90000-0000'));
+
+  await logout(page);
+  await login(page, 'ana@example.com');
+  await page.click('#btn-goto-admin');
+  await page.click('#btn-goto-pessoas');
+  await page.waitForTimeout(300);
+  await page.click(`[data-edit-user="${uids.duda}"]`);
+  await page.waitForTimeout(250);
+  const celularVistoPeloAdmin = await page.inputValue(`#ae-celular-${uids.duda}`);
+  ok('A organização enxerga o contato de todos (aqui o da Duda)', celularVistoPeloAdmin === '(21) 91234-5678');
+  await page.fill(`#ae-celular-${uids.duda}`, '(21) 98888-0000');
+  await page.click(`[data-admin-edit-form="${uids.duda}"] button[type=submit]`);
+  await page.waitForTimeout(400);
+  const aposEdicaoAdmin = await page.evaluate(() => {
+    const s = window.__mock.dumpStore();
+    const uid = window.__mock.uidPorEmail('duda@example.com');
+    return { pessoa: s.pessoas[uid], contato: (s.contatos || {})[uid] };
+  });
+  ok('E consegue corrigir esse contato pelo painel', aposEdicaoAdmin.contato.celular === '(21) 98888-0000');
+  ok('A correção foi para /contatos, não para o cadastro que todos leem', !(aposEdicaoAdmin.pessoa.celular || '').trim());
+  await page.click('#btn-back-admin2');
+  await page.waitForTimeout(200);
+  await page.click('#btn-back-batuqueiro');
+  await page.waitForTimeout(250);
+
+  console.log('\n== 16e. O rodapé explica o que é guardado e quem vê o quê ==');
+  const rodapeHtml = await page.evaluate(() => document.querySelector('.rodape')?.innerHTML || '');
+  ok('O aviso de privacidade aparece no rodapé', rodapeHtml.includes('Privacidade'));
+  ok('Diz para que os dados servem', rodapeHtml.includes('organizar a bateria'));
+  ok('Diz que o celular só é visto pela pessoa e pela organização', rodapeHtml.includes('celular e sua data de nascimento'));
+  ok('E fala do direito de correção e exclusão', rodapeHtml.includes('exclusão'));
+
+  console.log('\n== 16f. Dois toques no botão de salvar pagamento não lançam em dobro ==');
+  // As regras proíbem editar ou apagar pagamento, então um lançamento duplicado
+  // só sairia por escrita direta no Firebase Console. No celular, o toque duplo
+  // é comum o bastante para valer a trava.
+  const antesDoDuplo = await page.evaluate(() => {
+    const uid = window.__mock.uidPorEmail('ana@example.com');
+    const s = window.__mock.dumpStore();
+    return {
+      total: s['edicoes/2027-1/inscricoes'][uid].totalPago,
+      lancamentos: Object.values(s['edicoes/2027-1/pagamentos'] || {}).filter(p => p.uid === uid).length,
+    };
+  });
+  await page.click('#btn-toggle-addpay');
+  await page.waitForTimeout(200);
+  await page.fill('#pay-data', hoje.toISOString().slice(0, 10));
+  await page.fill('#pay-valor', '10');
+  await page.fill('#pay-pix', 'ana@pix');
+  // Os dois cliques precisam sair no MESMO tique do navegador: é assim que o
+  // toque duplo acontece de verdade, com o segundo caindo antes de o primeiro
+  // terminar de gravar. Dois page.click() seriam sequenciais e não reproduzem.
+  await page.evaluate(() => { const b = document.getElementById('btn-save-pay'); b.click(); b.click(); });
+  await page.waitForTimeout(700);
+  const depoisDoDuplo = await page.evaluate(() => {
+    const uid = window.__mock.uidPorEmail('ana@example.com');
+    const s = window.__mock.dumpStore();
+    return {
+      total: s['edicoes/2027-1/inscricoes'][uid].totalPago,
+      lancamentos: Object.values(s['edicoes/2027-1/pagamentos'] || {}).filter(p => p.uid === uid).length,
+    };
+  });
+  ok('O valor entrou uma vez só no total', depoisDoDuplo.total === antesDoDuplo.total + 10);
+  ok('E gerou um único comprovante', depoisDoDuplo.lancamentos === antesDoDuplo.lancamentos + 1);
 
   console.log('\n== 17. Presença: Ana (admin) marca presença de Duda ==');
   await page.waitForTimeout(150);
@@ -1034,6 +1165,14 @@ async function main() {
   await page.waitForTimeout(900);
   html = await appHtml(page);
   ok('Depois de importar, existe uma edição 2027 com os dados antigos', html.includes('Carnaval do Fogo e Paixão 2027'));
+  const contatosImportados = await page.evaluate(() => {
+    const s = window.__mock.dumpStore();
+    const uid = window.__mock.uidPorEmail('pedro@example.com');
+    return { contato: (s.contatos || {})[uid], pessoa: s.pessoas[uid], fred: (s.contatos || {}).legado2 };
+  });
+  ok('A importação já traz o contato para a área restrita', contatosImportados.contato.celular === '(21) 90000-0000');
+  ok('E não deixa cópia no cadastro que todos leem', !(contatosImportados.pessoa.celular || '').trim());
+  ok('Vale para quem nunca entrou no site novo também (Fred)', contatosImportados.fred.celular === '(21) 91111-1111');
   ok('Os 2 cadastros antigos viraram inscrições da edição', html.includes('2 pessoas inscritas nesta edição'));
   ok('Os ensaios antigos foram importados', html.includes('2 de 2 ensaios já realizados'));
   ok('As posições antigas foram importadas', html.includes('2 posições cadastradas'));
@@ -1100,6 +1239,49 @@ async function main() {
   ok('Dados permanentes de Pedro preservados (nascimento 12/01/1979)', html.includes('12/01/1979'));
   ok('Dados do carnaval preservados (posição Tamborim)', html.includes('Tamborim'));
   ok('Presença antiga do Fred foi importada junto', html.includes('Fred Lima'));
+
+  console.log('\n== 29c. Separar contatos que já estavam no cadastro de leitura geral ==');
+  // Situação real do site em produção: os cadastros foram criados quando celular
+  // e nascimento ainda ficavam dentro de /pessoas. O painel avisa e oferece um
+  // botão que move esses campos para /contatos sem apagar nada.
+  await page.evaluate(async () => {
+    const fb = await import('./firebase-init.mock.js');
+    const uid = window.__mock.uidPorEmail('pedro@example.com');
+    // estado anterior à separação: o contato existe SÓ dentro de /pessoas
+    await fb.deleteDoc(fb.doc(fb.db, 'contatos', uid));
+    await fb.deleteDoc(fb.doc(fb.db, 'contatos', 'legado2'));
+    await fb.updateDoc(fb.doc(fb.db, 'pessoas', uid), { celular: '(21) 97777-1111', dataNascimento: '1979-01-12' });
+    await fb.updateDoc(fb.doc(fb.db, 'pessoas', 'legado2'), { celular: '(21) 96666-2222' });
+  });
+  await page.waitForTimeout(300);
+  await page.click('#btn-goto-admin');
+  await page.waitForTimeout(300);
+  html = await appHtml(page);
+  ok('O painel avisa que há contato em área de leitura geral', html.includes('em área de leitura geral'));
+  ok('E diz quantos cadastros estão nessa situação', html.includes('de 2 cadastros'));
+  await page.click('#btn-separar-contatos');
+  await page.waitForTimeout(700);
+  const aposSeparar = await page.evaluate(() => {
+    const s = window.__mock.dumpStore();
+    const uid = window.__mock.uidPorEmail('pedro@example.com');
+    return {
+      pessoa: s.pessoas[uid], contato: (s.contatos || {})[uid],
+      fredPessoa: s.pessoas.legado2, fredContato: (s.contatos || {}).legado2,
+      nome: s.pessoas[uid].nome, apelido: s.pessoas[uid].apelido,
+    };
+  });
+  ok('O celular saiu do cadastro que todos leem', !(aposSeparar.pessoa.celular || '').trim());
+  ok('E foi parar na área restrita', aposSeparar.contato.celular === '(21) 97777-1111');
+  ok('A data de nascimento seguiu junto', aposSeparar.contato.dataNascimento === '1979-01-12');
+  ok('Vale para todos os cadastros de uma vez', aposSeparar.fredContato.celular === '(21) 96666-2222' && !(aposSeparar.fredPessoa.celular || '').trim());
+  // O maior risco da operação era um set sem merge zerando o cadastro inteiro.
+  ok('Nada mais do cadastro foi perdido no caminho', aposSeparar.nome === 'Pedro' && aposSeparar.apelido === 'Pedrão');
+  html = await appHtml(page);
+  ok('Feita a separação, o aviso some do painel', !html.includes('em área de leitura geral'));
+  await page.click('#btn-back-batuqueiro');
+  await page.waitForTimeout(300);
+  html = await appHtml(page);
+  ok('E o contato continua aparecendo normalmente para o dono', html.includes('97777-1111'));
 
   await logout(page);
 

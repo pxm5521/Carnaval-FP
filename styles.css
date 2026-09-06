@@ -248,3 +248,16 @@
     border: 1px dashed var(--brand-fire); background: color-mix(in srgb, var(--brand-fire) 6%, transparent);
   }
   .pix-box .pix-chave { font-weight: 700; font-size: 15px; word-break: break-all; }
+
+  /* ---------- rodapé com o aviso de privacidade ---------- */
+  .rodape {
+    margin-top: 48px; padding: 26px 0 34px;
+    border-top: 1px solid var(--gridline);
+    background: var(--surface-2);
+    font-size: 12.5px; line-height: 1.6; color: var(--text-secondary);
+  }
+  .rodape h3 { margin: 0 0 10px; font-size: 13px; letter-spacing: 0.04em; text-transform: uppercase; color: var(--text-primary); }
+  .rodape p { margin: 0 0 8px; max-width: 70ch; }
+  .rodape b { color: var(--text-primary); font-weight: 600; }
+  .rodape .rodape-fim { margin-top: 14px; color: var(--muted); }
+  .rodape .rodape-fim { border-top: 1px solid var(--gridline); padding-top: 12px; }

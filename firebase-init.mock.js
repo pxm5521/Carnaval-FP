@@ -179,15 +179,59 @@ export async function addDoc(collectionRef, data) {
 }
 
 export async function getDoc(docRef) {
+  if (!podeLer(docRef)) throw erroDePermissao(docRef);
   return snapshotDoc(docRef.name, docRef.id);
 }
 
+/* ------------------------------------------------------------
+   A ÚNICA REGRA DE SEGURANÇA QUE O MOCK REPRODUZ
+   ------------------------------------------------------------
+   O mock não é um simulador de firestore.rules — os testes exercitam a lógica
+   do app, não o servidor. A exceção é /contatos, porque ali o cumprimento da
+   regra depende de o APP escolher o listener certo: um batuqueiro comum pode
+   ler o próprio contato (doc), mas listar a coleção inteira é privilégio de
+   admin. Se o app abrisse a listagem para todo mundo, contra o Firestore de
+   verdade isso viraria erro de permissão em produção — e nenhum outro teste
+   pegaria. Espelha match /contatos/{uid} em firestore.rules.
+   ------------------------------------------------------------ */
+let leiturasNegadas = 0;
+
+function ehAdminNoMock() {
+  const u = auth.currentUser;
+  if (!u) return false;
+  const p = collMap("pessoas").get(u.uid);
+  if (p && p.adminAccess) return true;
+  const legado = collMap("users").get(u.uid);
+  return !!(legado && legado.adminAccess);
+}
+
+function podeLer(ref) {
+  if (ref.name !== "contatos") return true;
+  if (ehAdminNoMock()) return true;
+  const u = auth.currentUser;
+  if (ref.__type === "doc") return !!u && ref.id === u.uid;
+  return false; // listar /contatos inteira exige admin
+}
+
+function erroDePermissao(ref) {
+  leiturasNegadas++;
+  const e = new Error(`Missing or insufficient permissions: ${ref.name}`);
+  e.code = "permission-denied";
+  return e;
+}
+
 export async function getDocs(ref) {
+  if (!podeLer(ref)) throw erroDePermissao(ref);
   if (ref.__type === "query") return snapshotQuery(ref.name, ref.constraints);
   return snapshotQuery(ref.name, []);
 }
 
-export function onSnapshot(ref, cb) {
+export function onSnapshot(ref, cb, errCb) {
+  if (!podeLer(ref)) {
+    const err = erroDePermissao(ref);
+    Promise.resolve().then(() => { if (errCb) errCb(err); });
+    return () => {};
+  }
   const name = ref.name;
   const listener = ref.__type === "doc" ? { kind: "doc", id: ref.id, cb } : { kind: ref.__type, constraints: ref.constraints || [], cb };
   if (!collListeners.has(name)) collListeners.set(name, new Set());
@@ -238,8 +282,10 @@ if (typeof window !== "undefined") {
       return out;
     },
     reset() {
-      store.clear(); collListeners.clear(); authUsersByEmail.clear(); auth.currentUser = null; notifyAuth();
+      store.clear(); collListeners.clear(); authUsersByEmail.clear(); leiturasNegadas = 0; auth.currentUser = null; notifyAuth();
     },
+    // Quantas leituras foram recusadas pela regra de /contatos até agora.
+    leiturasNegadas() { return leiturasNegadas; },
     // Ajuda só para testes: simula o passo manual único (documentado no SETUP.md)
     // em que o dono do site concede adminAccess ao primeiro admin direto no
     // Firebase Console, já que ninguém ainda tem acesso para fazer isso pelo app.

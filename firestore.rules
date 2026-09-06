@@ -3,17 +3,21 @@ rules_version = '2';
 // Regras de segurança do Firestore para o site do Carnaval do Fogo e Paixão.
 //
 // ESTRUTURA
-// Os dados permanentes de cada pessoa (nome, nascimento, contato e os acessos de
-// organização) ficam em /pessoas/{uid}. Tudo o que muda de um carnaval para o
-// outro vive dentro da edição correspondente, em /edicoes/{eid}/... — inscrições,
-// posições, ensaios, músicas, valores, pagamentos e presenças.
+// Os dados permanentes de cada pessoa (nome, apelido, e-mail e os acessos de
+// organização) ficam em /pessoas/{uid}. O contato — celular e data de nascimento
+// — fica separado, em /contatos/{uid}, porque tem leitura restrita. Tudo o que
+// muda de um carnaval para o outro vive dentro da edição correspondente, em
+// /edicoes/{eid}/... — inscrições, posições, ensaios, músicas, valores,
+// pagamentos e presenças.
 //
 // MODELO DE CONFIANÇA
 // É um grupo pequeno e conhecido (a bateria). Qualquer pessoa logada pode VER o
 // nome/posição/presença de todos, mas só pode MARCAR presença quem tem
-// adminAccess ou presencaAccess. Dados financeiros individuais (pix/data/valor de
-// cada pagamento) só podem ser lidos pelo próprio dono. Ações administrativas
-// exigem adminAccess = true.
+// adminAccess ou presencaAccess. Os dados pessoais mais sensíveis são restritos
+// ao próprio dono (e à organização): contato em /contatos e os pagamentos
+// individuais — pix, data e valor — em /edicoes/{eid}/pagamentos, estes últimos
+// nem o admin lê, ele usa só o total somado. Ações administrativas exigem
+// adminAccess = true.
 //
 // EDIÇÃO ENCERRADA É IMUTÁVEL
 // Uma edição com status "encerrada" não aceita mais nenhuma escrita nas suas
@@ -49,14 +53,23 @@ service cloud.firestore {
     // Igual ao isAdmin(): durante a transição o acesso pode estar só no cadastro
     // antigo. Sem essa segunda origem, quem recebeu o acesso antes da importação
     // via os botões SIM/NÃO na tela mas levava erro de permissão ao clicar.
+    // Escrito sem chamar isAdmin() aqui dentro de propósito: cada regra tem um
+    // teto de acessos a outros documentos por requisição, e a versão anterior
+    // consultava os mesmos dois cadastros duas vezes (uma dentro de isAdmin(),
+    // outra fora) e ainda somava o get() do status da edição — perto demais do
+    // limite para uma ação que a bateria inteira usa em todo ensaio. Esta
+    // versão toca cada cadastro uma vez só, mantendo exatamente a mesma
+    // permissão: admin ou quem recebeu presencaAccess, no formato novo ou no
+    // antigo.
     function podeEditarPresenca() {
-      return isAdmin()
-        || (isSignedIn()
-            && exists(/databases/$(database)/documents/pessoas/$(request.auth.uid))
-            && get(/databases/$(database)/documents/pessoas/$(request.auth.uid)).data.presencaAccess == true)
-        || (isSignedIn()
-            && exists(/databases/$(database)/documents/users/$(request.auth.uid))
-            && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.presencaAccess == true);
+      return isSignedIn() && (
+        (exists(/databases/$(database)/documents/pessoas/$(request.auth.uid))
+          && (get(/databases/$(database)/documents/pessoas/$(request.auth.uid)).data.adminAccess == true
+              || get(/databases/$(database)/documents/pessoas/$(request.auth.uid)).data.presencaAccess == true))
+        || (exists(/databases/$(database)/documents/users/$(request.auth.uid))
+          && (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.adminAccess == true
+              || get(/databases/$(database)/documents/users/$(request.auth.uid)).data.presencaAccess == true))
+      );
     }
 
     function statusDaEdicao(eid) {
@@ -90,6 +103,25 @@ service cloud.firestore {
             && request.resource.data.adminAccess == resource.data.adminAccess
             && request.resource.data.presencaAccess == resource.data.presencaAccess);
 
+      allow delete: if isAdmin();
+    }
+
+    // ---------- contato (celular e data de nascimento) ----------
+    // Fica separado de /pessoas de propósito. /pessoas precisa ser legível por
+    // qualquer pessoa logada (é o que monta a lista da bateria, a presença e o
+    // histórico), e regra do Firestore não filtra CAMPO, só DOCUMENTO — então,
+    // enquanto o celular morasse lá dentro, qualquer pessoa com cadastro no site
+    // poderia ler o telefone e o nascimento de todo mundo consultando o banco
+    // direto, mesmo que a tela não mostrasse.
+    //
+    // Aqui a leitura é individual: cada pessoa lê o próprio contato, e a
+    // organização lê o de todos (precisa, para falar com a bateria). Repare que
+    // o app só consegue LISTAR /contatos sendo admin — uma consulta de coleção
+    // inteira feita por um batuqueiro comum é recusada, porque a regra teria que
+    // valer para todos os documentos retornados.
+    match /contatos/{uid} {
+      allow read: if isOwner(uid) || isAdmin();
+      allow create, update: if isOwner(uid) || isAdmin();
       allow delete: if isAdmin();
     }
 
@@ -172,8 +204,15 @@ service cloud.firestore {
     // que já existiam. Depois de importar e conferir tudo, estes blocos podem ser
     // apagados — e, junto com eles, as coleções antigas no Firebase Console.
     // ============================================================
+    // ATENÇÃO: estes documentos guardam celular e data de nascimento — foi de
+    // dentro deles que a separação para /contatos tirou esses campos. Deixar a
+    // leitura aberta aqui anularia a separação inteira enquanto a coleção
+    // antiga existisse: bastaria consultar /users para ler o telefone de todo
+    // mundo. Por isso a leitura é a mesma de /contatos — o dono e o admin. O
+    // app só precisa disso: cada um lê o próprio cadastro antigo, e a listagem
+    // completa só acontece na importação, feita por um admin.
     match /users/{uid} {
-      allow read: if isSignedIn();
+      allow read: if isOwner(uid) || isAdmin();
       allow write: if false;
     }
     match /posicoes/{id}   { allow read: if isSignedIn(); allow write: if false; }

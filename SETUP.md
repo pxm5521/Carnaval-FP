@@ -39,7 +39,7 @@ O cadastro não exige confirmação por e-mail — assim que a pessoa cria o log
 
 ### 1.3 — Publicar as regras de segurança
 
-O arquivo `firestore.rules` (incluído neste pacote) já contém as regras corretas: qualquer pessoa logada pode ver a lista de batuqueiros e a presença de todos, mas só quem tem permissão marca presença; só o dono de um cadastro (ou um admin) pode editá-lo; e só admins mexem em edições, posições, ensaios, músicas, preços ou concedem acessos. Uma edição encerrada fica travada até para o admin.
+O arquivo `firestore.rules` (incluído neste pacote) já contém as regras corretas: qualquer pessoa logada pode ver a lista de batuqueiros e a presença de todos, mas só quem tem permissão marca presença; celular, data de nascimento e os pagamentos individuais só o dono lê (e a organização, no caso do contato); só o dono de um cadastro (ou um admin) pode editá-lo; e só admins mexem em edições, posições, ensaios, músicas, preços ou concedem acessos. Uma edição encerrada fica travada até para o admin.
 
 > **Sempre que este arquivo mudar numa atualização do site, republique as regras.** É um passo separado de subir o código no GitHub — se esquecer, o site publica normalmente mas algumas ações passam a dar erro de permissão.
 
@@ -110,7 +110,7 @@ A partir daí, você (como admin) pode conceder acesso admin a outras pessoas di
 
 ## Parte 5 — Criar a primeira edição do carnaval
 
-O site guarda um carnaval por **edição** (2027, 2028, ...). Cada edição tem as próprias posições, ensaios, músicas, valores de anuidade, inscrições e presenças — é isso que permite acumular um histórico ano após ano sem misturar os dados de um carnaval com os do outro. Os dados permanentes de cada pessoa (nome, sobrenome, apelido, celular, data de nascimento) ficam fora das edições e nunca precisam ser redigitados.
+O site guarda um carnaval por **edição** (2027, 2028, ...). Cada edição tem as próprias posições, ensaios, músicas, valores de anuidade, inscrições e presenças — é isso que permite acumular um histórico ano após ano sem misturar os dados de um carnaval com os do outro. Os dados permanentes de cada pessoa (nome, sobrenome, apelido, e mais o celular e a data de nascimento, guardados à parte com leitura restrita) ficam fora das edições e nunca precisam ser redigitados.
 
 No painel admin, vá em **"Gerenciar edições" → "Criar nova edição"**:
 
@@ -154,6 +154,8 @@ Se você já estava usando o site antes da separação por edições, os dados a
 
 Os comprovantes de pagamento de cada pessoa são levados automaticamente na primeira vez que ela entrar no site depois da importação — isso porque as regras de segurança só deixam cada um ler os próprios comprovantes (nem o admin vê os dos outros). O total já pago vai junto na importação, então nenhum saldo fica errado nesse meio-tempo.
 
+A importação já coloca celular e data de nascimento na área restrita (`/contatos`), então quem veio do formato antigo não precisa do passo de separação descrito nas perguntas frequentes.
+
 Depois de conferir que está tudo certo, as coleções antigas (`users`, `posicoes`, `ensaios`, `musicas`, `config`, `presencas`, `pagamentos` na raiz) podem ser apagadas no Firebase Console, junto com o bloco correspondente no final do `firestore.rules`.
 
 ---
@@ -178,7 +180,7 @@ Se você tiver o Node.js instalado, também há um script de teste automatizado 
 
 **E se eu esquecer minha senha?** Na tela de login há um link "Esqueci minha senha", que envia um e-mail de redefinição pelo próprio Firebase.
 
-**Um batuqueiro pode adulterar o próprio valor pago?** Tecnicamente sim, e é uma limitação conhecida de um site sem servidor próprio. O total pago fica no cadastro da pessoa naquele carnaval, e as regras precisam deixar ela mesma gravar ali (é o que acontece quando registra um pagamento). Alguém com conhecimento técnico conseguiria escrever um valor diferente por fora do site. O comprovante de cada pagamento, esse sim, é registro separado e não pode ser alterado nem apagado por ninguém — então uma divergência entre o total e a lista de pagamentos é detectável. Para o tamanho e a confiança de uma bateria isso é aceitável; eliminar de vez exigiria um servidor próprio (plano pago do Firebase).
+**Um batuqueiro pode adulterar o próprio valor pago?** Tecnicamente sim, e é uma limitação conhecida de um site sem servidor próprio. O total pago fica no cadastro da pessoa naquele carnaval, e as regras precisam deixar ela mesma gravar ali (é o que acontece quando registra um pagamento). Alguém com conhecimento técnico conseguiria escrever um valor diferente por fora do site. O comprovante de cada pagamento, esse sim, é registro separado e não pode ser alterado nem apagado por ninguém. Vale a ressalva honesta: como as regras não deixam nem o admin ler o comprovante alheio (para preservar a chave Pix de cada um), na prática **você não tem como conferir essa divergência pelo site** — só abrindo a coleção `pagamentos` da edição no Firebase Console, onde o admin do projeto enxerga tudo. Para o tamanho e a confiança de uma bateria isso é aceitável; eliminar de vez exigiria um servidor próprio (plano pago do Firebase).
 
 **Apaguei alguém de um carnaval por engano; e os pagamentos dela?** Os comprovantes ficam guardados (por segurança, pagamento não é apagável). Se a pessoa se inscrever de novo naquele mesmo carnaval, o total pago recomeça do zero enquanto a lista de comprovantes antigos continua aparecendo para ela — nesse caso, registre o acerto ou peça para conferirem juntos, porque o site não recalcula sozinho.
 
@@ -192,7 +194,20 @@ Se você tiver o Node.js instalado, também há um script de teste automatizado 
 
 **Onde coloco a chave Pix?** Painel admin → Editar valores e prazos → campo "Chave Pix para receber a anuidade". Ela aparece na área de pagamento de cada batuqueiro, com botão de copiar. É por carnaval, então dá para trocar de um ano para o outro; deixando em branco, nada é mostrado.
 
-**O que exatamente é guardado por carnaval e o que é permanente?** Permanente (vale para sempre, em `/pessoas`): nome, sobrenome, apelido, e-mail, celular, data de nascimento, acesso ao painel admin e acesso para marcar presença. Por carnaval (dentro de `/edicoes/{id}`): posição/instrumento, tamanho da camisa, se vai tocar, isenção individual, forma de pagamento e valor pago, além das posições disponíveis, ensaios, repertório, valores da anuidade e presenças daquele ano.
+**O que exatamente é guardado por carnaval e o que é permanente?** Permanente: em `/pessoas`, nome, sobrenome, apelido, e-mail, acesso ao painel admin e acesso para marcar presença; em `/contatos`, celular e data de nascimento (ver a pergunta sobre privacidade, abaixo). Por carnaval (dentro de `/edicoes/{id}`): posição/instrumento, tamanho da camisa, se vai tocar, isenção individual, forma de pagamento e valor pago, além das posições disponíveis, ensaios, repertório, valores da anuidade e presenças daquele ano.
+
+**Quem consegue ver o quê, na prática?** O site é usado por um grupo pequeno e conhecido, então quase tudo é visível para quem tem cadastro — nome, apelido, posição e presença nos ensaios aparecem para todo mundo, porque é o que faz a lista de ensaio funcionar. Duas coisas fogem disso:
+
+- **Celular e data de nascimento** ficam em `/contatos`, uma área que só a própria pessoa e a organização conseguem ler.
+- **Pagamentos individuais** (valor, data e chave Pix de cada lançamento) só o próprio dono lê — nem o admin vê o detalhe pelo site, só o total somado que aparece no relatório.
+
+O que **não** é restrito, e vale você saber: o quanto cada pessoa já pagou, a forma de pagamento e a isenção ficam na inscrição daquele carnaval, que é legível por qualquer pessoa com cadastro. As telas só mostram isso a você, mas quem souber consultar o banco consegue ver. É o mesmo tipo de exposição que o contato tinha; ficou assim porque a lista de inscritos é lida por todas as telas do site, e separar o financeiro exigiria refazer boa parte delas. Se em algum momento isso incomodar, é uma mudança possível — só não é pequena.
+
+Vale entender por que o contato precisou ficar separado, porque a mesma armadilha pega qualquer campo novo que você adicione: uma regra do Firestore autoriza ou nega **um registro inteiro**, nunca um campo. Como o registro em `/pessoas` precisa ser legível por qualquer pessoa logada (é o que monta a lista da bateria), qualquer campo guardado ali é legível por todos — mesmo que nenhuma tela mostre, já que o banco pode ser consultado direto pelo navegador. Por isso o celular saiu de lá. **Se um dia você quiser guardar mais alguma coisa pessoal — endereço, documento, contato de emergência —, guarde em `/contatos`, não em `/pessoas`.**
+
+**Já tenho gente cadastrada. Como restrinjo o contato de quem se cadastrou antes?** O painel admin avisa sozinho quando encontra cadastros nessa situação, com um botão **"Restringir esses dados agora"**. Ele move o celular e a data de nascimento de todos os cadastros de uma vez, sem apagar nada, e o aviso some quando termina. Pode clicar mais de uma vez sem risco: quem já foi separado não entra na conta.
+
+**O site tem aviso de privacidade?** Sim, no rodapé de todas as telas: o que é guardado, para que serve, quem enxerga o quê e como pedir correção ou exclusão. Sobre a LGPD, vale a ressalva honesta: um bloco de carnaval fica numa zona cinzenta da lei (o art. 4º, I exclui tratamento feito por pessoa natural para fins particulares e não econômicos, mas há cobrança de anuidade aqui). O aviso e a restrição do contato não são um parecer jurídico — são o mínimo razoável, e existem principalmente porque as pessoas estão entregando telefone e data de nascimento para um site.
 
 **Posso ver os dados de um carnaval antigo?** Sim. No painel admin, o seletor **"Estou vendo os dados de"** troca a edição que está sendo exibida — todas as telas (ensaios, posições, músicas, relatório, cadastros) passam a mostrar aquele carnaval. Se a edição estiver encerrada, tudo fica só leitura, com um aviso no topo. Cada batuqueiro também tem o próprio "Meu histórico de carnavais".
 

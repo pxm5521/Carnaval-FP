@@ -59,6 +59,13 @@ const EDICAO_STATUS = {
 const P = {
   pessoas:    ()          => collection(db, "pessoas"),
   pessoa:     (uid)       => doc(db, "pessoas", uid),
+  // Contato (celular e data de nascimento) fica FORA de /pessoas de propósito:
+  // /pessoas é lido por qualquer pessoa logada (é o que monta a lista da bateria,
+  // a presença e o histórico), e regra do Firestore não filtra campo — só
+  // documento. Separando, o celular e o nascimento só podem ser lidos pelo
+  // próprio dono e pela organização. Ver firestore.rules, match /contatos/{uid}.
+  contatos:   ()          => collection(db, "contatos"),
+  contato:    (uid)       => doc(db, "contatos", uid),
   edicoes:    ()          => collection(db, "edicoes"),
   edicao:     (eid)       => doc(db, "edicoes", eid),
   inscricoes: (eid)       => collection(db, "edicoes", eid, "inscricoes"),
@@ -85,6 +92,11 @@ let myPessoa = null;        // { id, ...campos } de pessoas/{uid} do usuário lo
 let myLegado = null;        // cadastro do formato antigo (/users/{uid}), só até a importação
 let legadoConsultado = false;
 let pessoasCache = [];      // todas as pessoas cadastradas (dados permanentes)
+/* uid -> { celular, dataNascimento }. Para um batuqueiro comum contém só o
+   próprio contato; para o admin, o de todo mundo. É a diferença entre os dois
+   listeners de /contatos, e ela é imposta pelas regras do Firestore — não é só
+   uma escolha da tela. */
+let contatosCache = {};
 let edicoesCache = [];      // todas as edições do carnaval
 let inscricoesCache = [];   // inscrições da edição em contexto
 let posicoesCache = [];
@@ -93,8 +105,11 @@ let musicasCache = [];
 let precosCache = null;
 let presencasCache = {};    // uid -> { ensaioId: true/false }
 let myPagamentos = [];      // só os pagamentos do próprio usuário logado, na edição em contexto
+/* Células de presença com gravação em andamento, para o segundo clique não
+   recalcular o novo valor em cima de um cache que ainda não voltou. */
+const presencasEmVoo = new Set();
 
-const unsub = { myPessoa: null, pessoas: null, edicoes: null };
+const unsub = { myPessoa: null, pessoas: null, edicoes: null, meuContato: null, contatos: null };
 const unsubEd = { inscricoes: null, posicoes: null, ensaios: null, musicas: null, precos: null, presencas: null, myPagamentos: null };
 let edicaoListenersFor = null;  // id da edição para a qual os listeners acima estão ativos
 /* Quais listeners da edição já entregaram o primeiro resultado. Enquanto não
@@ -102,7 +117,7 @@ let edicaoListenersFor = null;  // id da edição para a qual os listeners acima
    a edição esteja vazia de verdade. Confundir as duas coisas fazia a caixa
    "carregar padrões" piscar a cada troca de edição; um clique nesse instante
    duplicava as 17 posições e sobrescrevia os valores da anuidade. */
-let edicaoCarregou = { posicoes: false, precos: false };
+let edicaoCarregou = { posicoes: false, precos: false, musicas: false };
 const pagamentosMigradosPara = new Set(); // edições cuja migração de pagamentos próprios já foi tentada
 
 const session = {
@@ -213,7 +228,7 @@ onAuthStateChanged(auth, (user) => {
 
   if (!user) {
     myPessoa = null; pessoaLoaded = false; myLegado = null; legadoConsultado = false;
-    pessoasCache = []; edicoesCache = [];
+    pessoasCache = []; edicoesCache = []; contatosCache = {};
     limparCachesDaEdicao();
     if (session.view && !["landing", "login", "register1"].includes(session.view)) session.view = "landing";
     render();
@@ -241,7 +256,42 @@ async function carregarCadastroLegado(uid) {
     myLegado = null;
   }
   legadoConsultado = true;
+  ensureContatosListener();
+  ensureEdicaoListeners();
   render();
+}
+
+/* Liga (ou desliga) o listener que lê o contato de TODO MUNDO. Só o admin tem
+   permissão para isso, e a consulta de coleção inteira é recusada pelo Firestore
+   para quem não é — por isso ela só pode ser aberta depois que já se sabe quem é
+   o usuário, e precisa ser fechada se o acesso for revogado no meio da sessão. */
+function ensureContatosListener() {
+  if (souAdmin()) {
+    if (unsub.contatos) return;
+    unsub.contatos = onSnapshot(P.contatos(), snap => {
+      const novo = {};
+      snap.docs.forEach(d => { novo[d.id] = d.data(); });
+      // preserva o próprio contato, que vem do outro listener
+      if (fbUser && contatosCache[fbUser.uid] && !novo[fbUser.uid]) novo[fbUser.uid] = contatosCache[fbUser.uid];
+      contatosCache = novo;
+      renderExterno();
+    }, onErr("contatos"));
+  } else if (unsub.contatos) {
+    unsub.contatos(); unsub.contatos = null;
+    contatosCache = fbUser && contatosCache[fbUser.uid] ? { [fbUser.uid]: contatosCache[fbUser.uid] } : {};
+    renderExterno();
+  }
+}
+
+/* Contato de uma pessoa, com queda para os campos antigos que ainda estejam
+   dentro de /pessoas enquanto a separação não foi rodada pelo admin. Quem não
+   pode ler o contato simplesmente recebe vazio — a tela não quebra. */
+function contatoDe(p) {
+  const c = (p && contatosCache[p.id]) || {};
+  return {
+    celular: c.celular || (p && p.celular) || "",
+    dataNascimento: c.dataNascimento || (p && p.dataNascimento) || "",
+  };
 }
 
 /* Cadastro do usuário logado, venha ele do formato novo ou do antigo. */
@@ -309,8 +359,22 @@ function setupUserListeners(uid) {
   unsub.myPessoa = onSnapshot(P.pessoa(uid), snap => {
     myPessoa = snap.exists() ? { id: snap.id, ...snap.data() } : null;
     pessoaLoaded = true;
+    ensureContatosListener();
+    // edicaoCtxId() depende de souAdmin(): fora de temporada (nenhuma edição
+    // aberta) o admin enxerga a edição mais recente e o batuqueiro comum não
+    // enxerga nenhuma. Quando o acesso admin chega depois — concedido com a
+    // pessoa logada, ou vindo do cadastro antigo — o contexto muda e os
+    // listeners da edição precisam ser reavaliados; senão o painel abria com
+    // tudo zerado ("0 inscritos", "0 posições") e não se corrigia sozinho.
+    ensureEdicaoListeners();
     renderExterno();
   }, onErr("perfil"));
+
+  // O próprio contato, sempre. Um batuqueiro comum só consegue ler este.
+  unsub.meuContato = onSnapshot(P.contato(uid), snap => {
+    contatosCache = { ...contatosCache, [uid]: snap.exists() ? snap.data() : {} };
+    renderExterno();
+  }, onErr("meu contato"));
 
   unsub.pessoas = onSnapshot(P.pessoas(), snap => {
     pessoasCache = snap.docs.map(d => ({ id: d.id, ...d.data() }));
@@ -341,7 +405,7 @@ function ensureEdicaoListeners() {
   teardownEdicaoListeners();
   edicaoListenersFor = eid;
   limparCachesDaEdicao();
-  edicaoCarregou = { posicoes: false, precos: false };
+  edicaoCarregou = { posicoes: false, precos: false, musicas: false };
   if (!eid || !fbUser) return;
 
   unsubEd.inscricoes = onSnapshot(P.inscricoes(eid), snap => {
@@ -370,6 +434,7 @@ function ensureEdicaoListeners() {
 
   unsubEd.musicas = onSnapshot(P.musicas(eid), snap => {
     musicasCache = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    edicaoCarregou.musicas = true;
     renderExterno();
   }, onErr("músicas"));
 
@@ -402,6 +467,15 @@ function trocarEdicaoCtx(eid) {
   session.posicoesDraft = null; session.musicasDraft = null;
   session.ensaioMusicasAberto = null; session.ensaioMusicasDraft = null;
   session.adminEditingUser = null;
+  session.editingMyData = false;
+  // Os filtros guardam id de ensaio e nome de posição, que não existem na outra
+  // edição: mantê-los deixava a tabela de presença sem nenhuma coluna e a lista
+  // de cadastros vazia, com o seletor exibindo "Todos"/"Todas" — ou seja,
+  // mentindo sobre o próprio estado, e sem disparar change ao reselecionar.
+  session.presencaEnsaioFiltro = "todos";
+  session.presencaFiltro = "todas";
+  session.adminPessoasFiltro = "todas";
+  session.relatorioFiltroPosicao = "todas";
   ensureEdicaoListeners();
   render();
 }
@@ -420,14 +494,18 @@ function perfilMesclado() {
   if (!base) return null;
   const insc = minhaInscricao();
   const id = fbUser ? fbUser.uid : base.id;
-  return insc ? { ...base, ...insc, id } : { ...base, id };
+  const juntos = insc ? { ...base, ...insc, id } : { ...base, id };
+  return { ...juntos, ...contatoDe(juntos) };
 }
 /* Lista de batuqueiros inscritos na edição em contexto (pessoa + inscrição). */
 function batuqueirosDaEdicao() {
   return inscricoesCache
     .map(i => {
       const pes = pessoasCache.find(x => x.id === i.id);
-      return pes ? { ...pes, ...i, id: i.id } : null;
+      if (!pes) return null;
+      const juntos = { ...pes, ...i, id: i.id };
+      // celular/nascimento entram só se o usuário logado tiver permissão de ler
+      return { ...juntos, ...contatoDe(juntos) };
     })
     .filter(Boolean)
     .sort((a, b) => fullName(a).localeCompare(fullName(b), "pt-BR", { sensitivity: "base" }));
@@ -480,7 +558,7 @@ function calcIdade(dataNascISO) {
    nomeados (Dia / Mês por extenso / Ano), sem nenhuma ambiguidade.
    ============================================================ */
 const MESES = ["Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho", "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"];
-function dataNascimentoFieldsHtml(idPrefix, isoValue) {
+function dataNascimentoFieldsHtml(idPrefix, isoValue, anoMax) {
   const [anoAtual, mesAtual, diaAtual] = (isoValue || "").split("-");
   const diaOpts = Array.from({ length: 31 }, (_, i) => i + 1)
     .map(n => { const v = String(n).padStart(2, "0"); return `<option value="${v}" ${diaAtual === v ? "selected" : ""}>${n}</option>`; }).join("");
@@ -489,12 +567,17 @@ function dataNascimentoFieldsHtml(idPrefix, isoValue) {
     <div class="grid-3">
       <div class="field"><label>Dia</label><select id="${idPrefix}-dia"><option value="">Dia</option>${diaOpts}</select></div>
       <div class="field"><label>Mês</label><select id="${idPrefix}-mes"><option value="">Mês</option>${mesOpts}</select></div>
-      <div class="field"><label>Ano</label><input type="number" id="${idPrefix}-ano" placeholder="aaaa" value="${anoAtual || ""}" min="1920" max="${new Date().getFullYear()}"></div>
+      <div class="field"><label>Ano</label><input type="number" id="${idPrefix}-ano" placeholder="aaaa" value="${anoAtual || ""}" min="1920" max="${anoMax || new Date().getFullYear()}"></div>
     </div>`;
 }
 function lerDataNascimento(idPrefix) {
   const dia = $(`#${idPrefix}-dia`)?.value, mes = $(`#${idPrefix}-mes`)?.value, ano = $(`#${idPrefix}-ano`)?.value;
   if (!dia || !mes || !ano) return "";
+  // Ano com menos de 4 dígitos ("27") montava "27-05-10": uma data que nenhum
+  // campo de calendário aceita e que faria a idade sair absurda. Melhor não
+  // gravar nada do que gravar lixo — quem chama já trata o "" como não
+  // preenchido e mostra a mensagem de erro.
+  if (!/^\d{4}$/.test(String(ano))) return "";
   return `${ano}-${mes}-${dia}`;
 }
 
@@ -538,8 +621,14 @@ function totalPago(u) { return u.totalPago || 0; }
    inesperado gravado no banco (dado antigo, importação, edição manual). */
 function planoValido(k) { return !!(k && PLANOS[k]); }
 
+/* Um plano só produz cobrança se tiver valor configurado. Sem esse teste, um
+   documento de preços incompleto (importação, edição nova, campo apagado) fazia
+   totalDevido() valer 0 — e "0 pago de 0" era exibido como QUITADO, com a
+   adimplência do painel indo a 100% sem ninguém ter pago nada. */
+function planoComValor(u) { return planoValido(u.formaPagamento) && !!precosCache && valorDoPlano(u.formaPagamento) > 0; }
+
 function parcelasInfo(u) {
-  if (!planoValido(u.formaPagamento) || !precosCache) return [];
+  if (!planoComValor(u)) return [];
   const { parcelas } = PLANOS[u.formaPagamento];
   const meta = totalDevido(u), prazos = prazosDoPlano(u.formaPagamento), pago = totalPago(u), hoje = hojeISO();
   const valorParcela = meta / parcelas;
@@ -559,7 +648,7 @@ function isAtrasado(u) { return parcelasInfo(u).some(p => p.status.label === "At
 
 function paymentStatus(u) {
   if (isIsento(u)) return { label: "Isenta", cls: "badge-isenta" };
-  if (!planoValido(u.formaPagamento) || !precosCache) return { label: "Sem plano", cls: "badge-warning" };
+  if (!planoComValor(u)) return { label: "Sem plano", cls: "badge-warning" };
   const pago = totalPago(u), meta = totalDevido(u);
   if (pago >= meta) return { label: "Quitado", cls: "badge-good" };
   if (isAtrasado(u)) return { label: "Atrasado", cls: "badge-critical" };
@@ -685,11 +774,27 @@ function fotografarFormularios() {
     if (!sel) return;
     valores.push({ sel, valor: el.type === "checkbox" || el.type === "radio" ? el.checked : el.value });
   });
+  // As escolhas de "vai tocar" e tamanho de camisa não são <input>: são <div>
+  // com a classe .active, e o HTML é redesenhado a partir do que está salvo.
+  // Sem fotografá-las, quem estivesse com o formulário aberto perdia a escolha
+  // em silêncio a cada dado que chegasse em tempo real — e "vai tocar" é o que
+  // decide a isenção da anuidade.
+  const pills = [];
+  app.querySelectorAll(".radio-row[id]").forEach(row => {
+    const ativo = row.querySelector(".radio-pill.active");
+    pills.push({ row: row.id, valor: ativo ? ativo.dataset.val : null });
+  });
+  // Campos mostrados/escondidos por handler (o "Qual?" da posição "Outro").
+  const visibilidade = [];
+  app.querySelectorAll('[id$="-wrap-posicao-outro"]').forEach(el => {
+    visibilidade.push({ id: el.id, display: el.style.display });
+  });
+
   const ativo = document.activeElement;
   const foco = ativo && app.contains(ativo) ? seletorDoCampo(ativo) : null;
   let selInicio = null, selFim = null;
   if (foco && typeof ativo.selectionStart === "number") { selInicio = ativo.selectionStart; selFim = ativo.selectionEnd; }
-  return { valores, foco, selInicio, selFim };
+  return { valores, pills, visibilidade, foco, selInicio, selFim };
 }
 
 function restaurarFormularios(foto) {
@@ -702,6 +807,15 @@ function restaurarFormularios(foto) {
     if (!el) return;
     if (el.type === "checkbox" || el.type === "radio") el.checked = valor;
     else el.value = valor;
+  });
+  (foto.pills || []).forEach(({ row, valor }) => {
+    const el = document.getElementById(row);
+    if (!el || !app.contains(el)) return;
+    el.querySelectorAll(".radio-pill").forEach(p => p.classList.toggle("active", p.dataset.val === valor));
+  });
+  (foto.visibilidade || []).forEach(({ id, display }) => {
+    const el = document.getElementById(id);
+    if (el && app.contains(el)) el.style.display = display;
   });
   if (!foto.foco) return;
   let alvo;
@@ -759,8 +873,25 @@ function render() {
     else html = viewLanding();
   }
 
-  app.innerHTML = html;
+  app.innerHTML = html + rodape();
   wireEvents();
+}
+
+/* Rodapé fixo em todas as telas. O aviso de privacidade fica aberto de propósito
+   em vez de escondido atrás de um link: é curto, e a pessoa está entregando
+   celular e data de nascimento a poucos cliques dali. */
+function rodape() {
+  return `
+  <footer class="rodape">
+    <div class="wrap">
+      <h3>Privacidade</h3>
+      <p><b>O que é guardado:</b> nome, apelido, e-mail, celular e data de nascimento; e, a cada carnaval, sua posição, tamanho de camisa, se vai tocar, presença nos ensaios e os pagamentos da anuidade que você registrar.</p>
+      <p><b>Para que serve:</b> só para organizar a bateria — montar os naipes, encomendar camisas, controlar a anuidade e acompanhar os ensaios. Nada é usado para outra finalidade, vendido ou enviado para fora do bloco.</p>
+      <p><b>Quem enxerga o quê:</b> quem tem cadastro no site vê o nome, o apelido, a posição e a presença dos outros nos ensaios — é o que faz a lista de ensaio funcionar. Seu <b>celular e sua data de nascimento</b> só são vistos por você e pela organização. Seus <b>pagamentos</b> (valor, data e chave Pix) só por você: nem a organização vê o detalhe, só o total já pago.</p>
+      <p><b>Seus direitos:</b> você pode ver e corrigir seus dados a qualquer momento em "Meus dados", e pode pedir a exclusão do seu cadastro falando com a organização do bloco. Os dados ficam guardados enquanto você fizer parte da bateria.</p>
+      <p class="rodape-fim">Carnaval do Fogo e Paixão · site de uso interno da bateria</p>
+    </div>
+  </footer>`;
 }
 
 function viewLoading(msg) {
@@ -1009,7 +1140,10 @@ function viewConfirmarInscricao(u) {
 function viewBatuqueiro() {
   const u = perfilMesclado();
   const ed = edicaoCtx();
-  const ensaioFiltro = session.presencaEnsaioFiltro || "todos";
+  // Um filtro que aponta para algo que não existe mais (ensaio apagado, posição
+  // removida) esvaziava a tela enquanto o seletor exibia "Todos" — o filtro
+  // mentia sobre o próprio estado, e reselecionar "Todos" nem disparava change.
+  const ensaioFiltro = ensaiosCache.some(e => e.id === session.presencaEnsaioFiltro) ? session.presencaEnsaioFiltro : "todos";
   const ensaios = ensaioFiltro === "todos" ? ensaiosCache : ensaiosCache.filter(e => e.id === ensaioFiltro);
   const todos = batuqueirosDaEdicao();
   const editavel = edicaoEditavel(ed);
@@ -1053,8 +1187,8 @@ function viewBatuqueiro() {
         </div>
         <div><label>Filtrar por ensaio</label>
           <select id="presenca-filtro-ensaio">
-            <option value="todos" ${(session.presencaEnsaioFiltro || "todos") === "todos" ? "selected" : ""}>Todos os ensaios</option>
-            ${ensaiosCache.map(e => `<option value="${e.id}" ${session.presencaEnsaioFiltro === e.id ? "selected" : ""}>${ensaioLabel(e)}</option>`).join("")}
+            <option value="todos" ${ensaioFiltro === "todos" ? "selected" : ""}>Todos os ensaios</option>
+            ${ensaiosCache.map(e => `<option value="${e.id}" ${ensaioFiltro === e.id ? "selected" : ""}>${ensaioLabel(e)}</option>`).join("")}
           </select>
         </div>
       </div>
@@ -1424,10 +1558,14 @@ async function carregarHistorico() {
    edição específica (que não é necessariamente a que está carregada em memória). */
 function statusPagamentoHistorico(insc, posicoes, precos) {
   const info = posicoes.find(p => p.nome === insc.posicao);
-  if ((info && info.isenta) || insc.isentoManual) return "Isenta";
+  // As TRÊS origens de isenção, na mesma ordem de isIsento(): não vai tocar,
+  // função isenta e isenção individual. Sem a primeira, o histórico cobrava
+  // anuidade de quem tinha avisado que não ia desfilar.
+  if (insc.vaiTocar === "Não" || (info && info.isenta) || insc.isentoManual) return "Isenta";
   if (!planoValido(insc.formaPagamento) || !precos) return "Sem plano";
   const cfg = precos[insc.formaPagamento];
-  if (!cfg) return "Sem plano";
+  // valor 0 não é "quitado": é anuidade que ninguém configurou ainda.
+  if (!cfg || !(cfg.valor > 0)) return "Sem plano";
   const pago = insc.totalPago || 0;
   if (pago >= cfg.valor) return "Quitado";
   const parcelas = PLANOS[insc.formaPagamento].parcelas;
@@ -1443,6 +1581,21 @@ function statusPagamentoHistorico(insc, posicoes, precos) {
 /* ============================================================
    VIEW: ADMIN — painel principal
    ============================================================ */
+/* Aviso no topo do painel enquanto houver contato guardado em local legível por
+   qualquer pessoa logada. Some sozinho depois que a separação é feita. */
+function boxContatosExpostos() {
+  const n = contatosExpostos().length;
+  if (!n) return "";
+  return `
+  <div class="seed-box" style="text-align:left; border-style:solid;">
+    <b>Celular e data de nascimento de ${n} cadastro${n === 1 ? "" : "s"} ainda estão em área de leitura geral.</b>
+    <p style="margin:8px 0 0;">No formato antigo esses dados ficavam junto do cadastro, que é lido por qualquer pessoa logada no site — inclusive fora das telas, consultando o banco direto. A separação move o celular e o nascimento para uma área que só a própria pessoa e a organização conseguem ler. Nada é apagado.</p>
+    <div style="margin-top:10px;">
+      <button class="btn-primary btn-sm" id="btn-separar-contatos">Restringir esses dados agora</button>
+    </div>
+  </div>`;
+}
+
 function viewAdmin() {
   const u = perfilMesclado();
   const ed = edicaoCtx();
@@ -1458,13 +1611,16 @@ function viewAdmin() {
   const ensaiosRealizados = ensaiosCache.filter(e => e.data <= hoje);
   const statusCounts = contagemPorStatus(todos);
   const precisaSeed = ed && edicaoEditavel(ed) && edicaoCarregou.posicoes && edicaoCarregou.precos
-    && (!precosCache || posicoesCache.length === 0);
+    // E, não OU: com posições cadastradas mas sem preços (ou o contrário) a
+    // caixa aparecia e o botão sempre recusava, por checar a condição inversa.
+    && !precosCache && posicoesCache.length === 0;
 
   if (!ed) {
     return `
     ${headerBar(u)}
     <div class="wrap">
       <p><button class="link-btn" id="btn-back-batuqueiro">← Voltar para minha área</button></p>
+      ${boxContatosExpostos()}
       ${precisaImportarLegado() ? `
       <div class="seed-box" style="text-align:left; border-style:solid;">
         <b>Encontrei dados no formato antigo esperando importação.</b>
@@ -1486,6 +1642,7 @@ function viewAdmin() {
   ${headerBar(u)}
   <div class="wrap">
     <p><button class="link-btn" id="btn-back-batuqueiro">← Voltar para minha área</button></p>
+      ${boxContatosExpostos()}
 
     <!-- ÁREA 1: um carnaval por vez ------------------------------------- -->
     <h2 class="section-title">Acompanhar um carnaval</h2>
@@ -1616,12 +1773,12 @@ function viewAdminEdicoes() {
         <div class="grid-3">
           <div class="field"><label>Ano</label><input type="number" id="nova-edicao-ano" value="${esc(session.novaEdicaoAno || anoSugerido)}" min="2024" max="2100"></div>
           <div class="field"><label>Nome</label><input type="text" id="nova-edicao-nome" placeholder="Carnaval do Fogo e Paixão ${anoSugerido}" value="${esc(session.novaEdicaoNome || "")}"></div>
-          <div class="field"><label>Data do desfile</label>${dataNascimentoFieldsHtml("nova-edicao-data", session.novaEdicaoData || "")}</div>
+          <div class="field"><label>Data do desfile</label>${dataNascimentoFieldsHtml("nova-edicao-data", session.novaEdicaoData || "", new Date().getFullYear() + 5)}</div>
         </div>
         ${anterior ? `
         <label style="display:flex; align-items:center; gap:8px; font-weight:400; font-size:13px; cursor:pointer; margin-bottom:10px;">
           <input type="checkbox" id="nova-edicao-copiar" checked style="width:auto;">
-          Copiar posições e valores de anuidade do ${edicaoLabel(anterior)} como ponto de partida
+          Copiar posições e valores de anuidade do ${esc(edicaoLabel(anterior))} como ponto de partida
         </label>` : ""}
         <p class="hint" style="margin-bottom:10px;">A edição nasce "em preparação": só você a enxerga, então dá para ajustar posições, valores e ensaios com calma antes de liberar para os batuqueiros. A data do desfile pode ser alterada depois quando quiser.</p>
         <button class="btn-primary btn-sm" id="btn-criar-edicao">Criar edição</button>
@@ -2068,10 +2225,14 @@ function viewAdminPosicoes() {
   // acontecer por outro motivo (ex: alguém mais mexendo em outra parte do
   // sistema em tempo real). Só é recriado a partir do servidor quando ainda
   // não existe (entrada na tela) ou depois de salvar/adicionar/remover.
-  if (!session.posicoesDraft) {
+  // O rascunho só pode ser montado DEPOIS que o cache respondeu. Montá-lo de um
+  // cache ainda vazio (logo depois de trocar de edição, por exemplo) o
+  // congelava vazio para sempre — [] é truthy —, a tela dizia "nenhuma posição"
+  // numa edição que tem 17, e o admin recadastraria tudo por cima, duplicando.
+  if (!session.posicoesDraft && edicaoCarregou.posicoes) {
     session.posicoesDraft = ordenarPosicoesAlfabetica(posicoesCache.map(p => ({ id: p.id, nome: p.nome, isenta: !!p.isenta })));
   }
-  const draft = session.posicoesDraft;
+  const draft = session.posicoesDraft || [];
   return `
   ${headerBar(u)}
   <div class="wrap">
@@ -2117,10 +2278,11 @@ function viewAdminMusicas() {
   const editavel = edicaoEditavel(ed);
   // Mesmo padrão de rascunho local usado nas posições: evita perder edições
   // digitadas se a tela for redesenhada por outro motivo antes de salvar.
-  if (!session.musicasDraft) {
+  // Mesmo cuidado das posições: só monta o rascunho depois que o cache respondeu.
+  if (!session.musicasDraft && edicaoCarregou.musicas) {
     session.musicasDraft = ordenarMusicasAlfabetica(musicasCache.map(m => ({ id: m.id, nome: m.nome, tom: m.tom || "", cantor: m.cantor || "" })));
   }
-  const draft = session.musicasDraft;
+  const draft = session.musicasDraft || [];
   const tonsSugeridos = valoresUnicosOrdenados(draft, "tom");
   const cantoresSugeridos = valoresUnicosOrdenados(draft, "cantor");
   return `
@@ -2281,11 +2443,62 @@ function renderAdminEditUserForm(p, editavel = true) {
 /* Grava uma lista de [referência, dados] respeitando o limite de 500 operações
    por lote do Firestore. Cada bloco é atômico; o conjunto não é — se um bloco
    falhar, quem chama decide o que fazer com o que já entrou. */
-async function gravarEmBlocos(escritas, tamanhoDoBloco = 400) {
-  for (let i = 0; i < escritas.length; i += tamanhoDoBloco) {
+async function gravarEmBlocos(escritas, tamanhoDoBloco = 400, mesclar = false) {
+  const enviar = async (fatia) => {
     const batch = writeBatch(db);
-    escritas.slice(i, i + tamanhoDoBloco).forEach(([ref, dados]) => batch.set(ref, dados));
+    // Com mesclar = true o documento existente é preservado e só os campos
+    // passados mudam. Sem isso, um set apagaria o resto do cadastro.
+    fatia.forEach(([ref, dados]) => batch.set(ref, dados, mesclar ? { merge: true } : undefined));
     await batch.commit();
+  };
+  for (let i = 0; i < escritas.length; i += tamanhoDoBloco) {
+    const fatia = escritas.slice(i, i + tamanhoDoBloco);
+    try {
+      await enviar(fatia);
+    } catch (err) {
+      // Cada escrita faz o Firestore consultar outros documentos para avaliar a
+      // regra (quem é o autor, em que status está a edição), e há um teto
+      // dessas consultas por requisição. Um lote grande normalmente passa
+      // porque são sempre os MESMOS documentos, mas não é garantido. Em vez de
+      // deixar a importação inteira falhar — o que faz o admin perder a edição
+      // recém-criada e entrar num ciclo —, reenvia em lotes pequenos.
+      if (!err || err.code !== "permission-denied" || fatia.length <= 5) throw err;
+      console.warn("lote grande recusado; reenviando em blocos de 5", err);
+      for (let j = 0; j < fatia.length; j += 5) await enviar(fatia.slice(j, j + 5));
+    }
+  }
+}
+
+/* Cadastros que ainda guardam celular ou nascimento dentro de /pessoas — ou
+   seja, legíveis por qualquer pessoa logada. É o que a separação abaixo resolve. */
+function contatosExpostos() {
+  return pessoasCache.filter(p => (p.celular || "").trim() || (p.dataNascimento || "").trim());
+}
+
+/* Passo único: move o contato de cada cadastro para /contatos e apaga o campo
+   de /pessoas. Pode ser rodado quantas vezes for preciso — se não houver nada
+   exposto, não faz nada; e um cadastro já separado não aparece na lista. */
+async function separarContatos() {
+  const expostos = contatosExpostos();
+  if (expostos.length === 0) { alert("Nenhum cadastro está com celular ou data de nascimento em local visível para todos. Nada a fazer."); return; }
+  if (!confirm(`Mover o celular e a data de nascimento de ${expostos.length} cadastro${expostos.length === 1 ? "" : "s"} para uma área restrita?\n\nDepois disso, esses dados só podem ser lidos pela própria pessoa e pela organização. Nada é apagado — só sai de onde qualquer pessoa logada conseguia ler.`)) return;
+
+  const escritas = [];
+  expostos.forEach(p => {
+    const atual = contatosCache[p.id] || {};
+    // não sobrescreve um contato já separado que esteja mais atualizado
+    escritas.push([P.contato(p.id), {
+      celular: atual.celular || p.celular || "",
+      dataNascimento: atual.dataNascimento || p.dataNascimento || "",
+    }]);
+  });
+  try {
+    await gravarEmBlocos(escritas);
+    // só limpa a origem depois que a cópia entrou, para nunca ficar sem o dado
+    await gravarEmBlocos(expostos.map(p => [P.pessoa(p.id), { celular: "", dataNascimento: "" }]), 400, true);
+    showToast(`Pronto: contato de ${expostos.length} cadastro${expostos.length === 1 ? "" : "s"} agora é restrito.`);
+  } catch (err) {
+    alert(friendlyFirestoreError(err));
   }
 }
 
@@ -2354,9 +2567,12 @@ async function migrarDoFormatoAntigo() {
       const v = d.data();
       escritas.push([P.pessoa(d.id), {
         nome: v.nome || "", sobrenome: v.sobrenome || "", apelido: v.apelido || "", email: v.email || "",
-        celular: v.celular || "", dataNascimento: v.dataNascimento || "",
+        celular: "", dataNascimento: "",   // contato vai para /contatos, logo abaixo
         adminAccess: !!v.adminAccess, presencaAccess: !!v.presencaAccess,
         criadoEm: v.createdAt || serverTimestamp(),
+      }]);
+      escritas.push([P.contato(d.id), {
+        celular: v.celular || "", dataNascimento: v.dataNascimento || "",
       }]);
       escritas.push([P.inscricao(eid, d.id), {
         vaiTocar: v.vaiTocar || "", posicao: v.posicao || "", posicaoOutro: v.posicaoOutro || "",
@@ -2403,8 +2619,26 @@ async function migrarMeusPagamentos(eid) {
     if (antigos.docs.length === 0) return;
     const jaMigrados = await getDocs(query(P.pagamentos(eid), where("uid", "==", fbUser.uid)));
     if (jaMigrados.docs.length > 0) return;
+    // As regras exigem valor numérico e positivo em cada comprovante. Um único
+    // lançamento antigo com valor em texto ("150,00") ou zerado faria o
+    // Firestore recusar o LOTE INTEIRO — e a pessoa ficaria com o total
+    // importado e nenhum comprovante na tela, sem ninguém perceber, porque o
+    // erro só vai para o console. Por isso o valor é normalizado aqui e o que
+    // não puder virar número positivo é deixado de fora, com aviso.
+    const paraNumero = v => {
+      if (typeof v === "number") return v;
+      const n = parseFloat(String(v == null ? "" : v).replace(/\./g, "").replace(",", "."));
+      return isNaN(n) ? 0 : n;
+    };
+    const validos = [], invalidos = [];
+    antigos.docs.forEach(d => {
+      const dados = { ...d.data(), valor: paraNumero(d.data().valor) };
+      (dados.valor > 0 ? validos : invalidos).push({ id: d.id, dados });
+    });
+    if (invalidos.length) console.warn("comprovantes antigos sem valor válido, não migrados:", invalidos.map(x => x.id));
+    if (validos.length === 0) return;
     const batch = writeBatch(db);
-    antigos.docs.forEach(d => batch.set(doc(P.pagamentos(eid), d.id), d.data()));
+    validos.forEach(({ id, dados }) => batch.set(doc(P.pagamentos(eid), id), dados));
     await batch.commit();
   } catch (err) {
     console.warn("migração de pagamentos própria não realizada:", err);
@@ -2463,13 +2697,18 @@ function wireEvents() {
       email: fbUser.email,
       nome: $("#c-nome").value.trim(), sobrenome: $("#c-sobrenome").value.trim(),
       apelido: $("#c-apelido").value.trim(),
-      celular: $("#c-celular").value.trim(), dataNascimento,
       adminAccess: false, presencaAccess: false,
       criadoEm: serverTimestamp(),
     };
+    // Celular e nascimento vão para /contatos, que só o dono e a organização
+    // leem. Em /pessoas eles apareceriam para qualquer pessoa logada.
+    const contato = { celular: $("#c-celular").value.trim(), dataNascimento };
     session.busy.register2 = true; render();
     try {
-      await setDoc(P.pessoa(fbUser.uid), pessoa);
+      const batch = writeBatch(db);
+      batch.set(P.pessoa(fbUser.uid), pessoa);
+      batch.set(P.contato(fbUser.uid), contato);
+      await batch.commit();
       session.errors.register2 = null;
       // Marca que a próxima tela (inscrição) é a continuação do cadastro, e não a
       // renovação anual de quem já é da bateria — muda só o texto e os passinhos.
@@ -2618,6 +2857,11 @@ function wireEvents() {
     const pessoaPatch = {
       nome: $("#e-nome").value.trim(), sobrenome: $("#e-sobrenome").value.trim(),
       apelido: $("#e-apelido").value.trim(),
+      // zera o que possa ter sobrado do formato em que o contato ficava aqui:
+      // salvar os próprios dados já limpa o vazamento para este cadastro.
+      celular: "", dataNascimento: "",
+    };
+    const contatoPatch = {
       celular: $("#e-celular").value.trim(),
       dataNascimento: lerDataNascimento("e-datanasc") || u.dataNascimento,
     };
@@ -2638,10 +2882,18 @@ function wireEvents() {
           ...pessoaPatch,
           email: (myLegado && myLegado.email) || fbUser.email,
           adminAccess: !!(myLegado && myLegado.adminAccess),
-          presencaAccess: !!(myLegado && myLegado.presencaAccess),
+          // As regras só deixam alguém criar o PRÓPRIO cadastro sem privilégios
+          // (é o que impede autopromoção). Copiar presencaAccess do formato
+          // antigo aqui fazia o Firestore recusar a gravação inteira, e quem
+          // tinha só esse acesso não conseguia salvar "Meus dados" antes da
+          // importação. Não se perde nada: até importar, o acesso continua
+          // valendo pelo cadastro antigo (nas regras e no app), e a importação
+          // grava o valor definitivo.
+          presencaAccess: souAdmin() ? !!(myLegado && myLegado.presencaAccess) : false,
           criadoEm: serverTimestamp(),
         });
       }
+      batch.set(P.contato(fbUser.uid), contatoPatch, { merge: true });
       if (eid && estouInscrito()) batch.update(P.inscricao(eid, fbUser.uid), inscricaoPatch);
       await batch.commit();
       session.editingMyData = false;
@@ -2685,9 +2937,16 @@ function wireEvents() {
     session.addPayOpenFor = session.addPayOpenFor === fbUser.uid ? null : fbUser.uid;
     render();
   });
-  on("#btn-save-pay", "click", async () => {
+  on("#btn-save-pay", "click", async (ev) => {
     const data = $("#pay-data").value, valor = parseFloat($("#pay-valor").value), pix = $("#pay-pix").value.trim();
     if (!data || !valor || valor <= 0) { alert("Preencha data e valor do pagamento."); return; }
+    // Sem esta trava, dois toques rápidos (fácil no celular) gravavam DOIS
+    // comprovantes e somavam o valor duas vezes no total. As regras proíbem
+    // apagar ou editar pagamento, então o estrago só sairia no console do
+    // Firebase. O botão volta ao normal no render() do fim.
+    if (session.salvandoPagamento) return;
+    session.salvandoPagamento = true;
+    if (ev && ev.target) { ev.target.disabled = true; ev.target.textContent = "Salvando..."; }
     const eid = edicaoCtxId();
     try {
       const batch = writeBatch(db);
@@ -2697,6 +2956,7 @@ function wireEvents() {
       await batch.commit();
       session.addPayOpenFor = null;
     } catch (err) { alert("Não foi possível salvar o pagamento: " + friendlyFirestoreError(err)); }
+    session.salvandoPagamento = false;
     render();
   });
 
@@ -2711,13 +2971,21 @@ function wireEvents() {
     const ed = edicaoCtx();
     if (!souEditorDePresenca() || !edicaoEditavel(ed)) return;
     const targetUid = el.dataset.uid, eid = el.dataset.eid;
+    // O valor atual vem do cache, que só é atualizado pelo snapshot seguinte.
+    // Dois cliques rápidos na mesma célula liam o mesmo "atual" e gravavam o
+    // mesmo valor duas vezes — o segundo clique não desfazia o primeiro e a
+    // célula parecia travada. A chave em voo segura o segundo clique.
+    const chave = `${eid}_${targetUid}`;
+    if (presencasEmVoo.has(chave)) return;
+    presencasEmVoo.add(chave);
     const atual = !!(presencasCache[targetUid] && presencasCache[targetUid][eid]);
     try {
-      await setDoc(P.presenca(ed.id, `${eid}_${targetUid}`), {
+      await setDoc(P.presenca(ed.id, chave), {
         ensaioId: eid, uid: targetUid, presente: !atual,
         updatedAt: serverTimestamp(), updatedBy: fbUser.uid,
       });
     } catch (err) { alert("Não foi possível salvar a presença: " + friendlyFirestoreError(err)); }
+    finally { presencasEmVoo.delete(chave); }
   });
 
   // ADMIN — edições
@@ -2802,6 +3070,7 @@ function wireEvents() {
     catch (err) { alert(friendlyFirestoreError(err)); }
   });
   on("#btn-migrar-legado", "click", migrarDoFormatoAntigo);
+  on("#btn-separar-contatos", "click", separarContatos);
 
   // ADMIN — seed de dados iniciais da edição
   on("#btn-seed-defaults", "click", async () => {
@@ -2882,6 +3151,16 @@ function wireEvents() {
   on("#btn-save-precos", "click", async () => {
     const novo = { avista: {}, duasVezes: {}, tresVezes: {} };
     novo.chavePix = ($("#admin-chave-pix")?.value || "").trim();
+    // Valor zerado não pode ser salvo: com ele, "0 pago de 0" aparecia como
+    // QUITADO para a bateria inteira e a adimplência do painel ia a 100%.
+    const semValor = Object.keys(PLANOS).filter(k => {
+      const digitado = parseFloat($(`#admin-preco-${k}`).value);
+      return !(digitado > 0) && !(precosCache?.[k]?.valor > 0);
+    });
+    if (semValor.length) {
+      alert(`Preencha o valor de: ${semValor.map(k => PLANOS[k].label).join(", ")}.\n\nUm plano sem valor faz todo mundo aparecer como quitado sem ter pago nada.`);
+      return;
+    }
     Object.keys(PLANOS).forEach(k => {
       const valor = parseFloat($(`#admin-preco-${k}`).value);
       novo[k].valor = valor > 0 ? valor : (precosCache?.[k]?.valor || 0);
@@ -2912,7 +3191,11 @@ function wireEvents() {
   on("#btn-add-posicao", "click", async () => {
     const nome = $("#new-posicao-nome").value.trim();
     if (!nome) return;
-    if (posicoesCache.some(p => p.nome.toLowerCase() === nome.toLowerCase())) { alert("Essa posição já existe."); return; }
+    // O rascunho também entra na checagem: ele é atualizado na hora, enquanto o
+    // cache só chega no snapshot seguinte — dois cliques rápidos passavam pela
+    // validação e cadastravam a mesma posição duas vezes.
+    const jaExiste = arr => (arr || []).some(p => (p.nome || "").toLowerCase() === nome.toLowerCase());
+    if (jaExiste(posicoesCache) || jaExiste(session.posicoesDraft)) { alert("Essa posição já existe."); return; }
     const isenta = $("#new-posicao-isenta").checked;
     try {
       const ref = await addDoc(P.posicoes(edicaoCtxId()), { nome, isenta });
@@ -2991,7 +3274,8 @@ function wireEvents() {
   on("#btn-add-musica", "click", async () => {
     const nome = $("#new-musica-nome").value.trim();
     if (!nome) return;
-    if (musicasCache.some(m => m.nome.toLowerCase() === nome.toLowerCase())) { alert("Essa música já está cadastrada."); return; }
+    const jaNoRepertorio = arr => (arr || []).some(m => (m.nome || "").toLowerCase() === nome.toLowerCase());
+    if (jaNoRepertorio(musicasCache) || jaNoRepertorio(session.musicasDraft)) { alert("Essa música já está cadastrada."); return; }
     const tom = $("#new-musica-tom").value.trim();
     const cantor = $("#new-musica-cantor").value.trim();
     try {
@@ -3066,10 +3350,13 @@ function wireEvents() {
         nome: $(`#ae-nome-${id}`).value.trim(),
         sobrenome: $(`#ae-sobrenome-${id}`).value.trim(),
         apelido: $(`#ae-apelido-${id}`).value.trim(),
-        celular: $(`#ae-celular-${id}`).value.trim(),
-        dataNascimento: lerDataNascimento(`ae-datanasc-${id}`) || (original && original.dataNascimento) || "",
+        celular: "", dataNascimento: "",   // o contato mora em /contatos, não aqui
         adminAccess: $(`#ae-adminaccess-${id}`).checked,
         presencaAccess: $(`#ae-presencaaccess-${id}`).checked,
+      };
+      const contatoPatch = {
+        celular: $(`#ae-celular-${id}`).value.trim(),
+        dataNascimento: lerDataNascimento(`ae-datanasc-${id}`) || (original && original.dataNascimento) || "",
       };
       const inscricaoPatch = {
         posicao: $(`#ae-posicao-${id}`).value,
@@ -3082,6 +3369,7 @@ function wireEvents() {
       try {
         const batch = writeBatch(db);
         batch.update(P.pessoa(id), pessoaPatch);
+        batch.set(P.contato(id), contatoPatch, { merge: true });
         if (eid && edicaoEditavel(edicaoCtx())) batch.update(P.inscricao(eid, id), inscricaoPatch);
         await batch.commit();
         session.adminEditingUser = null;
