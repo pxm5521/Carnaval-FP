@@ -435,6 +435,30 @@ async function main() {
   ok('3 ensaios cadastrados', (html.match(/ensaio-data-input/g) || []).length === 3);
   ok('Ensaio passado marcado como Realizado', html.includes('Realizado'));
   ok('Ensaios futuros marcados como Agendado', html.includes('Agendado'));
+  // A data do ensaio precisa gravar sozinha ao mudar. Antes dependia de um botão
+  // "Salvar" por linha, e como um redesenho em segundo plano repõe no campo o que
+  // foi digitado, a tela do admin continuava mostrando a data nova sem ter salvo
+  // nada — enquanto os batuqueiros seguiam vendo a data antiga.
+  const idPrimeiroEnsaio = await page.evaluate(() => document.querySelector('.ensaio-data-input').dataset.ensaioId);
+  const dataOriginal = await page.inputValue(`.ensaio-data-input[data-ensaio-id="${idPrimeiroEnsaio}"]`);
+  await page.fill(`.ensaio-data-input[data-ensaio-id="${idPrimeiroEnsaio}"]`, '2026-12-22');
+  await page.waitForTimeout(500);
+  const gravado = await page.evaluate((id) => window.__mock.dumpStore()['edicoes/2027-1/ensaios'][id].data, idPrimeiroEnsaio);
+  ok('Trocar a data do ensaio grava sozinho, sem botão de salvar', gravado === '2026-12-22');
+  await page.click('#btn-back-admin4');
+  await page.waitForTimeout(200);
+  await page.click('#btn-back-batuqueiro');
+  await page.waitForTimeout(400);
+  html = await appHtml(page);
+  ok('E a data nova aparece na tabela de presença do batuqueiro', html.includes('22/12/2026'));
+  ok('Sem sobrar a data antiga', !html.includes('05/11/2026') || dataOriginal !== '2026-11-05');
+  // devolve a data original para o resto da suíte
+  await page.click('#btn-goto-admin');
+  await page.waitForTimeout(250);
+  await page.click('#btn-goto-ensaios');
+  await page.waitForTimeout(250);
+  await page.fill(`.ensaio-data-input[data-ensaio-id="${idPrimeiroEnsaio}"]`, dataOriginal);
+  await page.waitForTimeout(500);
   await page.click('#btn-back-admin4');
   await page.waitForTimeout(200);
 
@@ -1304,7 +1328,7 @@ async function main() {
   await page.click('#btn-goto-ensaios');
   await page.waitForTimeout(250);
   html = await appHtml(page);
-  ok('Na edição encerrada, os ensaios ficam só leitura (sem botão Salvar)', !html.includes('data-save-ensaio'));
+  ok('Na edição encerrada, os ensaios ficam só leitura', html.includes('só leitura') && !html.includes('data-remove-ensaio'));
   ok('Na edição encerrada, não dá para adicionar ensaio', !html.includes('btn-add-ensaio'));
   ok('Aviso de que a edição não está em andamento aparece no topo', html.includes('Você está vendo dados de um carnaval que não está em andamento'));
 

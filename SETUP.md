@@ -211,6 +211,8 @@ Se você tiver o Node.js instalado, também há um script de teste automatizado 
 
 **O que exatamente é guardado por carnaval e o que é permanente?** Permanente: em `/pessoas`, nome, sobrenome, apelido, e-mail, acesso ao painel admin e acesso para marcar presença; em `/contatos`, celular e data de nascimento (ver a pergunta sobre privacidade, abaixo). Por carnaval (dentro de `/edicoes/{id}`): posição/instrumento, tamanho da camisa, se vai tocar, isenção individual, forma de pagamento e valor pago, além das posições disponíveis, ensaios, repertório, valores da anuidade e presenças daquele ano.
 
+**Mudei a data de um ensaio. Preciso avisar alguém?** Não. A data grava sozinha assim que você troca, e a tabela de presença dos batuqueiros muda na mesma hora, sem ninguém precisar recarregar o site. Não existe botão de salvar nessa tela — se existisse, seria fácil trocar a data, ver o campo com a data nova e sair achando que salvou.
+
 **Quem respondeu que NÃO vai tocar aparece onde?** Num bloco próprio na tela de **Cadastros**, chamado "Não vão tocar no [carnaval]". Essas pessoas ficam de fora de tudo que é operacional daquele carnaval: não aparecem na tabela de presença dos ensaios, não entram na contagem por naipe nem na encomenda de camisas, e não são cobradas (a regra da bateria é que quem não desfila é isento). O cadastro, o histórico e os pagamentos delas continuam intactos, e no carnaval seguinte a inscrição aparece normalmente — inclusive pré-preenchida com os dados do ano anterior.
 
 Duas consequências que valem saber:

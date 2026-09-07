@@ -2294,6 +2294,7 @@ function viewAdminEnsaios() {
     <div class="card">
       <h2>Ensaios — ${esc(edicaoLabel(ed))}</h2>
       <p class="card-sub">Edite a data, veja quantas pessoas foram em cada ensaio, registre as músicas ensaiadas e adicione novas datas</p>
+      <p class="hint" style="margin-bottom:12px;">A data grava sozinha assim que você troca — não há botão de salvar. Os batuqueiros passam a ver a data nova na mesma hora, sem precisar recarregar o site.</p>
       <div class="table-scroll">
         <table>
           <thead><tr><th>Data</th><th>Situação</th><th>Presença</th><th>Músicas ensaiadas</th><th></th></tr></thead>
@@ -2318,7 +2319,6 @@ function viewAdminEnsaios() {
                 </td>
                 <td class="row-actions">
                   ${editavel ? `
-                  <button class="btn-secondary btn-sm" data-save-ensaio="${e.id}">Salvar</button>
                   <button class="btn-ghost btn-sm" data-remove-ensaio="${e.id}">Remover</button>` : `<span class="muted-sm">só leitura</span>`}
                 </td>
               </tr>
@@ -3417,13 +3417,22 @@ function wireEvents() {
     try { await addDoc(P.ensaios(edicaoCtxId()), { data: val, createdAt: serverTimestamp() }); }
     catch (err) { alert(friendlyFirestoreError(err)); }
   });
-  onAll("[data-save-ensaio]", "click", async el => {
-    const id = el.dataset.saveEnsaio;
-    const input = document.querySelector(`.ensaio-data-input[data-ensaio-id="${id}"]`);
-    if (!input.value) { alert("Selecione uma data válida."); return; }
-    try { await updateDoc(P.ensaio(edicaoCtxId(), id), { data: input.value }); }
-    catch (err) { alert(friendlyFirestoreError(err)); }
+  // A data do ensaio grava sozinha quando muda. Antes dependia do botão
+  // "Salvar" de cada linha — e como um redesenho em segundo plano repõe no campo
+  // o que foi digitado, a tela continuava exibindo a data nova mesmo sem ter
+  // salvado nada. O admin achava que tinha atualizado; os batuqueiros seguiam
+  // vendo as datas antigas, porque a tela deles lê o banco.
+  onAll(".ensaio-data-input", "change", async el => {
+    const id = el.dataset.ensaioId, nova = el.value;
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(nova)) return;   // data incompleta: espera terminar
+    const atual = ensaiosCache.find(x => x.id === id);
+    if (atual && atual.data === nova) return;
+    try {
+      await updateDoc(P.ensaio(edicaoCtxId(), id), { data: nova });
+      showToast(`Ensaio movido para ${dateBR(nova)}.`);
+    } catch (err) { alert(friendlyFirestoreError(err)); }
   });
+
   onAll("[data-remove-ensaio]", "click", async el => {
     try { await deleteDoc(P.ensaio(edicaoCtxId(), el.dataset.removeEnsaio)); }
     catch (err) { alert(friendlyFirestoreError(err)); }
