@@ -405,6 +405,13 @@ function ensureEdicaoListeners() {
   teardownEdicaoListeners();
   edicaoListenersFor = eid;
   limparCachesDaEdicao();
+  // Os rascunhos de posições/músicas pertencem à edição anterior. Sem zerá-los
+  // aqui, uma troca de edição que acontece SOZINHA (outro admin abre um novo
+  // carnaval, e o contexto muda por baixo) deixava a tela com o cabeçalho do
+  // carnaval novo e as linhas do antigo — e "Salvar" gravava por cima, porque a
+  // cópia entre edições preserva os ids dos documentos.
+  session.posicoesDraft = null; session.musicasDraft = null;
+  session.ensaioMusicasAberto = null; session.ensaioMusicasDraft = null;
   edicaoCarregou = { posicoes: false, precos: false, musicas: false };
   if (!eid || !fbUser) return;
 
@@ -495,8 +502,23 @@ function perfilMesclado() {
   const insc = minhaInscricao();
   const id = fbUser ? fbUser.uid : base.id;
   const juntos = insc ? { ...base, ...insc, id } : { ...base, id };
-  return { ...juntos, ...contatoDe(juntos) };
+  return { ...juntos, ...soDoCadastro(base), ...contatoDe(juntos) };
 }
+/* Identidade e privilégio vêm SEMPRE de /pessoas, nunca da inscrição.
+   A inscrição é escrita pelo próprio dono, e as telas montam cada batuqueiro
+   fundindo os dois documentos com a inscrição por cima. Sem esta reimposição,
+   bastava alguém gravar adminAccess: true na própria inscrição para o painel
+   desenhar o selo de admin e deixar a caixa "Acesso ao painel admin" marcada —
+   e o admin, ao salvar qualquer outra coisa daquela pessoa, gravava a promoção
+   de verdade em /pessoas sem perceber. As regras do Firestore também bloqueiam
+   isso agora; esta é a segunda camada. */
+function soDoCadastro(pes) {
+  return {
+    nome: pes.nome, sobrenome: pes.sobrenome, apelido: pes.apelido, email: pes.email,
+    adminAccess: !!pes.adminAccess, presencaAccess: !!pes.presencaAccess,
+  };
+}
+
 /* Quem vai desfilar neste carnaval — a lista que as telas operacionais usam.
    Quem respondeu que NÃO vai tocar continua inscrito, com cadastro, isenção e
    histórico preservados, mas não entra na presença, nos naipes nem na conta de
@@ -514,7 +536,7 @@ function batuqueirosDaEdicao() {
       if (!pes) return null;
       const juntos = { ...pes, ...i, id: i.id };
       // celular/nascimento entram só se o usuário logado tiver permissão de ler
-      return { ...juntos, ...contatoDe(juntos) };
+      return { ...juntos, ...soDoCadastro(pes), ...contatoDe(juntos) };
     })
     .filter(Boolean)
     .sort((a, b) => fullName(a).localeCompare(fullName(b), "pt-BR", { sensitivity: "base" }));
@@ -533,7 +555,10 @@ const esc = v => String(v == null ? "" : v)
   .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
   .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
 const currency = v => (v || 0).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
-const dateBR = iso => { if (!iso) return "—"; const [y, m, d] = iso.split("-"); return `${d}/${m}/${y}`; };
+/* Escapa na origem: esta função é interpolada crua em dezenas de pontos, e as
+   datas vêm do banco (inclusive de importação de dados antigos, que ninguém
+   validou). Escapar aqui é mais seguro que lembrar de escapar em cada uso. */
+const dateBR = iso => { if (!iso) return "—"; const [y, m, d] = String(iso).split("-"); return esc(`${d}/${m}/${y}`); };
 const fullName = u => `${u.nome || ""} ${u.sobrenome || ""}`.trim();
 /* Como a pessoa prefere ser chamada. Numa bateria quase todo mundo se conhece
    pelo apelido, então é ele que aparece na saudação; o nome completo continua
@@ -568,7 +593,13 @@ function calcIdade(dataNascISO) {
    ============================================================ */
 const MESES = ["Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho", "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"];
 function dataNascimentoFieldsHtml(idPrefix, isoValue, anoMax) {
-  const [anoAtual, mesAtual, diaAtual] = (isoValue || "").split("-");
+  // A data vem do banco, e o banco aceita o que a pessoa gravar — inclusive por
+  // fora do site. Uma data fora do formato aaaa-mm-dd é descartada aqui, e o que
+  // sobra ainda vai escapado para o HTML: sem isso, alguém podia gravar aspas e
+  // um atributo de evento no próprio nascimento e o código rodaria na sessão de
+  // quem abrisse o cadastro dela no painel — ou seja, na sessão do admin.
+  const iso = /^\d{4}-\d{2}-\d{2}$/.test(String(isoValue || "")) ? isoValue : "";
+  const [anoAtual, mesAtual, diaAtual] = iso.split("-");
   const diaOpts = Array.from({ length: 31 }, (_, i) => i + 1)
     .map(n => { const v = String(n).padStart(2, "0"); return `<option value="${v}" ${diaAtual === v ? "selected" : ""}>${n}</option>`; }).join("");
   const mesOpts = MESES.map((nome, i) => { const v = String(i + 1).padStart(2, "0"); return `<option value="${v}" ${mesAtual === v ? "selected" : ""}>${nome}</option>`; }).join("");
@@ -576,7 +607,7 @@ function dataNascimentoFieldsHtml(idPrefix, isoValue, anoMax) {
     <div class="grid-3">
       <div class="field"><label>Dia</label><select id="${idPrefix}-dia"><option value="">Dia</option>${diaOpts}</select></div>
       <div class="field"><label>Mês</label><select id="${idPrefix}-mes"><option value="">Mês</option>${mesOpts}</select></div>
-      <div class="field"><label>Ano</label><input type="number" id="${idPrefix}-ano" placeholder="aaaa" value="${anoAtual || ""}" min="1920" max="${anoMax || new Date().getFullYear()}"></div>
+      <div class="field"><label>Ano</label><input type="number" id="${idPrefix}-ano" placeholder="aaaa" value="${esc(anoAtual || "")}" min="1920" max="${anoMax || new Date().getFullYear()}"></div>
     </div>`;
 }
 function lerDataNascimento(idPrefix) {
@@ -614,6 +645,11 @@ function posicaoOptionsHtml(selected) {
   opts += `<option value="Outro" ${selected === "Outro" ? "selected" : ""}>Outro</option>`;
   if (selected && selected !== "Outro" && !posicoesCache.some(p => p.nome === selected)) {
     opts = `<option value="${esc(selected)}" selected>${esc(selected)} (removida da lista)</option>` + opts;
+  } else if (!selected) {
+    // Sem esta opção, um cadastro sem posição (vindo da importação, por exemplo)
+    // abria o formulário com a primeira da lista já selecionada — e o admin, ao
+    // salvar qualquer outro campo, escolhia um instrumento por ela sem saber.
+    opts = `<option value="" selected>Ainda não escolheu</option>` + opts;
   }
   return opts;
 }
@@ -680,6 +716,18 @@ function contagemPorCamisa(pessoas) {
   pessoas.forEach(p => { const c = (p.camisa || "").trim() || "Sem tamanho"; mapa[c] = (mapa[c] || 0) + 1; });
   // Na ordem dos tamanhos, não alfabética — GG antes de P não ajuda ninguém.
   return [...CAMISAS, "Sem tamanho"].filter(c => mapa[c]).map(c => [c, mapa[c]]);
+}
+
+/* Devolve o filtro de posição só se ele ainda existir entre as opções da tela.
+   Mesmo problema já corrigido no filtro de ensaio: quando a última pessoa de um
+   naipe muda de posição (ou avisa que não vai tocar), a opção some da lista,
+   nenhum <option> fica selecionado, o navegador mostra "Todas as posições" — e
+   a tabela aparece vazia, com o seletor mentindo sobre o próprio estado.
+   Reselecionar "Todas" nem dispara change, então não havia saída sem trocar de
+   tela. */
+function filtroDePosicaoValido(valor, pessoas) {
+  if (!valor || valor === "todas") return "todas";
+  return posicoesUnicasOrdenadas(pessoas).includes(valor) ? valor : "todas";
 }
 
 function contagemPorPosicao(pessoas) {
@@ -953,7 +1001,7 @@ function viewRegister1() {
     <div class="center-wrap card">
       <h2>Crie seu login e senha</h2>
       <p class="card-sub">Escolha um e-mail e uma senha para acessar sua área de batuqueiro.</p>
-      ${err ? `<div class="error-box">${err}</div>` : ""}
+      ${err ? `<div class="error-box">${esc(err)}</div>` : ""}
       <form id="form-register1">
         <div class="field"><label>E-mail</label><input type="email" id="reg-email" required placeholder="seuemail@exemplo.com" value="${esc(session.emailDigitado)}" ${busy ? "disabled" : ""}></div>
         <div class="field"><label>Senha</label><input type="password" id="reg-senha" required placeholder="Mínimo 6 caracteres" ${busy ? "disabled" : ""}></div>
@@ -987,7 +1035,7 @@ function viewRegister2() {
       <div class="step-dots"><div class="step-dot"></div><div class="step-dot active"></div>${ed ? `<div class="step-dot"></div>` : ""}</div>
       <h2>Complete seu cadastro</h2>
       <p class="card-sub">Logado como <b>${esc(d.email)}</b>. Estes dados valem para sempre — você não precisa preenchê-los de novo a cada carnaval.</p>
-      ${err ? `<div class="error-box">${err}</div>` : ""}
+      ${err ? `<div class="error-box">${esc(err)}</div>` : ""}
       ${!ed ? `<div class="seed-box" style="text-align:left;">As inscrições para o próximo carnaval ainda não estão abertas. Você pode deixar seu cadastro pronto agora — quando a organização abrir, é só entrar e confirmar sua inscrição.</div>` : ""}
       <form id="form-register2">
         <div class="grid-2">
@@ -1017,7 +1065,7 @@ function viewLogin() {
   <div class="wrap">
     <div class="center-wrap card">
       <h2>Entrar na minha conta</h2>
-      ${err ? `<div class="error-box">${err}</div>` : ""}
+      ${err ? `<div class="error-box">${esc(err)}</div>` : ""}
       <form id="form-login">
         <div class="field"><label>E-mail</label><input type="email" id="log-email" required value="${esc(session.emailDigitado)}" ${busy ? "disabled" : ""}></div>
         <div class="field"><label>Senha</label><input type="password" id="log-senha" required ${busy ? "disabled" : ""}></div>
@@ -1124,7 +1172,7 @@ function viewConfirmarInscricao(u) {
         ? `Preenchemos abaixo com os seus dados do ${esc(edicaoLabel(session.draftInscricaoDeEdicao))}. Confira, ajuste o que mudou e confirme para participar deste carnaval.`
         : `Preencha os dados da sua participação neste carnaval.`}</p>
       ${ed.dataDoCarnaval ? `<p class="hint" style="margin-top:-10px;">Desfile em ${dateBR(ed.dataDoCarnaval)}</p>` : ""}
-      ${err ? `<div class="error-box">${err}</div>` : ""}
+      ${err ? `<div class="error-box">${esc(err)}</div>` : ""}
       <form id="form-inscricao">
         <div class="field">
           <label>Vai tocar no ${esc(edicaoLabel(ed))}?</label>
@@ -1166,6 +1214,7 @@ function viewBatuqueiro() {
   const ensaios = ensaioFiltro === "todos" ? ensaiosCache : ensaiosCache.filter(e => e.id === ensaioFiltro);
   // Quem avisou que não vai tocar não vai a ensaio: fora da tabela de presença.
   const todos = vaoTocarNaEdicao();
+  const posicaoFiltro = filtroDePosicaoValido(session.presencaFiltro, todos);
   const editavel = edicaoEditavel(ed);
 
   return `
@@ -1201,8 +1250,8 @@ function viewBatuqueiro() {
       <div class="filter-row">
         <div><label>Filtrar por posição</label>
           <select id="presenca-filtro-posicao">
-            <option value="todas" ${(session.presencaFiltro || "todas") === "todas" ? "selected" : ""}>Todas as posições</option>
-            ${posicoesUnicasOrdenadas(todos).map(pos => `<option value="${esc(pos)}" ${session.presencaFiltro === pos ? "selected" : ""}>${esc(pos)}</option>`).join("")}
+            <option value="todas" ${posicaoFiltro === "todas" ? "selected" : ""}>Todas as posições</option>
+            ${posicoesUnicasOrdenadas(todos).map(pos => `<option value="${esc(pos)}" ${posicaoFiltro === pos ? "selected" : ""}>${esc(pos)}</option>`).join("")}
           </select>
         </div>
         <div><label>Filtrar por ensaio</label>
@@ -1213,7 +1262,7 @@ function viewBatuqueiro() {
         </div>
       </div>
       ${ensaiosCache.length === 0 ? `<div class="hint">Nenhum ensaio cadastrado ainda.</div>` : (() => {
-        const pessoasFiltradas = todos.filter(p => !session.presencaFiltro || session.presencaFiltro === "todas" || p.posicao === session.presencaFiltro);
+        const pessoasFiltradas = todos.filter(p => posicaoFiltro === "todas" || p.posicao === posicaoFiltro);
         return `
       <div class="table-scroll">
         <table>
@@ -1551,7 +1600,11 @@ async function carregarHistorico() {
       const posicoes = posSnap.docs.map(d => ({ id: d.id, ...d.data() }));
       const precos = precoSnap.exists() ? precoSnap.data() : null;
       const totalEnsaios = ensaiosSnap.docs.length;
-      const presencas = presSnap.docs.filter(d => d.data().presente).length;
+      // Cruza com os ensaios que ainda existem: apagar um ensaio não apaga os
+      // registros de presença dele, e sem o cruzamento o histórico chegava a
+      // dizer "5 de 4 ensaios" — três telas com três números para o mesmo fato.
+      const idsDeEnsaio = ensaiosSnap.docs.map(d => d.id);
+      const presencas = presSnap.docs.filter(d => d.data().presente && idsDeEnsaio.includes(d.data().ensaioId)).length;
 
       out.push({
         edicao: ed,
@@ -1677,7 +1730,15 @@ function exportarCSV() {
   const { cabecalho, linhas, nomeBase, quantas } = dadosDaExportacao();
   if (quantas === 0) { alert("Não há ninguém inscrito neste carnaval para exportar."); return; }
   const campo = v => {
-    const texto = typeof v === "number" ? String(v).replace(".", ",") : String(v == null ? "" : v);
+    if (typeof v === "number") return String(v).replace(".", ",");
+    let texto = String(v == null ? "" : v);
+    // Excel, LibreOffice e Google Sheets tratam uma célula que começa com
+    // = + - @ (ou tabulação) como FÓRMULA, e aspas não impedem isso. Como nome e
+    // apelido são digitados pelos próprios batuqueiros, alguém poderia cadastrar
+    // =HYPERLINK(...) e a fórmula rodaria na máquina de quem abrisse a planilha —
+    // que é justamente a planilha com o telefone de todo mundo. O apóstrofo à
+    // frente obriga a célula a ser tratada como texto.
+    if (/^[=+\-@\t\r]/.test(texto)) texto = "'" + texto;
     // Aspas duplas dentro do campo viram duas aspas; qualquer campo com
     // separador, aspas ou quebra de linha precisa ir entre aspas.
     return /[";\n\r]/.test(texto) ? `"${texto.replace(/"/g, '""')}"` : texto;
@@ -1694,13 +1755,25 @@ let promessaSheetJS = null;
 function carregarSheetJS() {
   if (window.XLSX) return Promise.resolve(window.XLSX);
   if (promessaSheetJS) return promessaSheetJS;
-  promessaSheetJS = new Promise((resolve, reject) => {
+  // Tenta primeiro uma cópia hospedada junto com o site (vendor/xlsx.full.min.js)
+  // e só depois o CDN. Um script de terceiro roda com todos os privilégios da
+  // página — e esta função só é chamada na tela do admin, com o login dele
+  // ativo; se o CDN for comprometido ou interceptado na rede, o estrago é a
+  // conta de organizador e, por ela, o banco inteiro. Hospedar o arquivo junto
+  // remove esse terceiro do caminho. O SETUP explica como (é baixar um arquivo
+  // e subir na pasta vendor/); enquanto isso não for feito, o CDN continua
+  // valendo, e se nenhum dos dois carregar o site cai para o CSV.
+  const tentar = (src) => new Promise((resolve, reject) => {
     const script = document.createElement("script");
-    script.src = "https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js";
-    script.onload = () => (window.XLSX ? resolve(window.XLSX) : reject(new Error("SheetJS carregou sem se registrar")));
-    script.onerror = () => { promessaSheetJS = null; reject(new Error("não foi possível carregar a biblioteca de Excel")); };
+    script.src = src;
+    script.crossOrigin = "anonymous";
+    script.onload = () => (window.XLSX ? resolve(window.XLSX) : reject(new Error("biblioteca carregou sem se registrar")));
+    script.onerror = () => reject(new Error("falhou: " + src));
     document.head.appendChild(script);
   });
+  promessaSheetJS = tentar("vendor/xlsx.full.min.js")
+    .catch(() => tentar("https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.20.3/xlsx.full.min.js"))
+    .catch(err => { promessaSheetJS = null; throw err; });
   return promessaSheetJS;
 }
 
@@ -1763,7 +1836,10 @@ function viewAdmin() {
   // O arrecadado precisa contar TODO MUNDO: quem pagou e depois avisou que não
   // vai tocar continua com dinheiro no caixa, à espera de devolução ou crédito.
   const arrecadado = batuqueirosDaEdicao().reduce((s, p) => s + totalPago(p), 0);
-  const quitados = pagantes.filter(p => planoValido(p.formaPagamento) && precosCache && totalPago(p) >= totalDevido(p)).length;
+  // planoComValor, não planoValido: com um plano de valor 0 (documento de preços
+  // incompleto), totalPago >= 0 é sempre verdade e a adimplência ia a 100% com o
+  // painel logo abaixo dizendo "Sem plano: 12". É o mesmo guard de paymentStatus.
+  const quitados = pagantes.filter(p => planoComValor(p) && totalPago(p) >= totalDevido(p)).length;
   const adimplencia = pagantes.length ? Math.round((quitados / pagantes.length) * 100) : 0;
   const hoje = hojeISO();
   const ensaiosRealizados = ensaiosCache.filter(e => e.data <= hoje);
@@ -1960,7 +2036,7 @@ function viewAdminEdicoes() {
               const emCtx = e.id === edicaoCtxId();
               return `<tr class="${emCtx ? "me" : ""}">
                 <td class="name-cell">${esc(edicaoLabel(e))} <span class="muted-sm">(${esc(e.id)})</span></td>
-                <td><input type="date" class="edicao-data-input" data-edicao-id="${e.id}" value="${e.dataDoCarnaval || ""}" ${e.status === "encerrada" ? "disabled" : ""}></td>
+                <td><input type="date" class="edicao-data-input" data-edicao-id="${e.id}" value="${esc(e.dataDoCarnaval || "")}" ${e.status === "encerrada" ? "disabled" : ""}></td>
                 <td><span class="badge ${statusInfo(e).cls}">${statusInfo(e).label}</span></td>
                 <td>${emCtx ? vaoTocarNaEdicao().length : "—"}</td>
                 <td class="row-actions">
@@ -2224,13 +2300,16 @@ function viewAdminEnsaios() {
           <tbody>
             ${ensaiosCache.length === 0 ? `<tr><td colspan="5" class="hint">Nenhum ensaio cadastrado.</td></tr>` : ensaiosCache.map(e => {
               const realizado = e.data <= hoje;
-              const presentes = inscricoesCache.filter(p => presencasCache[p.id] && presencasCache[p.id][e.id]).length;
+              // Sobre a MESMA lista do denominador (quem vai tocar). Contando
+              // inscricoesCache, uma marca de presença de quem depois avisou que
+              // não vai tocar continuava somando e a tela mostrava "10/9".
+              const presentes = vaoTocarNaEdicao().filter(p => presencasCache[p.id] && presencasCache[p.id][e.id]).length;
               const musicaIds = e.musicaIds || [];
               const nomesMusicas = musicaIds.map(musicaResumo).filter(Boolean);
               const aberto = session.ensaioMusicasAberto === e.id;
               const draftIds = aberto ? (session.ensaioMusicasDraft || []) : musicaIds;
               return `<tr>
-                <td><input type="date" class="ensaio-data-input" data-ensaio-id="${e.id}" value="${e.data}" ${editavel ? "" : "disabled"}></td>
+                <td><input type="date" class="ensaio-data-input" data-ensaio-id="${e.id}" value="${esc(e.data)}" ${editavel ? "" : "disabled"}></td>
                 <td><span class="badge ${realizado ? "badge-good" : "badge-warning"}">${realizado ? "Realizado" : "Agendado"}</span></td>
                 <td>${presentes}/${totalPessoas} presentes</td>
                 <td>
@@ -2283,6 +2362,7 @@ function viewAdminRelatorio() {
   // no caixa e alguém precisa decidir se devolve ou credita. Some da lista de
   // cobrança e reaparece embaixo, só quem tem valor pago.
   const aDevolver = naoVaoTocarNaEdicao().filter(p => totalPago(p) > 0);
+  const posicaoFiltro = filtroDePosicaoValido(session.relatorioFiltroPosicao, todos);
   return `
   ${headerBar(u)}
   <div class="wrap">
@@ -2300,8 +2380,8 @@ function viewAdminRelatorio() {
         </div>
         <div><label>Posição</label>
           <select id="relatorio-filtro-posicao">
-            <option value="todas" ${(session.relatorioFiltroPosicao || "todas") === "todas" ? "selected" : ""}>Todas as posições</option>
-            ${posicoesUnicasOrdenadas(todos).map(pos => `<option value="${esc(pos)}" ${session.relatorioFiltroPosicao === pos ? "selected" : ""}>${esc(pos)}</option>`).join("")}
+            <option value="todas" ${posicaoFiltro === "todas" ? "selected" : ""}>Todas as posições</option>
+            ${posicoesUnicasOrdenadas(todos).map(pos => `<option value="${esc(pos)}" ${posicaoFiltro === pos ? "selected" : ""}>${esc(pos)}</option>`).join("")}
           </select>
         </div>
       </div>
@@ -2312,7 +2392,7 @@ function viewAdminRelatorio() {
             ${todos.filter(p => {
               const st = paymentStatus(p).label;
               const okStatus = !session.relatorioFiltroStatus || session.relatorioFiltroStatus === "todos" || st === session.relatorioFiltroStatus;
-              const okPos = !session.relatorioFiltroPosicao || session.relatorioFiltroPosicao === "todas" || p.posicao === session.relatorioFiltroPosicao;
+              const okPos = posicaoFiltro === "todas" || p.posicao === posicaoFiltro;
               return okStatus && okPos;
             }).map(p => {
               const status = paymentStatus(p);
@@ -2397,9 +2477,9 @@ function pricingPlanFieldset(planoKey, precos, editavel = true) {
   return `
     <div style="border:1px solid var(--gridline); border-radius:10px; padding:12px; margin-bottom:12px;">
       <div style="font-weight:700; font-size:13.5px; margin-bottom:8px;">${plano.label}</div>
-      <div class="field"><label>Valor total (R$)</label><input type="number" id="admin-preco-${planoKey}" value="${cfg.valor}" min="1" step="0.01" ${dis}></div>
+      <div class="field"><label>Valor total (R$)</label><input type="number" id="admin-preco-${planoKey}" value="${esc(cfg.valor)}" min="1" step="0.01" ${dis}></div>
       <div class="${plano.parcelas > 1 ? "grid-" + plano.parcelas : ""}">
-        ${cfg.prazos.map((d, i) => `<div class="field"><label>${plano.parcelas > 1 ? `Parcela ${i + 1} — ` : ""}Data-limite</label><input type="date" id="admin-prazo-${planoKey}-${i}" value="${d || ""}" ${dis}></div>`).join("")}
+        ${cfg.prazos.map((d, i) => `<div class="field"><label>${plano.parcelas > 1 ? `Parcela ${i + 1} — ` : ""}Data-limite</label><input type="date" id="admin-prazo-${planoKey}-${i}" value="${esc(d || "")}" ${dis}></div>`).join("")}
       </div>
     </div>`;
 }
@@ -2518,7 +2598,7 @@ function viewAdminPessoas() {
   const u = perfilMesclado();
   const ed = edicaoCtx();
   const editavel = edicaoEditavel(ed);
-  const filtro = session.adminPessoasFiltro || "todas";
+  const filtro = filtroDePosicaoValido(session.adminPessoasFiltro, vaoTocarNaEdicao());
   const todos = vaoTocarNaEdicao();
   const foraDesteCarnaval = naoVaoTocarNaEdicao();
   const posicoesPresentes = posicoesUnicasOrdenadas(todos);
@@ -2607,6 +2687,7 @@ function renderAdminEditUserForm(p, editavel = true) {
       <div class="field">
         <label>Vai tocar neste carnaval?</label>
         <select id="ae-vaitocar-${p.id}" ${dis}>
+          <option value="" ${p.vaiTocar !== "Sim" && p.vaiTocar !== "Não" ? "selected" : ""}>Ainda não respondeu</option>
           <option value="Sim" ${p.vaiTocar === "Sim" ? "selected" : ""}>Sim</option>
           <option value="Não" ${p.vaiTocar === "Não" ? "selected" : ""}>Não</option>
         </select>
@@ -2617,7 +2698,10 @@ function renderAdminEditUserForm(p, editavel = true) {
         <select id="ae-posicao-${p.id}" ${dis}>${posicaoOptionsHtml(p.posicao)}</select>
       </div>
       <div class="field"><label>Camisa</label>
-        <select id="ae-camisa-${p.id}" ${dis}>${CAMISAS.map(x => `<option ${x === p.camisa ? "selected" : ""}>${esc(x)}</option>`).join("")}</select>
+        <select id="ae-camisa-${p.id}" ${dis}>
+          <option value="" ${!CAMISAS.includes(p.camisa) ? "selected" : ""}>Sem tamanho informado</option>
+          ${CAMISAS.map(x => `<option ${x === p.camisa ? "selected" : ""}>${esc(x)}</option>`).join("")}
+        </select>
       </div>
       <div class="field">
         <label>Forma de pagamento</label>
@@ -2982,6 +3066,16 @@ function wireEvents() {
         camisa, isentoManual: false, formaPagamento: null, totalPago: 0,
         inscritoEm: serverTimestamp(),
       });
+      // Se a pessoa já tinha comprovantes nesta edição (foi tirada e voltou, ou
+      // o admin apagou a inscrição por engano), o total precisa voltar junto —
+      // senão ela é cobrada de novo com os próprios comprovantes na tela.
+      // A inscrição nasce com 0 porque as regras exigem isso; a soma entra numa
+      // segunda escrita, que as regras aceitam por só aumentar o total.
+      const jaPago = myPagamentos.reduce((soma, p) => soma + (p.valor || 0), 0);
+      if (jaPago > 0) {
+        try { await updateDoc(P.inscricao(ed.id, fbUser.uid), { totalPago: jaPago }); }
+        catch (err) { console.warn("total já pago não pôde ser recomposto:", err); }
+      }
       session.errors.inscricao = null;
       session.draftInscricao = null;
       session.draftInscricaoDeEdicao = null;
@@ -3564,7 +3658,17 @@ function wireEvents() {
   onAll("[data-remove-user]", "click", async el => {
     const id = el.dataset.removeUser;
     const ed = edicaoCtx();
-    if (!confirm(`Tirar esta pessoa do ${edicaoLabel(ed)}?\n\nO cadastro e o histórico dela em outros carnavais continuam intactos — ela só deixa de constar nesta edição.`)) return;
+    const pessoa = batuqueirosDaEdicao().find(x => x.id === id);
+    const jaPago = pessoa ? totalPago(pessoa) : 0;
+    // Os comprovantes de pagamento são imutáveis por regra e NÃO são apagados
+    // junto. Se a pessoa se inscrever de novo, a inscrição nasce com totalPago 0
+    // e ela é cobrada outra vez, com os comprovantes antigos ainda na tela dela.
+    // O site recompõe o total na reinscrição, mas o admin precisa saber disso
+    // antes de clicar.
+    const aviso = jaPago > 0
+      ? `\n\nATENÇÃO: ela já registrou ${currency(jaPago)} nesta edição. Os comprovantes não são apagados e o valor volta a contar se ela se inscrever de novo — mas até lá ela some do relatório de pagamentos.`
+      : "";
+    if (!confirm(`Tirar esta pessoa do ${edicaoLabel(ed)}?\n\nO cadastro e o histórico dela em outros carnavais continuam intactos — ela só deixa de constar nesta edição.${aviso}`)) return;
     try { await deleteDoc(P.inscricao(ed.id, id)); }
     catch (err) { alert(friendlyFirestoreError(err)); }
   });
@@ -3582,10 +3686,14 @@ function wireEvents() {
         adminAccess: $(`#ae-adminaccess-${id}`).checked,
         presencaAccess: $(`#ae-presencaaccess-${id}`).checked,
       };
-      const contatoPatch = {
-        celular: $(`#ae-celular-${id}`).value.trim(),
-        dataNascimento: lerDataNascimento(`ae-datanasc-${id}`) || (original && original.dataNascimento) || "",
-      };
+      // Só grava o que foi realmente preenchido. Se o listener de /contatos ainda
+      // não respondeu (ou falhou), o formulário abre com telefone e nascimento em
+      // branco — e gravar esse branco apagaria os dados de verdade sem aviso.
+      const contatoPatch = {};
+      const celularDigitado = $(`#ae-celular-${id}`).value.trim();
+      const nascDigitado = lerDataNascimento(`ae-datanasc-${id}`);
+      if (celularDigitado) contatoPatch.celular = celularDigitado;
+      if (nascDigitado) contatoPatch.dataNascimento = nascDigitado;
       const inscricaoPatch = {
         vaiTocar: $(`#ae-vaitocar-${id}`).value,
         posicao: $(`#ae-posicao-${id}`).value,
@@ -3598,7 +3706,7 @@ function wireEvents() {
       try {
         const batch = writeBatch(db);
         batch.update(P.pessoa(id), pessoaPatch);
-        batch.set(P.contato(id), contatoPatch, { merge: true });
+        if (Object.keys(contatoPatch).length) batch.set(P.contato(id), contatoPatch, { merge: true });
         if (eid && edicaoEditavel(edicaoCtx())) batch.update(P.inscricao(eid, id), inscricaoPatch);
         await batch.commit();
         session.adminEditingUser = null;

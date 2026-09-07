@@ -958,6 +958,88 @@ async function main() {
   await page.click('#btn-back-batuqueiro');
   await page.waitForTimeout(300);
 
+  console.log('\n== 16i. Dados forjados no banco não viram privilégio nem código na tela ==');
+  // Estes dois testes cobrem ataques reais de quem tem cadastro no site e sabe
+  // consultar o Firestore direto pelo navegador. O mock não aplica as regras de
+  // segurança (elas ficam no firestore.rules e são a barreira de verdade), então
+  // aqui a checagem é da SEGUNDA camada: mesmo que uma escrita dessas passasse,
+  // o site não pode obedecer a ela.
+  await page.evaluate(async () => {
+    const fb = await import('./firebase-init.mock.js');
+    const uid = window.__mock.uidPorEmail('duda@example.com');
+    // 1) privilégio forjado na própria inscrição, que a tela funde por cima do cadastro
+    await fb.updateDoc(fb.doc(fb.db, 'edicoes', '2027-1', 'inscricoes', uid), {
+      adminAccess: true, presencaAccess: true, nome: 'Duda (ADMIN)', email: 'falso@example.com',
+    });
+    // 2) atributo de evento escondido dentro da data de nascimento
+    await fb.setDoc(fb.doc(fb.db, 'contatos', uid), {
+      dataNascimento: '" autofocus onfocus="window.__invadiu=1', celular: '(21) 91234-5678',
+    }, { merge: true });
+  });
+  await page.waitForTimeout(400);
+  await page.click('#btn-goto-admin');
+  await page.waitForTimeout(250);
+  await page.click('#btn-goto-pessoas');
+  await page.waitForTimeout(300);
+  html = await appHtml(page);
+  ok('Privilégio gravado na inscrição não vira selo de admin na tela', !html.includes('Duda (ADMIN)'));
+  const marcadoComoAdmin = await page.evaluate((uid) => {
+    const linha = [...document.querySelectorAll('.list-row')].find(l => l.textContent.includes('Duda'));
+    return linha ? linha.textContent.includes('Acesso admin') : null;
+  }, uids.duda);
+  ok('E a linha dela não exibe "Acesso admin"', marcadoComoAdmin === false);
+  ok('Nem o e-mail forjado aparece no lugar do verdadeiro', !html.includes('falso@example.com'));
+
+  await page.click(`[data-edit-user="${uids.duda}"]`);
+  await page.waitForTimeout(300);
+  const invadiu = await page.evaluate(() => window.__invadiu);
+  ok('Abrir o cadastro dela no painel não executa código plantado no nascimento', invadiu === undefined);
+  const caixaAdmin = await page.locator(`#ae-adminaccess-${uids.duda}`).isChecked();
+  ok('A caixa "Acesso ao painel admin" não vem marcada por causa do dado forjado', caixaAdmin === false);
+  const anoNoCampo = await page.locator(`#ae-datanasc-${uids.duda}-ano`).inputValue();
+  ok('E a data fora de formato é descartada em vez de ir para o HTML', anoNoCampo === '');
+  await page.click(`[data-admin-edit-form="${uids.duda}"] button[type=submit]`);
+  await page.waitForTimeout(400);
+  const depoisDoSalvar = await page.evaluate(() => {
+    const uid = window.__mock.uidPorEmail('duda@example.com');
+    return window.__mock.dumpStore().pessoas[uid];
+  });
+  ok('Salvar o formulário não promove ninguém a admin', depoisDoSalvar.adminAccess !== true);
+  ok('Nem grava o e-mail forjado no cadastro', depoisDoSalvar.email === 'duda@example.com');
+  // limpa o que foi plantado, para o resto da suíte seguir normal
+  await page.evaluate(async () => {
+    const fb = await import('./firebase-init.mock.js');
+    const uid = window.__mock.uidPorEmail('duda@example.com');
+    await fb.setDoc(fb.doc(fb.db, 'contatos', uid), { celular: '(21) 98888-0000', dataNascimento: '1996-05-10' });
+  });
+  await page.waitForTimeout(300);
+
+  console.log('\n== 16j. Nome com fórmula não é executado pelo Excel ==');
+  await page.click(`[data-edit-user="${uids.duda}"]`);
+  await page.waitForTimeout(250);
+  await page.fill(`#ae-apelido-${uids.duda}`, '=HYPERLINK("http://x.tld","clique")');
+  await page.click(`[data-admin-edit-form="${uids.duda}"] button[type=submit]`);
+  await page.waitForTimeout(400);
+  const [baixadoFormula] = await Promise.all([
+    page.waitForEvent('download'),
+    page.click('#btn-exportar-csv'),
+  ]);
+  const csvFormula = readFileSync(await baixadoFormula.path(), 'utf8');
+  // O apóstrofo à frente obriga a planilha a tratar a célula como texto. Sem
+  // ele, a fórmula roda na máquina de quem abrir o arquivo — que é o arquivo com
+  // o telefone da bateria inteira.
+  ok('Célula que começa com = sai neutralizada no CSV', csvFormula.includes("'=HYPERLINK"));
+  ok('E nenhuma célula do arquivo começa com = solto', !/(^|;|\n)=/.test(csvFormula));
+  await page.click(`[data-edit-user="${uids.duda}"]`);
+  await page.waitForTimeout(250);
+  await page.fill(`#ae-apelido-${uids.duda}`, 'Dudinha');
+  await page.click(`[data-admin-edit-form="${uids.duda}"] button[type=submit]`);
+  await page.waitForTimeout(400);
+  await page.click('#btn-back-admin2');
+  await page.waitForTimeout(200);
+  await page.click('#btn-back-batuqueiro');
+  await page.waitForTimeout(300);
+
   console.log('\n== 17. Presença: Ana (admin) marca presença de Duda ==');
   await page.waitForTimeout(150);
   html = await appHtml(page);

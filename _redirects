@@ -1,0 +1,10 @@
+# Arquivos de desenvolvimento e de configuração não precisam ficar acessíveis no
+# site publicado. O firestore.rules em especial entrega o mapa exato das
+# permissões para quem quiser procurar brecha — não é segredo, mas também não há
+# motivo para servir. O site em si não usa nenhum deles.
+/test.html              /  404
+/firebase-init.mock.js  /  404
+/run-tests.mjs          /  404
+/firestore.rules        /  404
+/SETUP.md               /  404
+/package.json           /  404

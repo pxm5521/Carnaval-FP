@@ -91,17 +91,28 @@ service cloud.firestore {
       // se autoconceda o acesso de marcar presença).
       // O admin também pode criar cadastros de terceiros — é o que a importação
       // do formato antigo faz ao trazer as pessoas que já existiam.
+      // O e-mail tem que ser o do login: é por ele que a organização identifica
+      // e cobra a pessoa, e ele vai para a planilha exportada. A exceção cobre
+      // quem vem do formato antigo, cujo cadastro traz o e-mail de lá.
       allow create: if isAdmin()
         || (isOwner(uid)
             && request.resource.data.adminAccess == false
-            && request.resource.data.presencaAccess == false);
+            && request.resource.data.presencaAccess == false
+            && (request.resource.data.email == request.auth.token.email
+                || exists(/databases/$(database)/documents/users/$(request.auth.uid))));
 
       // o dono edita os próprios dados, mas não pode mudar os acessos —
-      // só um admin pode.
+      // só um admin pode — nem forjar o e-mail que a organização vê e exporta.
+      // O nascimento aqui é resto do formato antigo (hoje vive em /contatos) e
+      // segue o mesmo formato exigido lá, pelo mesmo motivo.
       allow update: if isAdmin()
         || (isOwner(uid)
             && request.resource.data.adminAccess == resource.data.adminAccess
-            && request.resource.data.presencaAccess == resource.data.presencaAccess);
+            && request.resource.data.presencaAccess == resource.data.presencaAccess
+            && request.resource.data.email == resource.data.email
+            && (!('dataNascimento' in request.resource.data)
+                || (request.resource.data.dataNascimento is string
+                    && request.resource.data.dataNascimento.matches('^$|^[0-9]{4}-[0-9]{2}-[0-9]{2}$'))));
 
       allow delete: if isAdmin();
     }
@@ -119,9 +130,24 @@ service cloud.firestore {
     // o app só consegue LISTAR /contatos sendo admin — uma consulta de coleção
     // inteira feita por um batuqueiro comum é recusada, porque a regra teria que
     // valer para todos os documentos retornados.
+    // A validação do formato da data não é capricho: a data de nascimento é
+    // devolvida para dentro de um campo do formulário do painel, e um valor com
+    // aspas e um atributo de evento executaria código na sessão de quem abrisse
+    // aquele cadastro — o admin. O site também escapa na hora de desenhar; esta
+    // é a barreira do lado do servidor.
+    function contatoBemFormado() {
+      return request.resource.data.keys().hasOnly(['celular', 'dataNascimento'])
+        && (!('dataNascimento' in request.resource.data)
+            || request.resource.data.dataNascimento is string)
+        && (!('dataNascimento' in request.resource.data)
+            || request.resource.data.dataNascimento.matches('^$|^[0-9]{4}-[0-9]{2}-[0-9]{2}$'))
+        && (!('celular' in request.resource.data)
+            || (request.resource.data.celular is string && request.resource.data.celular.size() < 40));
+    }
+
     match /contatos/{uid} {
       allow read: if isOwner(uid) || isAdmin();
-      allow create, update: if isOwner(uid) || isAdmin();
+      allow create, update: if (isOwner(uid) || isAdmin()) && contatoBemFormado();
       allow delete: if isAdmin();
     }
 
@@ -131,21 +157,46 @@ service cloud.firestore {
       allow write: if isAdmin();
 
       // ---------- inscrição de cada pessoa naquele carnaval ----------
+      // A LISTA DE CAMPOS ABAIXO É UMA BARREIRA DE SEGURANÇA, não organização.
+      // As telas montam cada batuqueiro fundindo /pessoas com a inscrição, e a
+      // inscrição fica por cima. Sem a lista, o dono podia gravar
+      // adminAccess: true (ou um nome/e-mail falso) na PRÓPRIA inscrição; o
+      // painel desenhava o selo de admin e a caixa "Acesso ao painel admin" já
+      // marcada, e o admin, ao salvar qualquer outra coisa daquela pessoa,
+      // gravava a promoção de verdade em /pessoas. Campo novo na inscrição
+      // precisa ser acrescentado aqui, senão o site quebra — e é de propósito.
       match /inscricoes/{uid} {
         allow read: if isSignedIn();
+
+        function camposPermitidosDoDono() {
+          return request.resource.data.keys().hasOnly([
+            'vaiTocar', 'posicao', 'posicaoOutro', 'camisa',
+            'isentoManual', 'formaPagamento', 'totalPago', 'inscritoEm'
+          ]);
+        }
 
         // a pessoa se inscreve sozinha só numa edição ABERTA, e não pode nascer
         // isenta nem com pagamento já lançado.
         allow create: if (isAdmin() && edicaoNaoEncerrada(eid))
           || (isOwner(uid) && edicaoAberta(eid)
+              && camposPermitidosDoDono()
               && request.resource.data.isentoManual == false
               && request.resource.data.totalPago == 0);
 
         // o dono atualiza os próprios dados da inscrição (inclusive totalPago,
         // ao registrar um pagamento), mas a isenção só o admin concede.
+        //
+        // O total pago é gravado pelo cliente porque não existe servidor próprio
+        // aqui — é a limitação conhecida, documentada no SETUP. O que dá para
+        // fazer nas regras é impedir que ele DIMINUA: assim ninguém apaga um
+        // pagamento já lançado, e o valor só cresce, na mesma direção dos
+        // comprovantes (que são imutáveis).
         allow update: if (isAdmin() && edicaoNaoEncerrada(eid))
           || (isOwner(uid) && edicaoAberta(eid)
-              && request.resource.data.isentoManual == resource.data.isentoManual);
+              && camposPermitidosDoDono()
+              && request.resource.data.isentoManual == resource.data.isentoManual
+              && request.resource.data.totalPago is number
+              && request.resource.data.totalPago >= resource.data.totalPago);
 
         allow delete: if isAdmin() && edicaoNaoEncerrada(eid);
       }
@@ -175,7 +226,7 @@ service cloud.firestore {
         allow read: if isSignedIn() && resource.data.uid == request.auth.uid;
         allow create: if isSignedIn()
           && request.resource.data.uid == request.auth.uid
-          && edicaoNaoEncerrada(eid)
+          && edicaoAberta(eid)
           && request.resource.data.valor is number
           && request.resource.data.valor > 0;
         allow update, delete: if false; // histórico de pagamento não é editável nem removível

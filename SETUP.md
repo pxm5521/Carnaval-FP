@@ -74,7 +74,7 @@ pelos valores reais copiados do Firebase. Salve o arquivo. (Essas chaves não s�
 ## Parte 2 — Colocar o código no GitHub
 
 1. Crie um repositório novo em [github.com/new](https://github.com/new) — por exemplo `carnaval-fogo-e-paixao`. Pode ser privado ou público.
-2. Suba todos os arquivos desta pasta (`index.html`, `app.js`, `styles.css`, `firebase-init.js`, `firestore.rules`, e opcionalmente `test.html` e `firebase-init.mock.js`) para o repositório. O jeito mais simples é pela própria interface do GitHub: **"Add file" → "Upload files"**, arrastar todos os arquivos, e clicar em **"Commit changes"**.
+2. Suba todos os arquivos desta pasta (`index.html`, `app.js`, `styles.css`, `firebase-init.js`, `firestore.rules`, `_headers`, `_redirects`, e opcionalmente `test.html` e `firebase-init.mock.js`) para o repositório. Os arquivos `_headers` e `_redirects` começam com underline e são lidos pelo Netlify — se a interface do GitHub esconder eles, arraste assim mesmo, que sobem. O jeito mais simples é pela própria interface do GitHub: **"Add file" → "Upload files"**, arrastar todos os arquivos, e clicar em **"Commit changes"**.
 
 ---
 
@@ -91,6 +91,21 @@ pelos valores reais copiados do Firebase. Salve o arquivo. (Essas chaves não s�
 Em cerca de 1 minuto o Netlify gera um endereço tipo `https://algum-nome-aleatorio.netlify.app`. Esse já é o site funcionando. Se quiser, em **"Site settings" → "Change site name"** dá para trocar por um nome mais bonito (ex: `carnaval-fogo-e-paixao.netlify.app`), ou conectar um domínio próprio em **"Domain settings"**.
 
 Qualquer alteração futura no código: basta subir os arquivos atualizados no GitHub, e o Netlify publica a nova versão automaticamente.
+
+### Os arquivos `_headers` e `_redirects`
+
+Os dois vão na raiz do repositório, junto com o `index.html`, e o Netlify os aplica sozinho — não precisa configurar nada no painel dele.
+
+O `_headers` liga proteções do navegador: impede que o site seja colocado dentro de um iframe de outro site (golpe de clique falso), restringe de onde os scripts podem vir, e desliga permissões que o site não usa. O `_redirects` esconde do público os arquivos que só servem para desenvolvimento (`test.html`, `run-tests.mjs`, `firebase-init.mock.js`, `firestore.rules`, `SETUP.md`).
+
+> **Se o site parar de funcionar logo depois de subir o `_headers`**, é quase certo que a política de segurança bloqueou alguma chamada. Apagar o arquivo e subir de novo desfaz na hora — e vale me avisar qual erro apareceu no console do navegador (F12 → Console), porque a linha a ajustar aparece lá com o nome do endereço bloqueado.
+
+### Opcional, mas recomendado: hospedar a biblioteca do Excel junto com o site
+
+O botão "Baixar Excel (.xlsx)" usa uma biblioteca chamada SheetJS. Por padrão ela vem de um servidor de terceiros (cdnjs) no momento do clique — e um script de terceiro roda com todos os privilégios da página, na sessão de quem clicou, que é sempre um organizador. Se aquele servidor for comprometido, a conta de organizador vai junto.
+
+Para tirar esse terceiro do caminho: baixe uma vez o arquivo `https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.20.3/xlsx.full.min.js`, crie uma pasta `vendor` no repositório e coloque o arquivo lá como `vendor/xlsx.full.min.js`. O site tenta essa cópia primeiro e só recorre ao servidor externo se ela não existir — então funciona antes e depois, e passa a não depender de ninguém quando você fizer.
+
 
 ---
 
@@ -180,7 +195,7 @@ Se você tiver o Node.js instalado, também há um script de teste automatizado 
 
 **E se eu esquecer minha senha?** Na tela de login há um link "Esqueci minha senha", que envia um e-mail de redefinição pelo próprio Firebase.
 
-**Um batuqueiro pode adulterar o próprio valor pago?** Tecnicamente sim, e é uma limitação conhecida de um site sem servidor próprio. O total pago fica no cadastro da pessoa naquele carnaval, e as regras precisam deixar ela mesma gravar ali (é o que acontece quando registra um pagamento). Alguém com conhecimento técnico conseguiria escrever um valor diferente por fora do site. O comprovante de cada pagamento, esse sim, é registro separado e não pode ser alterado nem apagado por ninguém. Vale a ressalva honesta: como as regras não deixam nem o admin ler o comprovante alheio (para preservar a chave Pix de cada um), na prática **você não tem como conferir essa divergência pelo site** — só abrindo a coleção `pagamentos` da edição no Firebase Console, onde o admin do projeto enxerga tudo. Para o tamanho e a confiança de uma bateria isso é aceitável; eliminar de vez exigiria um servidor próprio (plano pago do Firebase).
+**Um batuqueiro pode adulterar o próprio valor pago?** Tecnicamente sim, e é uma limitação conhecida de um site sem servidor próprio. As regras foram apertadas para que o valor só possa **aumentar** (ninguém apaga um pagamento já lançado escrevendo um número menor), mas quem souber consultar o banco ainda consegue se declarar pago sem ter pago. O total pago fica no cadastro da pessoa naquele carnaval, e as regras precisam deixar ela mesma gravar ali (é o que acontece quando registra um pagamento). Alguém com conhecimento técnico conseguiria escrever um valor diferente por fora do site. O comprovante de cada pagamento, esse sim, é registro separado e não pode ser alterado nem apagado por ninguém. Vale a ressalva honesta: como as regras não deixam nem o admin ler o comprovante alheio (para preservar a chave Pix de cada um), na prática **você não tem como conferir essa divergência pelo site** — só abrindo a coleção `pagamentos` da edição no Firebase Console, onde o admin do projeto enxerga tudo. Para o tamanho e a confiança de uma bateria isso é aceitável; eliminar de vez exigiria um servidor próprio (plano pago do Firebase).
 
 **Apaguei alguém de um carnaval por engano; e os pagamentos dela?** Os comprovantes ficam guardados (por segurança, pagamento não é apagável). Se a pessoa se inscrever de novo naquele mesmo carnaval, o total pago recomeça do zero enquanto a lista de comprovantes antigos continua aparecendo para ela — nesse caso, registre o acerto ou peça para conferirem juntos, porque o site não recalcula sozinho.
 
