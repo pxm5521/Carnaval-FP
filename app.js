@@ -628,7 +628,19 @@ function posicaoInfo(nome) { return posicoesCache.find(p => p.nome === nome); }
 /* Quem não vai tocar no carnaval não paga anuidade — é a regra da bateria.
    Isso vale junto com as outras duas isenções: por função (Voz, Mestre, Apoio...)
    e a individual, concedida caso a caso pela organização. */
-function naoVaiTocar(u) { return u && u.vaiTocar === "Não"; }
+/* Normaliza a resposta de "vai tocar". O valor vem do banco e nem sempre foi
+   digitado por este site: a importação do formato antigo traz o que estivesse
+   lá ("NÃO", "nao", " Não "), e uma comparação exata com "Não" deixava essas
+   pessoas escapando dos filtros — voltando a aparecer na lista de presença,
+   nos naipes e na conta de camisas como se fossem desfilar. */
+function respostaVaiTocar(u) {
+  const bruto = String((u && u.vaiTocar) || "").trim().toLowerCase()
+    .normalize("NFD").replace(/[\u0300-\u036f]/g, "");   // tira acento
+  if (bruto === "nao" || bruto === "n") return "Não";
+  if (bruto === "sim" || bruto === "s") return "Sim";
+  return "";
+}
+function naoVaiTocar(u) { return respostaVaiTocar(u) === "Não"; }
 function isIsento(u) {
   const info = posicaoInfo(u.posicao);
   return naoVaiTocar(u) || !!(info && info.isenta) || !!u.isentoManual;
@@ -953,7 +965,7 @@ function rodape() {
       <div class="rodape-blocos">
       <p><b>O que é guardado:</b> nome, apelido, e-mail, celular e data de nascimento; e, a cada carnaval, sua posição, tamanho de camisa, se vai tocar, presença nos ensaios e os pagamentos da anuidade que você registrar.</p>
       <p><b>Para que serve:</b> só para organizar a bateria — montar os naipes, encomendar camisas, controlar a anuidade e acompanhar os ensaios. Nada é usado para outra finalidade, vendido ou enviado para fora do bloco.</p>
-      <p><b>Quem enxerga o quê:</b> quem tem cadastro no site vê o nome, o apelido, a posição e a presença dos outros nos ensaios — é o que faz a lista de ensaio funcionar. Seu <b>celular e sua data de nascimento</b> só são vistos por você e pela organização. Seus <b>pagamentos</b> (valor, data e chave Pix) só por você: nem a organização vê o detalhe, só o total já pago.</p>
+      <p><b>Quem enxerga o quê:</b> quem tem cadastro no site vê o nome, o apelido, a posição e a presença dos outros nos ensaios — é o que faz a lista de ensaio funcionar. Seu <b>celular e sua data de nascimento</b> só são vistos por você e pela organização. Seus <b>pagamentos</b> (valor, data e o nome de quem pagou) só por você: nem a organização vê o detalhe, só o total já pago.</p>
       <p><b>Seus direitos:</b> você pode ver e corrigir seus dados a qualquer momento em "Meus dados", e pode pedir a exclusão do seu cadastro falando com a organização do bloco. Os dados ficam guardados enquanto você fizer parte da bateria.</p>
       <p class="rodape-fim">Carnaval do Fogo e Paixão · site de uso interno da bateria</p>
       </div>
@@ -1177,8 +1189,8 @@ function viewConfirmarInscricao(u) {
         <div class="field">
           <label>Vai tocar no ${esc(edicaoLabel(ed))}?</label>
           <div class="radio-row" id="insc-radio-vaitocar">
-            <div class="radio-pill ${d.vaiTocar === "Sim" ? "active" : ""}" data-val="Sim">Sim</div>
-            <div class="radio-pill ${d.vaiTocar === "Não" ? "active" : ""}" data-val="Não">Não</div>
+            <div class="radio-pill ${respostaVaiTocar(d) === "Sim" ? "active" : ""}" data-val="Sim">Sim</div>
+            <div class="radio-pill ${respostaVaiTocar(d) === "Não" ? "active" : ""}" data-val="Não">Não</div>
           </div>
         </div>
         <div class="field">
@@ -1349,7 +1361,7 @@ function renderPaymentBoxBody(u, editavel = true) {
       ${myPagamentos.map(p => `
         <div class="pay-row">
           <span>${dateBR(p.data)}</span>
-          <span class="muted-sm">Pix: ${esc(p.pix) || "—"}</span>
+          <span class="muted-sm">Pago por: ${esc(p.pix) || "—"}</span>
           <span class="pv">${currency(p.valor)}</span>
         </div>`).join("")}
       <div class="pay-total"><span>Total registrado</span><span class="amt">${currency(totalPago(u))}</span></div>
@@ -1393,7 +1405,7 @@ function renderPaymentBoxBody(u, editavel = true) {
       ${myPagamentos.length === 0 ? `<div class="hint">Nenhum pagamento registrado ainda.</div>` : myPagamentos.map(p => `
         <div class="pay-row">
           <span>📅 ${dateBR(p.data)}</span>
-          <span class="muted-sm">Pix: ${esc(p.pix) || "—"}</span>
+          <span class="muted-sm">Pago por: ${esc(p.pix) || "—"}</span>
           <span class="pv">${currency(p.valor)}</span>
         </div>`).join("")}
     </div>
@@ -1418,8 +1430,9 @@ function renderPaymentBoxBody(u, editavel = true) {
       <div class="grid-3">
         <div class="field"><label>Data</label><input type="date" id="pay-data"></div>
         <div class="field"><label>Valor (R$)</label><input type="number" id="pay-valor" min="1" step="0.01"></div>
-        <div class="field"><label>Chave / comprovante Pix</label><input type="text" id="pay-pix" placeholder="ex: nome@pix"></div>
+        <div class="field"><label>Nome de quem fez o Pix</label><input type="text" id="pay-pix" placeholder="${esc(fullName(u))}"></div>
       </div>
+      <p class="hint" style="margin:-6px 0 10px;">É o nome do titular da conta de onde saiu o Pix, como aparece no extrato. Se você mesmo pagou, é o seu nome. Se quem pagou foi outra pessoa (marido, esposa, pai, mãe, um amigo), escreva o nome dela — é assim que a organização acha o seu pagamento no extrato do bloco. Deixando em branco, entra o seu nome.</p>
       <button class="btn-primary btn-sm" id="btn-save-pay">Salvar pagamento</button>
     </div>` : ""}`;
 }
@@ -1456,8 +1469,8 @@ function renderEditMyData(u) {
       <div class="field">
         <label>Vai tocar no ${esc(edicaoLabel(ed))}?</label>
         <div class="radio-row" id="edit-radio-vaitocar">
-          <div class="radio-pill ${u.vaiTocar === "Sim" ? "active" : ""}" data-val="Sim">Sim</div>
-          <div class="radio-pill ${u.vaiTocar === "Não" ? "active" : ""}" data-val="Não">Não</div>
+          <div class="radio-pill ${respostaVaiTocar(u) === "Sim" ? "active" : ""}" data-val="Sim">Sim</div>
+          <div class="radio-pill ${respostaVaiTocar(u) === "Não" ? "active" : ""}" data-val="Não">Não</div>
         </div>
       </div>
       <div class="field">
@@ -1634,7 +1647,7 @@ function statusPagamentoHistorico(insc, posicoes, precos) {
   // As TRÊS origens de isenção, na mesma ordem de isIsento(): não vai tocar,
   // função isenta e isenção individual. Sem a primeira, o histórico cobrava
   // anuidade de quem tinha avisado que não ia desfilar.
-  if (insc.vaiTocar === "Não" || (info && info.isenta) || insc.isentoManual) return "Isenta";
+  if (respostaVaiTocar(insc) === "Não" || (info && info.isenta) || insc.isentoManual) return "Isenta";
   if (!planoValido(insc.formaPagamento) || !precos) return "Sem plano";
   const cfg = precos[insc.formaPagamento];
   // valor 0 não é "quitado": é anuidade que ninguém configurou ainda.
@@ -1832,7 +1845,7 @@ function viewAdmin() {
   const pagantes = todos.filter(p => !isIsento(p));
   const isentos = todos.filter(isIsento);
   const totalInscritos = todos.length;
-  const confirmados = todos.filter(p => p.vaiTocar === "Sim").length;
+  const confirmados = todos.filter(p => respostaVaiTocar(p) === "Sim").length;
   // O arrecadado precisa contar TODO MUNDO: quem pagou e depois avisou que não
   // vai tocar continua com dinheiro no caixa, à espera de devolução ou crédito.
   const arrecadado = batuqueirosDaEdicao().reduce((s, p) => s + totalPago(p), 0);
@@ -2164,7 +2177,7 @@ function viewAdminHistorico() {
 
   const tocou = (uid, edId) => {
     const reg = dados.porPessoa[uid] && dados.porPessoa[uid][edId];
-    return !!(reg && reg.vaiTocar === "Sim");
+    return !!(reg && respostaVaiTocar(reg) === "Sim");
   };
 
   return `
@@ -2208,7 +2221,7 @@ function viewAdminHistorico() {
                 ${eds.map(e => {
                   const reg = dados.porPessoa[p.id] && dados.porPessoa[p.id][e.id];
                   if (!reg) return `<td><span class="hint">—</span></td>`;
-                  if (reg.vaiTocar === "Sim") return `<td><span class="badge badge-good">${esc(reg.posicao) || "Tocou"}</span></td>`;
+                  if (respostaVaiTocar(reg) === "Sim") return `<td><span class="badge badge-good">${esc(reg.posicao) || "Tocou"}</span></td>`;
                   return `<td><span class="badge badge-warning">Não tocou</span></td>`;
                 }).join("")}
                 <td class="hist-total-pessoa">${total}</td>
@@ -2687,9 +2700,9 @@ function renderAdminEditUserForm(p, editavel = true) {
       <div class="field">
         <label>Vai tocar neste carnaval?</label>
         <select id="ae-vaitocar-${p.id}" ${dis}>
-          <option value="" ${p.vaiTocar !== "Sim" && p.vaiTocar !== "Não" ? "selected" : ""}>Ainda não respondeu</option>
-          <option value="Sim" ${p.vaiTocar === "Sim" ? "selected" : ""}>Sim</option>
-          <option value="Não" ${p.vaiTocar === "Não" ? "selected" : ""}>Não</option>
+          <option value="" ${!respostaVaiTocar(p) ? "selected" : ""}>Ainda não respondeu</option>
+          <option value="Sim" ${respostaVaiTocar(p) === "Sim" ? "selected" : ""}>Sim</option>
+          <option value="Não" ${respostaVaiTocar(p) === "Não" ? "selected" : ""}>Não</option>
         </select>
         <p class="hint">Quem não vai tocar sai da presença, dos naipes e da encomenda de camisas, e fica isento da anuidade.</p>
       </div>
@@ -2885,7 +2898,7 @@ async function migrarDoFormatoAntigo() {
         celular: v.celular || "", dataNascimento: v.dataNascimento || "",
       }]);
       escritas.push([P.inscricao(eid, d.id), {
-        vaiTocar: v.vaiTocar || "", posicao: v.posicao || "", posicaoOutro: v.posicaoOutro || "",
+        vaiTocar: respostaVaiTocar(v), posicao: v.posicao || "", posicaoOutro: v.posicaoOutro || "",
         camisa: v.camisa || "", isentoManual: !!v.isentoManual,
         formaPagamento: v.formaPagamento || null, totalPago: v.totalPago || 0,
         inscritoEm: serverTimestamp(),
@@ -3260,8 +3273,15 @@ function wireEvents() {
     render();
   });
   on("#btn-save-pay", "click", async (ev) => {
-    const data = $("#pay-data").value, valor = parseFloat($("#pay-valor").value), pix = $("#pay-pix").value.trim();
+    const data = $("#pay-data").value, valor = parseFloat($("#pay-valor").value);
+    // O campo guarda o NOME de quem fez o Pix (nem sempre é a própria pessoa —
+    // muita gente paga da conta do cônjuge ou de um parente). É por esse nome
+    // que a organização acha o lançamento no extrato do bloco, então vazio não
+    // serve: sem ele o pagamento fica sem como ser conferido. A chave do campo
+    // no banco continua "pix" para não invalidar os registros que já existem.
+    const pix = $("#pay-pix").value.trim() || fullName(perfilMesclado());
     if (!data || !valor || valor <= 0) { alert("Preencha data e valor do pagamento."); return; }
+    if (!pix) { alert("Diga o nome de quem fez o Pix — é por ele que a organização acha o pagamento no extrato."); return; }
     // Sem esta trava, dois toques rápidos (fácil no celular) gravavam DOIS
     // comprovantes e somavam o valor duas vezes no total. As regras proíbem
     // apagar ou editar pagamento, então o estrago só sairia no console do

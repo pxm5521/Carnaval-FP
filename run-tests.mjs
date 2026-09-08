@@ -605,6 +605,7 @@ async function main() {
   await page.waitForTimeout(400);
   html = await appHtml(page);
   ok('Pagamento de R$115 registrado na lista', html.includes('ana@pix'));
+  ok('A lista identifica quem fez o Pix, não uma chave', html.includes('Pago por:'));
   // A forma de pagamento trava no primeiro pagamento: trocar depois mudaria o
   // valor devido deixando o que já foi pago sem referência.
   ok('O botão de trocar a forma de pagamento some depois do 1º pagamento', !html.includes('btn-change-plan'));
@@ -652,6 +653,35 @@ async function main() {
   await page.waitForTimeout(300);
   html = await appHtml(page);
   ok('E o admin consegue devolver o plano 2x (volta para 50%)', html.includes('50%'));
+
+  console.log('\n== 16a2. Deixando em branco quem pagou, entra o nome da própria pessoa ==');
+  // O campo existe para o caso de o Pix sair da conta de outra pessoa. Quem
+  // pagou da própria conta não deveria ter que digitar o próprio nome.
+  await page.click('#btn-toggle-addpay');
+  await page.waitForTimeout(200);
+  const sugestao = await page.getAttribute('#pay-pix', 'placeholder');
+  ok('O campo já sugere o nome da própria pessoa', sugestao === 'Ana Silva');
+  await page.fill('#pay-data', hoje.toISOString().slice(0, 10));
+  await page.fill('#pay-valor', '5');
+  await page.click('#btn-save-pay');
+  await page.waitForTimeout(500);
+  const semNome = await page.evaluate(() => {
+    const uid = window.__mock.uidPorEmail('ana@example.com');
+    const pags = Object.values(window.__mock.dumpStore()['edicoes/2027-1/pagamentos']).filter(p => p.uid === uid);
+    return pags[pags.length - 1];
+  });
+  ok('Em branco, o pagamento fica no nome de quem registrou', semNome.pix === 'Ana Silva');
+  // desfaz o lançamento de teste (pelo mock, já que o site não apaga pagamento)
+  // para as contas do restante da suíte continuarem valendo
+  await page.evaluate(async () => {
+    const fb = await import('./firebase-init.mock.js');
+    const uid = window.__mock.uidPorEmail('ana@example.com');
+    const loja = window.__mock.dumpStore()['edicoes/2027-1/pagamentos'];
+    const id = Object.keys(loja).filter(k => loja[k].uid === uid && loja[k].valor === 5)[0];
+    if (id) await fb.deleteDoc(fb.doc(fb.db, 'edicoes', '2027-1', 'pagamentos', id));
+    await fb.updateDoc(fb.doc(fb.db, 'edicoes', '2027-1', 'inscricoes', uid), { totalPago: 115 });
+  });
+  await page.waitForTimeout(400);
 
   console.log('\n== 16b. Chave Pix configurada pelo admin aparece para quem vai pagar ==');
   await logout(page);
@@ -981,6 +1011,30 @@ async function main() {
   await page.waitForTimeout(200);
   await page.click('#btn-back-batuqueiro');
   await page.waitForTimeout(300);
+
+  console.log('\n== 16h2. "Não" escrito de outro jeito ainda tira a pessoa das listas ==');
+  // Os dados de quem já usava o site vieram de uma importação, onde o "vai
+  // tocar" pode ter sido gravado como "NÃO", "nao" ou com espaço sobrando. Uma
+  // comparação exata com "Não" deixava essas pessoas na lista de presença e na
+  // conta de camisas como se fossem desfilar.
+  for (const variante of ['NÃO', 'nao', ' Não ', 'NAO']) {
+    await page.evaluate(async (valor) => {
+      const fb = await import('./firebase-init.mock.js');
+      const uid = window.__mock.uidPorEmail('duda@example.com');
+      await fb.updateDoc(fb.doc(fb.db, 'edicoes', '2027-1', 'inscricoes', uid), { vaiTocar: valor });
+    }, variante);
+    await page.waitForTimeout(350);
+    html = await appHtml(page);
+    ok(`Escrito como "${variante}", ela sai da tabela de presença`, !html.includes(`data-uid="${uids.duda}"`));
+  }
+  await page.evaluate(async () => {
+    const fb = await import('./firebase-init.mock.js');
+    const uid = window.__mock.uidPorEmail('duda@example.com');
+    await fb.updateDoc(fb.doc(fb.db, 'edicoes', '2027-1', 'inscricoes', uid), { vaiTocar: 'Sim' });
+  });
+  await page.waitForTimeout(350);
+  html = await appHtml(page);
+  ok('E com "Sim" ela volta para a tabela', html.includes(`data-uid="${uids.duda}"`));
 
   console.log('\n== 16i. Dados forjados no banco não viram privilégio nem código na tela ==');
   // Estes dois testes cobrem ataques reais de quem tem cadastro no site e sabe
