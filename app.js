@@ -117,7 +117,11 @@ let edicaoListenersFor = null;  // id da edição para a qual os listeners acima
    a edição esteja vazia de verdade. Confundir as duas coisas fazia a caixa
    "carregar padrões" piscar a cada troca de edição; um clique nesse instante
    duplicava as 17 posições e sobrescrevia os valores da anuidade. */
-let edicaoCarregou = { posicoes: false, precos: false, musicas: false };
+let edicaoCarregou = { posicoes: false, precos: false, musicas: false, inscricoes: false };
+/* true assim que o listener de /edicoes respondeu pela primeira vez. Antes disso
+   não dá para saber se existe carnaval em andamento — e afirmar que não existe
+   (ou que a pessoa não está inscrita) é pior do que dizer "carregando". */
+let edicoesLoaded = false;
 const pagamentosMigradosPara = new Set(); // edições cuja migração de pagamentos próprios já foi tentada
 
 const session = {
@@ -228,7 +232,7 @@ onAuthStateChanged(auth, (user) => {
 
   if (!user) {
     myPessoa = null; pessoaLoaded = false; myLegado = null; legadoConsultado = false;
-    pessoasCache = []; edicoesCache = []; contatosCache = {};
+    pessoasCache = []; edicoesCache = []; contatosCache = {}; edicoesLoaded = false;
     limparCachesDaEdicao();
     if (session.view && !["landing", "login", "register1"].includes(session.view)) session.view = "landing";
     render();
@@ -383,6 +387,7 @@ function setupUserListeners(uid) {
 
   unsub.edicoes = onSnapshot(P.edicoes(), snap => {
     edicoesCache = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    edicoesLoaded = true;
     ensureEdicaoListeners();
     renderExterno();
   }, onErr("edições do carnaval"));
@@ -412,11 +417,12 @@ function ensureEdicaoListeners() {
   // cópia entre edições preserva os ids dos documentos.
   session.posicoesDraft = null; session.musicasDraft = null;
   session.ensaioMusicasAberto = null; session.ensaioMusicasDraft = null;
-  edicaoCarregou = { posicoes: false, precos: false, musicas: false };
+  edicaoCarregou = { posicoes: false, precos: false, musicas: false, inscricoes: false };
   if (!eid || !fbUser) return;
 
   unsubEd.inscricoes = onSnapshot(P.inscricoes(eid), snap => {
     inscricoesCache = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    edicaoCarregou.inscricoes = true;
     // Se esta edição veio de uma migração do formato antigo, cada pessoa leva os
     // próprios comprovantes de pagamento na primeira vez que entra (as regras não
     // deixam o admin ler os pagamentos alheios, então isso não pôde ir na migração).
@@ -940,7 +946,14 @@ function render() {
       else if (session.view === "admin-posicoes") html = viewAdminPosicoes();
       else if (session.view === "admin-musicas") html = viewAdminMusicas();
       else if (session.view === "admin-pessoas") html = viewAdminPessoas();
+      // Estas duas esperas existem para NÃO afirmar coisa errada enquanto os
+      // dados ainda estão chegando. Sem elas, quem já respondeu tudo via, por
+      // cerca de um segundo a cada login, a tela de confirmar inscrição — e um
+      // clique ali dentro naquele instante reescrevia a inscrição por cima,
+      // zerando forma de pagamento e valor já pago.
+      else if (!edicoesLoaded) html = viewLoading("Carregando o carnaval...");
       else if (!edicaoCtx()) html = viewSemEdicao(u);
+      else if (!edicaoCarregou.inscricoes) html = viewLoading("Carregando sua inscrição...");
       else if (!estouInscrito()) { prepararDraftInscricao(); html = viewConfirmarInscricao(u); }
       else html = viewBatuqueiro();
     }
@@ -3073,18 +3086,31 @@ function wireEvents() {
     if (!vaiTocar || !camisa) { session.errors.inscricao = "Preencha se vai tocar neste carnaval e o tamanho da camisa."; render(); return; }
     session.busy.inscricao = true; render();
     try {
-      await setDoc(P.inscricao(ed.id, fbUser.uid), {
+      const dadosDoAno = {
         vaiTocar, posicao: $("#insc-posicao").value,
         posicaoOutro: $("#insc-posicao-outro") ? $("#insc-posicao-outro").value.trim() : "",
-        camisa, isentoManual: false, formaPagamento: null, totalPago: 0,
-        inscritoEm: serverTimestamp(),
-      });
+        camisa,
+      };
+      // Se a inscrição JÁ existe, este formulário só pode atualizar os dados do
+      // ano — nunca reescrever o documento inteiro. Um setDoc completo zeraria
+      // forma de pagamento e valor pago de quem já tinha pago, e essa tela chega
+      // a aparecer por um instante durante o carregamento: bastava um clique
+      // apressado ali para apagar o pagamento da pessoa.
+      const jaEstavaInscrito = estouInscrito();
+      if (jaEstavaInscrito) {
+        await updateDoc(P.inscricao(ed.id, fbUser.uid), dadosDoAno);
+      } else {
+        await setDoc(P.inscricao(ed.id, fbUser.uid), {
+          ...dadosDoAno, isentoManual: false, formaPagamento: null, totalPago: 0,
+          inscritoEm: serverTimestamp(),
+        });
+      }
       // Se a pessoa já tinha comprovantes nesta edição (foi tirada e voltou, ou
       // o admin apagou a inscrição por engano), o total precisa voltar junto —
       // senão ela é cobrada de novo com os próprios comprovantes na tela.
       // A inscrição nasce com 0 porque as regras exigem isso; a soma entra numa
       // segunda escrita, que as regras aceitam por só aumentar o total.
-      const jaPago = myPagamentos.reduce((soma, p) => soma + (p.valor || 0), 0);
+      const jaPago = jaEstavaInscrito ? 0 : myPagamentos.reduce((soma, p) => soma + (p.valor || 0), 0);
       if (jaPago > 0) {
         try { await updateDoc(P.inscricao(ed.id, fbUser.uid), { totalPago: jaPago }); }
         catch (err) { console.warn("total já pago não pôde ser recomposto:", err); }

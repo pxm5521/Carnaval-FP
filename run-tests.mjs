@@ -1118,6 +1118,33 @@ async function main() {
   await page.click('#btn-back-batuqueiro');
   await page.waitForTimeout(300);
 
+  console.log('\n== 16k. Entrar no site não pisca a tela de confirmar inscrição ==');
+  // Quem já respondeu tudo via, por cerca de um segundo a cada login, a tela de
+  // confirmar inscrição, porque o site decidia "não está inscrito" antes de as
+  // inscrições terem chegado. Além de confuso, um clique ali dentro naquele
+  // instante reescrevia a inscrição por cima e zerava o pagamento.
+  await logout(page);
+  await page.evaluate(() => {
+    window.__viuFormInscricao = false;
+    window.__telas = [];
+    const alvo = document.getElementById('app');
+    new MutationObserver(() => {
+      if (document.getElementById('form-inscricao')) window.__viuFormInscricao = true;
+      const h = alvo.innerHTML;
+      const tela = document.getElementById('form-inscricao') ? 'inscricao'
+        : h.includes('Carregando') ? 'carregando'
+        : h.includes('Presença em ensaios') ? 'batuqueiro' : 'outra';
+      if (window.__telas[window.__telas.length - 1] !== tela) window.__telas.push(tela);
+    }).observe(alvo, { childList: true, subtree: true });
+  });
+  await login(page, 'ana@example.com');
+  await page.waitForTimeout(900);
+  const piscou = await page.evaluate(() => window.__viuFormInscricao);
+  const telas = await page.evaluate(() => window.__telas);
+  ok('A tela de confirmar inscrição não aparece para quem já está inscrito', piscou === false);
+  ok('Enquanto os dados chegam, o site diz que está carregando', telas.includes('carregando'));
+  ok('E termina na área do batuqueiro', telas[telas.length - 1] === 'batuqueiro');
+
   console.log('\n== 17. Presença: Ana (admin) marca presença de Duda ==');
   await page.waitForTimeout(150);
   html = await appHtml(page);
