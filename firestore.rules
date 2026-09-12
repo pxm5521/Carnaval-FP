@@ -14,10 +14,10 @@ rules_version = '2';
 // É um grupo pequeno e conhecido (a bateria). Qualquer pessoa logada pode VER o
 // nome/posição/presença de todos, mas só pode MARCAR presença quem tem
 // adminAccess ou presencaAccess. Os dados pessoais mais sensíveis são restritos
-// ao próprio dono (e à organização): contato em /contatos e os pagamentos
-// individuais — pix, data e valor — em /edicoes/{eid}/pagamentos, estes últimos
-// nem o admin lê, ele usa só o total somado. Ações administrativas exigem
-// adminAccess = true.
+// ao próprio dono E À ORGANIZAÇÃO: o contato em /contatos e os pagamentos
+// individuais em /edicoes/{eid}/pagamentos. Um batuqueiro comum não vê nem o
+// contato nem o pagamento de ninguém além de si mesmo. Ações administrativas
+// exigem adminAccess = true.
 //
 // EDIÇÃO ENCERRADA É IMUTÁVEL
 // Uma edição com status "encerrada" não aceita mais nenhuma escrita nas suas
@@ -187,16 +187,16 @@ service cloud.firestore {
         // ao registrar um pagamento), mas a isenção só o admin concede.
         //
         // O total pago é gravado pelo cliente porque não existe servidor próprio
-        // aqui — é a limitação conhecida, documentada no SETUP. O que dá para
-        // fazer nas regras é impedir que ele DIMINUA: assim ninguém apaga um
-        // pagamento já lançado, e o valor só cresce, na mesma direção dos
-        // comprovantes (que são imutáveis).
+        // aqui — é a limitação conhecida, documentada no SETUP. Ele precisa poder
+        // cair, porque o dono pode remover um lançamento que fez errado; exigir
+        // que só crescesse prendia a pessoa ao próprio erro sem proteger nada
+        // (declarar que pagou MENOS nunca é vantagem para quem declara).
         allow update: if (isAdmin() && edicaoNaoEncerrada(eid))
           || (isOwner(uid) && edicaoAberta(eid)
               && camposPermitidosDoDono()
               && request.resource.data.isentoManual == resource.data.isentoManual
               && request.resource.data.totalPago is number
-              && request.resource.data.totalPago >= resource.data.totalPago);
+              && request.resource.data.totalPago >= 0);
 
         allow delete: if isAdmin() && edicaoNaoEncerrada(eid);
       }
@@ -223,13 +223,34 @@ service cloud.firestore {
       // só o próprio dono lê os detalhes; o admin usa o total já somado na
       // inscrição para o relatório, então não precisa ler aqui.
       match /pagamentos/{id} {
-        allow read: if isSignedIn() && resource.data.uid == request.auth.uid;
-        allow create: if isSignedIn()
-          && request.resource.data.uid == request.auth.uid
-          && edicaoAberta(eid)
+        // A organização lê os comprovantes de todo mundo. Não era assim antes, e
+        // a mudança é deliberada: o comprovante guarda o NOME de quem fez o Pix,
+        // que existe justamente para o organizador achar o lançamento no extrato
+        // do bloco. Sem leitura, o campo não servia para nada, ninguém conseguia
+        // conferir uma divergência entre o total e os comprovantes, e um erro de
+        // digitação só podia ser desfeito pela própria pessoa. O rodapé do site
+        // informa os batuqueiros disso.
+        allow read: if isSignedIn() && (resource.data.uid == request.auth.uid || isAdmin());
+        allow create: if ((isSignedIn() && request.resource.data.uid == request.auth.uid && edicaoAberta(eid))
+                          || (isAdmin() && edicaoNaoEncerrada(eid)))
           && request.resource.data.valor is number
           && request.resource.data.valor > 0;
-        allow update, delete: if false; // histórico de pagamento não é editável nem removível
+        // O DONO não edita, só remove e lança de novo — assim um valor nunca
+        // muda por baixo no registro dele. Remover não abre brecha: um
+        // pagamento é uma declaração a FAVOR de quem o registrou, então apagá-lo
+        // só trabalha contra ele.
+        // A ORGANIZAÇÃO pode corrigir e remover, porque é quem confere contra o
+        // extrato do bloco e responde pela conta. A correção não pode trocar o
+        // dono do lançamento nem zerar o valor.
+        allow update: if isAdmin()
+          && edicaoNaoEncerrada(eid)
+          && request.resource.data.uid == resource.data.uid
+          && request.resource.data.valor is number
+          && request.resource.data.valor > 0;
+        allow delete: if (isAdmin() && edicaoNaoEncerrada(eid))
+          || (isSignedIn()
+              && resource.data.uid == request.auth.uid
+              && edicaoAberta(eid));
       }
 
       // ---------- presença nos ensaios ----------

@@ -187,12 +187,13 @@ export async function getDoc(docRef) {
    A ÚNICA REGRA DE SEGURANÇA QUE O MOCK REPRODUZ
    ------------------------------------------------------------
    O mock não é um simulador de firestore.rules — os testes exercitam a lógica
-   do app, não o servidor. A exceção é /contatos, porque ali o cumprimento da
-   regra depende de o APP escolher o listener certo: um batuqueiro comum pode
-   ler o próprio contato (doc), mas listar a coleção inteira é privilégio de
-   admin. Se o app abrisse a listagem para todo mundo, contra o Firestore de
-   verdade isso viraria erro de permissão em produção — e nenhum outro teste
-   pegaria. Espelha match /contatos/{uid} em firestore.rules.
+   do app, não o servidor. As exceções são /contatos e /pagamentos, porque nesses
+   dois o cumprimento da regra depende de o APP fazer a leitura certa: um
+   batuqueiro comum lê o próprio contato (doc) mas não lista a coleção, e só
+   consegue ler pagamentos filtrando pelo próprio uid. Se o app pedisse mais que
+   isso, contra o Firestore de verdade viraria erro de permissão em produção — e
+   nenhum outro teste pegaria. Espelha match /contatos/{uid} e
+   match /edicoes/{eid}/pagamentos/{id} em firestore.rules.
    ------------------------------------------------------------ */
 let leiturasNegadas = 0;
 
@@ -206,11 +207,26 @@ function ehAdminNoMock() {
 }
 
 function podeLer(ref) {
-  if (ref.name !== "contatos") return true;
-  if (ehAdminNoMock()) return true;
   const u = auth.currentUser;
-  if (ref.__type === "doc") return !!u && ref.id === u.uid;
-  return false; // listar /contatos inteira exige admin
+
+  // /contatos: cada um lê o próprio; a listagem inteira exige admin.
+  if (ref.name === "contatos") {
+    if (ehAdminNoMock()) return true;
+    if (ref.__type === "doc") return !!u && ref.id === u.uid;
+    return false;
+  }
+
+  // /pagamentos (da edição ou a raiz do formato antigo): o admin lê os de
+  // todos; quem não é admin só consegue ler filtrando pelo próprio uid — é o
+  // que a regra do Firestore exige, e é o erro que apareceria em produção se o
+  // app esquecesse o filtro.
+  if (ref.name === "pagamentos" || ref.name.endsWith("/pagamentos")) {
+    if (ehAdminNoMock()) return true;
+    if (!u) return false;
+    return (ref.constraints || []).some(c => c.field === "uid" && c.op === "==" && c.value === u.uid);
+  }
+
+  return true;
 }
 
 function erroDePermissao(ref) {

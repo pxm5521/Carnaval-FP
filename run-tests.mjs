@@ -683,6 +683,144 @@ async function main() {
   });
   await page.waitForTimeout(400);
 
+  console.log('\n== 16a3. Lançamento errado pode ser removido pela própria pessoa ==');
+  // Caso real: a pessoa digitou o valor e a data errados e ficou presa ao erro —
+  // comprovante não é editável, e a organização nem consegue ler o comprovante
+  // alheio para corrigir. Remover é a saída, e não abre brecha: apagar só reduz
+  // o que a própria pessoa declarou ter pago.
+  const antesDeRemover = await page.evaluate(() => {
+    const uid = window.__mock.uidPorEmail('ana@example.com');
+    return window.__mock.dumpStore()['edicoes/2027-1/inscricoes'][uid].totalPago;
+  });
+  await page.click('#btn-toggle-addpay');
+  await page.waitForTimeout(200);
+  await page.fill('#pay-valor', '99');
+  await page.fill('#pay-pix', 'lançamento errado');
+  await page.click('#btn-save-pay');
+  await page.waitForTimeout(500);
+  html = await appHtml(page);
+  ok('O lançamento errado entra normalmente', html.includes('lançamento errado'));
+  const comErro = await page.evaluate(() => {
+    const uid = window.__mock.uidPorEmail('ana@example.com');
+    return window.__mock.dumpStore()['edicoes/2027-1/inscricoes'][uid].totalPago;
+  });
+  ok('E soma no total', comErro === antesDeRemover + 99);
+  const linhaErrada = await page.evaluate(() => {
+    const l = [...document.querySelectorAll('.pay-row')].find(x => x.textContent.includes('lançamento errado'));
+    return l ? l.querySelector('[data-remove-pay]').dataset.removePay : null;
+  });
+  ok('Cada lançamento tem botão de remover', !!linhaErrada);
+  await page.click(`[data-remove-pay="${linhaErrada}"]`);
+  await page.waitForTimeout(600);
+  html = await appHtml(page);
+  ok('Removido, some da lista', !html.includes('lançamento errado'));
+  const depoisDeRemover = await page.evaluate(() => {
+    const uid = window.__mock.uidPorEmail('ana@example.com');
+    return window.__mock.dumpStore()['edicoes/2027-1/inscricoes'][uid].totalPago;
+  });
+  ok('E o valor sai do total', depoisDeRemover === antesDeRemover);
+  const sobrouDoc = await page.evaluate(() => {
+    const uid = window.__mock.uidPorEmail('ana@example.com');
+    return Object.values(window.__mock.dumpStore()['edicoes/2027-1/pagamentos']).some(p => p.uid === uid && p.valor === 99);
+  });
+  ok('O comprovante some do banco junto', sobrouDoc === false);
+  // Removendo tudo, a pessoa volta a poder trocar a forma de pagamento.
+  ok('A data do pagamento já vem preenchida com hoje', (await page.evaluate(() => {
+    const el = document.getElementById('pay-data');
+    return el ? el.value : null;
+  })) !== '');
+
+  console.log('\n== 16a4. A organização enxerga e corrige os pagamentos de cada pessoa ==');
+  // O comprovante guarda o nome de quem fez o Pix justamente para a organização
+  // achar o lançamento no extrato do bloco. Antes ela não conseguia ler — o
+  // campo existia para ela e ficava invisível para ela.
+  await logout(page);
+  await login(page, 'bruno@example.com');
+  await page.click('#btn-goto-admin');
+  await page.click('#btn-goto-pessoas');
+  await page.waitForTimeout(300);
+  await page.click(`[data-edit-user="${uids.ana}"]`);
+  await page.waitForTimeout(250);
+  html = await appHtml(page);
+  ok('Os comprovantes não são carregados sem alguém pedir', html.includes('carregados só quando você pede'));
+  await page.click(`[data-ver-pagamentos="${uids.ana}"]`);
+  await page.waitForTimeout(500);
+  html = await appHtml(page);
+  ok('Pedindo, a organização vê o lançamento e quem pagou', html.includes('ana@pix'));
+
+  const idPag = await page.evaluate(() => document.querySelector('.pg-valor').dataset.pagId);
+  const totalAntes = await page.evaluate(() => {
+    const uid = window.__mock.uidPorEmail('ana@example.com');
+    return window.__mock.dumpStore()['edicoes/2027-1/inscricoes'][uid].totalPago;
+  });
+  await page.fill(`.pg-valor[data-pag-id="${idPag}"]`, '150');
+  await page.fill(`.pg-pagador[data-pag-id="${idPag}"]`, 'Marido da Ana');
+  await page.click(`[data-salvar-pag="${idPag}"]`);
+  await page.waitForTimeout(600);
+  const depoisDaCorrecao = await page.evaluate(() => {
+    const uid = window.__mock.uidPorEmail('ana@example.com');
+    const s = window.__mock.dumpStore();
+    const pag = Object.values(s['edicoes/2027-1/pagamentos']).find(p => p.uid === uid && p.pix === 'Marido da Ana');
+    return { total: s['edicoes/2027-1/inscricoes'][uid].totalPago, pag };
+  });
+  ok('A correção grava o novo valor e quem pagou', depoisDaCorrecao.pag && depoisDaCorrecao.pag.valor === 150);
+  ok('E o total anda pela diferença, não pela soma', depoisDaCorrecao.total === totalAntes + 35);
+  ok('O dono do lançamento continua o mesmo', depoisDaCorrecao.pag.uid === uids.ana);
+
+  // volta ao valor original, para o resto da suíte continuar batendo
+  await page.fill(`.pg-valor[data-pag-id="${idPag}"]`, '115');
+  await page.fill(`.pg-pagador[data-pag-id="${idPag}"]`, 'ana@pix');
+  await page.click(`[data-salvar-pag="${idPag}"]`);
+  await page.waitForTimeout(600);
+
+  // lançamento feito pela organização (dinheiro em mãos) e depois removido
+  await page.fill(`#novo-pag-valor-${uids.ana}`, '40');
+  await page.fill(`#novo-pag-pagador-${uids.ana}`, 'pagou em dinheiro no ensaio');
+  await page.click(`[data-add-pag="${uids.ana}"]`);
+  await page.waitForTimeout(600);
+  const comLancamento = await page.evaluate(() => {
+    const uid = window.__mock.uidPorEmail('ana@example.com');
+    const s = window.__mock.dumpStore();
+    return { total: s['edicoes/2027-1/inscricoes'][uid].totalPago, temPag: Object.values(s['edicoes/2027-1/pagamentos']).some(p => p.pix === 'pagou em dinheiro no ensaio') };
+  });
+  ok('A organização consegue lançar um pagamento pela pessoa', comLancamento.temPag);
+  ok('E o total sobe junto', comLancamento.total === totalAntes + 40);
+  const idNovo = await page.evaluate(() => {
+    const l = [...document.querySelectorAll('.pg-pagador')].find(i => i.value.includes('dinheiro'));
+    return l ? l.dataset.pagId : null;
+  });
+  await page.click(`[data-remover-pag="${idNovo}"]`);
+  await page.waitForTimeout(600);
+  const depoisDeRemover2 = await page.evaluate(() => {
+    const uid = window.__mock.uidPorEmail('ana@example.com');
+    return window.__mock.dumpStore()['edicoes/2027-1/inscricoes'][uid].totalPago;
+  });
+  ok('Removendo, o total volta ao que era', depoisDeRemover2 === totalAntes);
+
+  // divergência entre o total e os comprovantes (é o caso da importação antiga)
+  await page.evaluate(async () => {
+    const fb = await import('./firebase-init.mock.js');
+    const uid = window.__mock.uidPorEmail('ana@example.com');
+    await fb.updateDoc(fb.doc(fb.db, 'edicoes', '2027-1', 'inscricoes', uid), { totalPago: 300 });
+  });
+  await page.waitForTimeout(400);
+  html = await appHtml(page);
+  ok('O painel avisa quando o total não bate com os comprovantes', html.includes('O total não bate com os comprovantes'));
+  await page.click(`[data-recalcular-total="${uids.ana}"]`);
+  await page.waitForTimeout(600);
+  const acertado = await page.evaluate(() => {
+    const uid = window.__mock.uidPorEmail('ana@example.com');
+    return window.__mock.dumpStore()['edicoes/2027-1/inscricoes'][uid].totalPago;
+  });
+  ok('E acerta o total pela soma dos comprovantes', acertado === 115);
+  await page.click(`[data-cancel-admin-edit="${uids.ana}"]`);
+  await page.waitForTimeout(200);
+  await page.click('#btn-back-admin2');
+  await page.waitForTimeout(200);
+  await logout(page);
+  await login(page, 'ana@example.com');
+  await page.waitForTimeout(400);
+
   console.log('\n== 16b. Chave Pix configurada pelo admin aparece para quem vai pagar ==');
   await logout(page);
   await login(page, 'bruno@example.com');
@@ -1180,6 +1318,37 @@ async function main() {
   html = await appHtml(page);
   ok('Batuqueiro vê a tabela de repertório da edição', html.includes('<h2>Repertório</h2>'));
   ok('Repertório mostra a música com tom e cantor(a)', html.includes('Ventania') && html.includes('Sol maior'));
+  await logout(page);
+
+  console.log('\n== 20b. Backup do banco pelo painel ==');
+  await login(page, 'ana@example.com');
+  await page.click('#btn-goto-admin');
+  await page.waitForTimeout(300);
+  html = await appHtml(page);
+  ok('O painel avisa o que o backup não leva', html.includes('comprovantes individuais de pagamento'));
+  const [arquivoBackup] = await Promise.all([
+    page.waitForEvent('download'),
+    page.click('#btn-backup'),
+  ]);
+  ok('O arquivo sai com a data no nome', /^backup-carnaval-FP-\d{4}-\d{2}-\d{2}\.json$/.test(arquivoBackup.suggestedFilename()));
+  const bkp = JSON.parse(readFileSync(await arquivoBackup.path(), 'utf8'));
+  ok('Traz os cadastros de todo mundo', Object.keys(bkp.pessoas).length === 4);
+  ok('Traz os contatos', Object.keys(bkp.contatos).length >= 4);
+  ok('E o contato é o dado de verdade, não vazio', bkp.contatos[uids.duda].celular === '(21) 98888-0000');
+  ok('Traz a edição com os dados dela', !!bkp.edicoes['2027-1'].dados.status);
+  ok('Com as inscrições', Object.keys(bkp.edicoes['2027-1'].inscricoes).length === 4);
+  ok('Com as posições', Object.keys(bkp.edicoes['2027-1'].posicoes).length > 0);
+  ok('Com os ensaios', Object.keys(bkp.edicoes['2027-1'].ensaios).length === 3);
+  ok('Com as músicas', Object.keys(bkp.edicoes['2027-1'].musicas).length === 2);
+  ok('Com as presenças já marcadas', Object.keys(bkp.edicoes['2027-1'].presencas).length > 0);
+  ok('E com os valores da anuidade', bkp.edicoes['2027-1'].config.precos.duasVezes.valor === 230);
+  // O valor já pago mora na inscrição, então o financeiro consolidado é salvo
+  // mesmo sem os comprovantes individuais.
+  ok('O total pago de cada pessoa é preservado', bkp.edicoes['2027-1'].inscricoes[uids.ana].totalPago === 125);
+  ok('O arquivo diz em si mesmo o que não contém', bkp.aviso.includes('NÃO inclui os comprovantes'));
+  ok('E registra quando e por quem foi gerado', !!bkp.geradoEm && bkp.geradoPor === 'ana@example.com');
+  await page.click('#btn-back-batuqueiro');
+  await page.waitForTimeout(300);
   await logout(page);
 
   console.log('\n== 21. Duda vê a presença, mas só como leitura (sem acesso de edição) ==');

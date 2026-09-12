@@ -39,7 +39,7 @@ O cadastro não exige confirmação por e-mail — assim que a pessoa cria o log
 
 ### 1.3 — Publicar as regras de segurança
 
-O arquivo `firestore.rules` (incluído neste pacote) já contém as regras corretas: qualquer pessoa logada pode ver a lista de batuqueiros e a presença de todos, mas só quem tem permissão marca presença; celular, data de nascimento e os pagamentos individuais só o dono lê (e a organização, no caso do contato); só o dono de um cadastro (ou um admin) pode editá-lo; e só admins mexem em edições, posições, ensaios, músicas, preços ou concedem acessos. Uma edição encerrada fica travada até para o admin.
+O arquivo `firestore.rules` (incluído neste pacote) já contém as regras corretas: qualquer pessoa logada pode ver a lista de batuqueiros e a presença de todos, mas só quem tem permissão marca presença; celular, data de nascimento e os pagamentos individuais só o dono e a organização leem; só o dono de um cadastro (ou um admin) pode editá-lo; e só admins mexem em edições, posições, ensaios, músicas, preços ou concedem acessos. Uma edição encerrada fica travada até para o admin.
 
 > **Sempre que este arquivo mudar numa atualização do site, republique as regras.** É um passo separado de subir o código no GitHub — se esquecer, o site publica normalmente mas algumas ações passam a dar erro de permissão.
 
@@ -74,7 +74,7 @@ pelos valores reais copiados do Firebase. Salve o arquivo. (Essas chaves não s�
 ## Parte 2 — Colocar o código no GitHub
 
 1. Crie um repositório novo em [github.com/new](https://github.com/new) — por exemplo `carnaval-fogo-e-paixao`. Pode ser privado ou público.
-2. Suba todos os arquivos desta pasta (`index.html`, `app.js`, `styles.css`, `firebase-init.js`, `firestore.rules`, `_headers`, `_redirects`, e opcionalmente `test.html` e `firebase-init.mock.js`) para o repositório. Os arquivos `_headers` e `_redirects` começam com underline e são lidos pelo Netlify — se a interface do GitHub esconder eles, arraste assim mesmo, que sobem. O jeito mais simples é pela própria interface do GitHub: **"Add file" → "Upload files"**, arrastar todos os arquivos, e clicar em **"Commit changes"**.
+2. Suba todos os arquivos desta pasta (`index.html`, `app.js`, `styles.css`, `firebase-init.js`, `firestore.rules`, `_headers`, `_redirects`, e opcionalmente `test.html` e `firebase-init.mock.js`) para o repositório. A pasta `backup` não precisa ir para o site — ela roda no seu computador; se subir, o `.gitignore` que está lá dentro é o que impede a chave de serviço de ir junto. Os arquivos `_headers` e `_redirects` começam com underline e são lidos pelo Netlify — se a interface do GitHub esconder eles, arraste assim mesmo, que sobem. O jeito mais simples é pela própria interface do GitHub: **"Add file" → "Upload files"**, arrastar todos os arquivos, e clicar em **"Commit changes"**.
 
 ---
 
@@ -185,17 +185,106 @@ Se você tiver o Node.js instalado, também há um script de teste automatizado 
 
 ---
 
+## Backup do banco de dados
+
+Primeiro confira em que plano o projeto está: Firebase Console, canto inferior esquerdo da barra lateral, ou **Configurações do projeto → Uso e faturamento**.
+
+### Se o projeto está no plano Blaze (pago por uso)
+
+Ligue o **backup agendado do próprio Firestore** — é o caminho certo, feito pelo Google, sem script e sem depender do seu computador estar ligado.
+
+No **Google Cloud Console → Firestore → Databases**, ache o banco, clique em **"View backups"** (ou **"Edit settings"** → configurações de recuperação de desastre), escolha **Daily**, defina o período de retenção e salve. Pelo Firebase CLI, o equivalente é:
+
+```powershell
+firebase firestore:backups:schedules:create --database "(default)" --recurrence "DAILY" --retention 4w
+```
+
+Para conferir o que está agendado:
+
+```powershell
+firebase firestore:backups:schedules:list --database "(default)"
+```
+
+A retenção vai até 14 semanas (`14w`), e dá para ter um agendamento diário e um semanal ao mesmo tempo. O custo é cobrado por GiB armazenado — para um banco do tamanho deste (algumas centenas de documentos, bem abaixo de 1 GiB), é praticamente nada.
+
+> **O que realmente merece atenção no Blaze não é o backup, é a conta.** Crie um alerta de orçamento em **Google Cloud Console → Faturamento → Orçamentos e alertas**, com um valor baixo (uns R$ 20). Não impede gastos, mas avisa por e-mail se algo sair do esperado.
+
+A restauração fica na mesma tela de backups. Não testei esse caminho e ele tem uma sutileza que vale ler na hora: o Firestore restaura para um banco de destino, então fazer isso com o site no ar exige atenção para não apontar o site para o lugar errado.
+
+### Se o projeto está no plano gratuito (Spark)
+
+A exportação gerenciada e o backup agendado **não estão disponíveis** — exigem o Blaze. Nesse caso os dois caminhos abaixo são o que você tem.
+
+### Em qualquer um dos dois planos, vale manter estes dois
+
+O backup do Google, agendado ou não, vive na **mesma conta Google** do projeto. Se essa conta for perdida ou comprometida, os dois vão juntos. Uma cópia fora dali, em formato que você abre sem depender de ninguém, é o que cobre esse caso — e é o que os dois caminhos abaixo fazem.
+
+### O rápido: botão no painel
+
+**Painel admin → role até "Todos os carnavais juntos" → "Baixar backup"**. Baixa um arquivo `.json` com os cadastros, os contatos e todos os carnavais (inscrições, posições, ensaios, músicas, valores, presenças). Um clique, sem instalar nada.
+
+Vale rodar antes de encerrar um carnaval, antes de importar dados antigos, e de vez em quando por garantia.
+
+**O que ele não leva:** os comprovantes individuais de pagamento. As regras de segurança reservam cada comprovante ao próprio dono — nem você lê os dos outros, e isso é intencional. O total pago de cada pessoa vai junto (ele fica na inscrição), então o financeiro consolidado está salvo; o que falta é o detalhe de cada lançamento. É exatamente esse buraco que o script abaixo fecha.
+
+### O completo: script no seu computador
+
+Roda com uma credencial de servidor, que ignora as regras e enxerga tudo — inclusive os comprovantes. Preparação uma vez só:
+
+**1. Instale o Node.js** (se ainda não tiver): baixe em [nodejs.org](https://nodejs.org), versão LTS, next-next-finish. Para conferir, abra o PowerShell e rode:
+
+```powershell
+node --version
+```
+
+**2. Pegue a chave de serviço:** Firebase Console → engrenagem → **Configurações do projeto** → aba **Contas de serviço** → **"Gerar nova chave privada"**. Salve o arquivo baixado dentro da pasta `backup` do projeto, com o nome exato `chave-de-servico.json`.
+
+> **Essa chave dá acesso total ao banco, ignorando todas as regras de segurança.** Nunca suba ela para o GitHub nem mande por mensagem. O arquivo `backup/.gitignore` já impede o envio acidental, mas a responsabilidade de não espalhar é sua. Se ela vazar, revogue na mesma tela em que foi gerada.
+
+**3. Instale as dependências** (uma vez só):
+
+```powershell
+cd C:\caminho\para\carnaval-FP\backup
+npm install
+```
+
+**4. Faça o backup** — este é o comando do dia a dia:
+
+```powershell
+node backup.mjs
+```
+
+O arquivo aparece em `backup/backups/`, com data e hora no nome. Guarde uma cópia fora do computador (nuvem pessoal, pendrive). Ele contém telefone, data de nascimento e o financeiro da bateria inteira — trate como planilha de RH, não como foto de ensaio.
+
+**5. Teste a restauração uma vez.** Backup que nunca foi restaurado não é backup, é esperança. Comece pela simulação, que não grava nada:
+
+```powershell
+node restaurar.mjs backups\backup-2026-09-11-0800.json
+```
+
+Ele lista o que faria. Para gravar de verdade, acrescente `--gravar` no final. **Faça esse teste num projeto Firebase separado**, não no que está no ar — a restauração escreve por cima do que existe e não desfaz o que foi criado depois do backup.
+
+### Quer que rode sozinho?
+
+No Windows, **Agendador de Tarefas** → Criar Tarefa Básica → semanal → Iniciar um programa → programa `node`, argumento `backup.mjs`, iniciar em `C:\caminho\para\carnaval-FP\backup`. O computador precisa estar ligado na hora.
+
+---
+
 ## Perguntas frequentes
 
 **Isso vai custar alguma coisa?** Para o tamanho de uma bateria (algumas dezenas a poucas centenas de pessoas), tanto o Firebase (plano gratuito "Spark") quanto o Netlify (plano gratuito) são mais do que suficientes. O Firebase Spark inclui, por mês, um volume generoso de leituras/escritas no Firestore e de logins — muito acima do que esse uso gera.
 
-**Uma pessoa pode ver os pagamentos de outra?** Não. Cada pessoa só vê os detalhes (data, valor e o nome de quem pagou) dos próprios pagamentos. O admin vê o total pago de cada pessoa (para o relatório geral), mas não os comprovantes individuais de quem não é ele mesmo.
+**Uma pessoa pode ver os pagamentos de outra?** Um batuqueiro comum, não — só os próprios. A organização vê os de todos, porque é quem confere cada Pix no extrato do bloco e responde pela conta. Em **Cadastros → Editar**, há um bloco "Pagamentos" com os comprovantes daquela pessoa, que só carregam quando você clica em "Ver pagamentos".
 
 **Quem pode marcar presença nos ensaios?** Só admins e quem recebeu esse acesso individualmente. Todo mundo vê a tabela de presença de todos os ensaios (como uma "lista de chamada" coletiva, só para consulta), mas só marca SIM/NÃO quem tiver permissão. Para dar esse acesso a alguém que não é admin: painel admin → Cadastros → editar a pessoa → marcar "Pode marcar presença nos ensaios (de qualquer batuqueiro) sem ser admin".
 
 **E se eu esquecer minha senha?** Na tela de login há um link "Esqueci minha senha", que envia um e-mail de redefinição pelo próprio Firebase.
 
-**Um batuqueiro pode adulterar o próprio valor pago?** Tecnicamente sim, e é uma limitação conhecida de um site sem servidor próprio. As regras foram apertadas para que o valor só possa **aumentar** (ninguém apaga um pagamento já lançado escrevendo um número menor), mas quem souber consultar o banco ainda consegue se declarar pago sem ter pago. O total pago fica no cadastro da pessoa naquele carnaval, e as regras precisam deixar ela mesma gravar ali (é o que acontece quando registra um pagamento). Alguém com conhecimento técnico conseguiria escrever um valor diferente por fora do site. O comprovante de cada pagamento, esse sim, é registro separado e não pode ser alterado nem apagado por ninguém. Vale a ressalva honesta: como as regras não deixam nem o admin ler o comprovante alheio (para preservar os dados de pagamento de cada um), na prática **você não tem como conferir essa divergência pelo site** — só abrindo a coleção `pagamentos` da edição no Firebase Console, onde o admin do projeto enxerga tudo. Para o tamanho e a confiança de uma bateria isso é aceitável; eliminar de vez exigiria um servidor próprio (plano pago do Firebase).
+**Um batuqueiro pode adulterar o próprio valor pago?** Tecnicamente sim, e é uma limitação conhecida de um site sem servidor próprio: o total pago fica no cadastro da pessoa naquele carnaval, e as regras precisam deixar ela mesma gravar ali (é o que acontece quando ela registra um pagamento). Alguém com conhecimento técnico conseguiria escrever um valor diferente por fora do site.
+
+**Mas agora dá para conferir.** Em **Cadastros → Editar → Ver pagamentos**, o site compara o total lançado com a soma dos comprovantes e avisa quando os dois não batem, com um botão para acertar. Uma adulteração aparece exatamente aí — o total sobe sem comprovante atrás.
+
+> Essa mesma tela é onde você vê o resíduo da importação do site antigo: quem veio de lá com valor já pago e sem comprovante aparece como divergência. Antes de acertar, confira se o que falta não é um pagamento real que simplesmente nunca foi lançado aqui.
 
 **Apaguei alguém de um carnaval por engano; e os pagamentos dela?** Os comprovantes ficam guardados (por segurança, pagamento não é apagável). Se a pessoa se inscrever de novo naquele mesmo carnaval, o total pago recomeça do zero enquanto a lista de comprovantes antigos continua aparecendo para ela — nesse caso, registre o acerto ou peça para conferirem juntos, porque o site não recalcula sozinho.
 
@@ -204,6 +293,14 @@ Se você tiver o Node.js instalado, também há um script de teste automatizado 
 **Como registro quais músicas foram ensaiadas?** Painel admin → "Repertório / músicas" cadastra o repertório (nome, tom e cantor(a) de cada música, em ordem alfabética). Depois, em Painel admin → Ensaios, cada data tem um botão "Editar músicas" onde você marca quais músicas dessa lista foram tocadas naquele ensaio. Tanto o repertório quanto as marcações valem só para a edição em que foram feitos.
 
 **Quem fica isento da anuidade?** Três situações, e basta uma delas: quem respondeu que NÃO vai tocar naquele carnaval; quem está numa função marcada como isenta (Voz, Mestre, Apoio etc., configurável em Posições); e quem recebeu isenção individual pelo painel. Se a pessoa já tinha pago antes de ficar isenta, o valor continua aparecendo para ela e no relatório — a cobrança some, o registro não.
+
+**Alguém lançou um pagamento errado. Dá para corrigir?** De dois jeitos.
+
+A **própria pessoa** remove: na área dela, cada lançamento tem um botão **Remover**. O valor sai da conta na hora; se foi erro de digitação, ela remove e registra de novo certo. Ela não edita — remover e relançar evita que um registro mude por baixo no histórico dela.
+
+**Você** corrige direto, em **Cadastros → Editar → Ver pagamentos**: dá para mudar a data, o valor e o nome de quem pagou, remover, e também **lançar um pagamento por ela** (dinheiro em mãos, ou um Pix que você conferiu no extrato). Toda alteração ali já mexe no total — não depende do botão "Salvar" do cadastro acima.
+
+> Se a pessoa remover todos os lançamentos, o total volta a zero e o botão "Alterar forma de pagamento" reaparece para ela — o que é o comportamento certo, já que a trava existe para não bagunçar um pagamento real.
 
 **A pessoa pode trocar a forma de pagamento depois?** Só enquanto não tiver registrado nenhum pagamento. No primeiro pagamento lançado, o botão "Alterar forma de pagamento" desaparece e o site explica o motivo — trocar de plano depois mudaria o valor devido deixando o pagamento já feito sem referência. Se alguém escolheu errado e já pagou, quem destrava é o admin: em **Cadastros → Editar**, o campo "Forma de pagamento" pode ser trocado a qualquer momento. O valor já pago continua contando e o total devido passa a ser o do novo plano — então confira as parcelas depois de trocar.
 
@@ -233,7 +330,7 @@ Para corrigir o "vai tocar" de alguém, a própria pessoa muda em "Meus dados", 
 **Quem consegue ver o quê, na prática?** O site é usado por um grupo pequeno e conhecido, então quase tudo é visível para quem tem cadastro — nome, apelido, posição e presença nos ensaios aparecem para todo mundo, porque é o que faz a lista de ensaio funcionar. Duas coisas fogem disso:
 
 - **Celular e data de nascimento** ficam em `/contatos`, uma área que só a própria pessoa e a organização conseguem ler.
-- **Pagamentos individuais** (valor, data e o nome de quem fez o Pix) só o próprio dono lê — nem o admin vê o detalhe pelo site, só o total somado que aparece no relatório.
+- **Pagamentos individuais** (valor, data e o nome de quem fez o Pix) são lidos pelo dono e pela organização. Nenhum outro batuqueiro vê o pagamento de ninguém.
 
 O que **não** é restrito, e vale você saber: o quanto cada pessoa já pagou, a forma de pagamento e a isenção ficam na inscrição daquele carnaval, que é legível por qualquer pessoa com cadastro. As telas só mostram isso a você, mas quem souber consultar o banco consegue ver. É o mesmo tipo de exposição que o contato tinha; ficou assim porque a lista de inscritos é lida por todas as telas do site, e separar o financeiro exigiria refazer boa parte delas. Se em algum momento isso incomodar, é uma mudança possível — só não é pequena.
 

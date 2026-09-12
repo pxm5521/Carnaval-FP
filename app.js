@@ -151,6 +151,11 @@ const session = {
   histGeral: null,            // carregado sob demanda no "Histórico geral" do admin
   histGeralBusy: false,
   histFiltro: "",
+  // Comprovantes da pessoa que o admin está editando. Carregados sob demanda —
+  // não faz sentido manter um listener aberto para os pagamentos de todo mundo.
+  pagsDoEditado: null,
+  pagsDoEditadoDe: null,
+  pagsDoEditadoBusy: false,
   draftInscricao: null,           // pré-preenchimento da tela de confirmar inscrição
   draftInscricaoDeEdicao: null,   // de qual edição veio esse pré-preenchimento
   draftInscricaoCarregadaPara: null,
@@ -343,6 +348,11 @@ function limparEstadoDeSessao() {
     histGeral: null,
     histGeralBusy: false,
     histFiltro: "",
+  // Comprovantes da pessoa que o admin está editando. Carregados sob demanda —
+  // não faz sentido manter um listener aberto para os pagamentos de todo mundo.
+  pagsDoEditado: null,
+  pagsDoEditadoDe: null,
+  pagsDoEditadoBusy: false,
   });
   pagamentosMigradosPara.clear();
 }
@@ -978,7 +988,7 @@ function rodape() {
       <div class="rodape-blocos">
       <p><b>O que é guardado:</b> nome, apelido, e-mail, celular e data de nascimento; e, a cada carnaval, sua posição, tamanho de camisa, se vai tocar, presença nos ensaios e os pagamentos da anuidade que você registrar.</p>
       <p><b>Para que serve:</b> só para organizar a bateria — montar os naipes, encomendar camisas, controlar a anuidade e acompanhar os ensaios. Nada é usado para outra finalidade, vendido ou enviado para fora do bloco.</p>
-      <p><b>Quem enxerga o quê:</b> quem tem cadastro no site vê o nome, o apelido, a posição e a presença dos outros nos ensaios — é o que faz a lista de ensaio funcionar. Seu <b>celular e sua data de nascimento</b> só são vistos por você e pela organização. Seus <b>pagamentos</b> (valor, data e o nome de quem pagou) só por você: nem a organização vê o detalhe, só o total já pago.</p>
+      <p><b>Quem enxerga o quê:</b> quem tem cadastro no site vê o nome, o apelido, a posição e a presença dos outros nos ensaios — é o que faz a lista de ensaio funcionar. Seu <b>celular e sua data de nascimento</b> só são vistos por você e pela organização. Seus <b>pagamentos</b> (valor, data e o nome de quem pagou) são vistos por você e pela organização, que precisa conferir cada Pix no extrato do bloco — nenhum outro batuqueiro vê.</p>
       <p><b>Seus direitos:</b> você pode ver e corrigir seus dados a qualquer momento em "Meus dados", e pode pedir a exclusão do seu cadastro falando com a organização do bloco. Os dados ficam guardados enquanto você fizer parte da bateria.</p>
       <p class="rodape-fim">Carnaval do Fogo e Paixão · site de uso interno da bateria</p>
       </div>
@@ -1417,11 +1427,13 @@ function renderPaymentBoxBody(u, editavel = true) {
     <div>
       ${myPagamentos.length === 0 ? `<div class="hint">Nenhum pagamento registrado ainda.</div>` : myPagamentos.map(p => `
         <div class="pay-row">
-          <span>📅 ${dateBR(p.data)}</span>
+          <span>${dateBR(p.data)}</span>
           <span class="muted-sm">Pago por: ${esc(p.pix) || "—"}</span>
           <span class="pv">${currency(p.valor)}</span>
+          ${editavel ? `<button class="btn-ghost btn-sm" data-remove-pay="${p.id}" title="Remover este lançamento">Remover</button>` : ""}
         </div>`).join("")}
     </div>
+    ${myPagamentos.length && editavel ? `<p class="hint">Lançou errado? Remova e registre de novo — o valor sai da sua conta na hora. Um lançamento não pode ser editado: some e entra outro no lugar, para não mudar um registro por baixo.</p>` : ""}
 
     ${chavePixDaEdicao() ? `
     <div class="pix-box">
@@ -1441,7 +1453,7 @@ function renderPaymentBoxBody(u, editavel = true) {
     ${totalPago(u) > 0 ? `<p class="hint">A forma de pagamento não pode mais ser trocada, porque você já registrou um pagamento nela.</p>` : ""}
     <div class="add-pay-form ${session.addPayOpenFor === u.id ? "open" : ""}" id="add-pay-form">
       <div class="grid-3">
-        <div class="field"><label>Data</label><input type="date" id="pay-data"></div>
+        <div class="field"><label>Data em que você pagou</label><input type="date" id="pay-data" value="${hojeISO()}" max="${hojeISO()}"></div>
         <div class="field"><label>Valor (R$)</label><input type="number" id="pay-valor" min="1" step="0.01"></div>
         <div class="field"><label>Nome de quem fez o Pix</label><input type="text" id="pay-pix" placeholder="${esc(fullName(u))}"></div>
       </div>
@@ -1736,6 +1748,74 @@ function dadosDaExportacao() {
   return { cabecalho, linhas, nomeBase, ed, quantas: linhas.length };
 }
 
+/* ============================================================
+   BACKUP DO BANCO (feito pelo navegador, pelo admin)
+   ------------------------------------------------------------
+   Baixa em um único JSON tudo que a organização consegue ler: os cadastros, os
+   contatos e todas as edições com suas subcoleções. Serve para o dia a dia —
+   antes de mexer em algo grande, antes de encerrar um carnaval, de vez em
+   quando por garantia.
+
+   O QUE ESTE BACKUP NÃO LEVA, e por quê: os comprovantes individuais de
+   pagamento (/edicoes/{id}/pagamentos). As regras de segurança só deixam cada
+   pessoa ler os próprios — nem o admin lê os dos outros, e isso é de propósito,
+   para preservar os dados de pagamento de cada um. O total pago de cada pessoa
+   vai junto (está na inscrição), então o financeiro consolidado está coberto;
+   o que falta é o detalhe de cada lançamento. Para um backup realmente
+   completo, use o script backup/backup.mjs, que roda com credencial de
+   servidor e enxerga tudo. O SETUP explica.
+   ============================================================ */
+async function baixarBackup() {
+  if (!souAdmin()) return;
+  const botao = $("#btn-backup");
+  if (botao) { botao.disabled = true; botao.textContent = "Montando backup..."; }
+  try {
+    const lerColecao = async (ref) => {
+      const snap = await getDocs(ref);
+      const out = {};
+      snap.docs.forEach(d => { out[d.id] = d.data(); });
+      return out;
+    };
+
+    const backup = {
+      geradoEm: new Date().toISOString(),
+      geradoPor: (meuCadastro() && meuCadastro().email) || "",
+      formato: 1,
+      aviso: "Backup parcial: NÃO inclui os comprovantes individuais de pagamento, que as regras de segurança reservam a cada dono. Contém dados pessoais da bateria — guarde em local privado.",
+      pessoas: await lerColecao(P.pessoas()),
+      contatos: await lerColecao(P.contatos()),
+      edicoes: {},
+    };
+
+    const edicoes = await getDocs(P.edicoes());
+    for (const ed of edicoes.docs) {
+      const eid = ed.id;
+      backup.edicoes[eid] = {
+        dados: ed.data(),
+        inscricoes: await lerColecao(P.inscricoes(eid)),
+        posicoes: await lerColecao(P.posicoes(eid)),
+        ensaios: await lerColecao(P.ensaios(eid)),
+        musicas: await lerColecao(P.musicas(eid)),
+        presencas: await lerColecao(P.presencas(eid)),
+        config: {},
+      };
+      const precos = await getDoc(P.precos(eid));
+      if (precos.exists()) backup.edicoes[eid].config.precos = precos.data();
+    }
+
+    const quantas = Object.keys(backup.pessoas).length;
+    const quantasEd = Object.keys(backup.edicoes).length;
+    baixarArquivo(
+      `backup-carnaval-FP-${hojeISO()}.json`,
+      new Blob([JSON.stringify(backup, null, 2)], { type: "application/json" })
+    );
+    showToast(`Backup baixado: ${quantas} cadastros e ${quantasEd} carnaval${quantasEd === 1 ? "" : "s"}.`);
+  } catch (err) {
+    alert("Não foi possível montar o backup: " + friendlyFirestoreError(err));
+  }
+  render();
+}
+
 /* Entrega um arquivo ao navegador. Um <a download> criado na hora é o caminho
    que funciona em todos os navegadores usados pela bateria, inclusive celular. */
 function baixarArquivo(nomeArquivo, blob) {
@@ -2012,6 +2092,18 @@ function viewAdmin() {
         <div class="stat-tile"><div class="label">Pessoas já cadastradas</div><div class="value">${pessoasCache.length}</div></div>
         <div class="stat-tile"><div class="label">Carnavais já encerrados</div><div class="value">${edicoesCache.filter(e => e.status === "encerrada").length}</div></div>
       </div>
+    </div>
+
+    <div class="card">
+      <div class="card-head">
+        <div>
+          <h2>Backup do banco</h2>
+          <p class="card-sub" style="margin-bottom:0">Baixa num arquivo só os cadastros, os contatos e todos os carnavais com ensaios, músicas, posições, valores, inscrições e presenças</p>
+        </div>
+        <button class="btn-secondary btn-sm" id="btn-backup">Baixar backup</button>
+      </div>
+      <p class="hint">Vale rodar antes de encerrar um carnaval, antes de importar dados ou de tempos em tempos. O arquivo contém telefone e data de nascimento de todo mundo — guarde num lugar privado, não no grupo.</p>
+      <p class="hint"><b>O que este backup não leva:</b> os comprovantes individuais de pagamento. As regras de segurança reservam cada comprovante ao próprio dono — nem você lê os dos outros, e isso é de propósito. O total pago de cada pessoa vai junto, então o financeiro consolidado está coberto; falta só o detalhe de cada lançamento. Para o backup completo, use os scripts da pasta <code>backup/</code> — o SETUP explica em cinco passos.</p>
     </div>
   </div>`;
 }
@@ -2759,7 +2851,72 @@ function renderAdminEditUserForm(p, editavel = true) {
       <p class="hint">Nome, sobrenome, celular, nascimento e os dois acessos acima valem para todos os carnavais. Posição, camisa e isenção são só desta edição.</p>
       <button class="btn-primary btn-sm" type="submit" style="margin-top:10px;">Salvar</button>
       <button class="btn-secondary btn-sm" type="button" data-cancel-admin-edit="${p.id}">Cancelar</button>
-    </form>`;
+    </form>
+    ${renderAdminPagamentos(p, editavel)}`;
+}
+
+/* Comprovantes de pagamento de uma pessoa, dentro do formulário de edição do
+   admin. Ficam FORA do <form> acima de propósito: são gravações independentes,
+   cada uma com efeito imediato no total, e misturá-las no submit geral faria um
+   clique em "Salvar" mexer em dinheiro sem que ninguém tivesse pedido. */
+function renderAdminPagamentos(p, editavel) {
+  const carregados = session.pagsDoEditadoDe === p.id;
+  const pags = carregados ? (session.pagsDoEditado || []) : null;
+  const somaComprovantes = (pags || []).reduce((s, x) => s + (x.valor || 0), 0);
+  const total = totalPago(p);
+  const divergencia = carregados && Math.abs(somaComprovantes - total) > 0.005;
+
+  return `
+  <div class="card" style="margin-top:14px; background:var(--surface-2);">
+    <div class="card-head">
+      <div>
+        <h2 style="font-size:16px;">Pagamentos de ${esc(fullName(p))}</h2>
+        <p class="card-sub" style="margin-bottom:0">Total lançado: <b>${currency(total)}</b>${carregados ? ` · soma dos comprovantes: <b>${currency(somaComprovantes)}</b>` : ""}</p>
+      </div>
+      ${carregados ? "" : `<button class="btn-secondary btn-sm" data-ver-pagamentos="${p.id}" ${session.pagsDoEditadoBusy ? "disabled" : ""}>${session.pagsDoEditadoBusy ? "Carregando..." : "Ver pagamentos"}</button>`}
+    </div>
+
+    ${!carregados ? `<p class="hint">Os comprovantes são carregados só quando você pede — são dados financeiros de outra pessoa.</p>` : `
+      ${divergencia ? `
+      <div class="seed-box" style="text-align:left; border-style:solid; margin-bottom:12px;">
+        <b>O total não bate com os comprovantes.</b>
+        <p style="margin:6px 0 0;">O total diz ${currency(total)} e os comprovantes somam ${currency(somaComprovantes)}. A diferença costuma vir da importação do site antigo, que trouxe o valor já pago sem os comprovantes atrás. Você pode acertar o total pela soma dos comprovantes — mas confira antes se o que falta não é um pagamento real que simplesmente nunca foi lançado aqui.</p>
+        ${editavel ? `<button class="btn-primary btn-sm" style="margin-top:10px;" data-recalcular-total="${p.id}">Acertar total para ${currency(somaComprovantes)}</button>` : ""}
+      </div>` : ""}
+
+      ${pags.length === 0 ? `<p class="hint">Nenhum comprovante lançado por esta pessoa.</p>` : `
+      <div class="table-scroll">
+        <table>
+          <thead><tr><th>Data</th><th>Quem pagou</th><th>Valor</th><th></th></tr></thead>
+          <tbody>
+            ${pags.map(pag => `
+              <tr>
+                <td><input type="date" class="pg-data" data-pag-id="${pag.id}" value="${esc(pag.data || "")}" ${editavel ? "" : "disabled"} style="min-width:150px;"></td>
+                <td><input type="text" class="pg-pagador" data-pag-id="${pag.id}" value="${esc(pag.pix || "")}" ${editavel ? "" : "disabled"}></td>
+                <td><input type="number" class="pg-valor" data-pag-id="${pag.id}" value="${pag.valor || 0}" min="0.01" step="0.01" ${editavel ? "" : "disabled"} style="min-width:110px;"></td>
+                <td class="row-actions">
+                  ${editavel ? `
+                  <button class="btn-secondary btn-sm" data-salvar-pag="${pag.id}" data-dono="${p.id}">Salvar</button>
+                  <button class="btn-ghost btn-sm" data-remover-pag="${pag.id}" data-dono="${p.id}">Remover</button>` : `<span class="muted-sm">só leitura</span>`}
+                </td>
+              </tr>`).join("")}
+          </tbody>
+        </table>
+      </div>`}
+
+      ${editavel ? `
+      <div class="add-pay-form open" style="margin-top:12px;">
+        <p class="card-sub" style="margin:0 0 10px;">Lançar um pagamento por ela (dinheiro em mãos, Pix que você conferiu no extrato)</p>
+        <div class="grid-3">
+          <div class="field"><label>Data</label><input type="date" id="novo-pag-data-${p.id}" value="${hojeISO()}"></div>
+          <div class="field"><label>Valor (R$)</label><input type="number" id="novo-pag-valor-${p.id}" min="0.01" step="0.01"></div>
+          <div class="field"><label>Quem pagou</label><input type="text" id="novo-pag-pagador-${p.id}" placeholder="${esc(fullName(p))}"></div>
+        </div>
+        <button class="btn-primary btn-sm" data-add-pag="${p.id}">Lançar pagamento</button>
+      </div>` : ""}
+      <p class="hint" style="margin-top:10px;">Toda alteração aqui já muda o total lançado — não depende do botão "Salvar" do cadastro acima.</p>
+    `}
+  </div>`;
 }
 
 /* ============================================================
@@ -3328,6 +3485,130 @@ function wireEvents() {
     render();
   });
 
+  /* ---------- ADMIN: comprovantes de outra pessoa ---------- */
+  // Carregados sob demanda, num clique explícito: são dados financeiros de
+  // terceiro, e abrir a lista de todo mundo junto com a tela seria varrer o
+  // banco inteiro sem ninguém ter pedido.
+  onAll("[data-ver-pagamentos]", "click", async el => {
+    const uid = el.dataset.verPagamentos;
+    session.pagsDoEditadoBusy = true; render();
+    try {
+      const snap = await getDocs(query(P.pagamentos(edicaoCtxId()), where("uid", "==", uid)));
+      session.pagsDoEditado = snap.docs
+        .map(d => ({ id: d.id, ...d.data() }))
+        .sort((a, b) => (a.data || "").localeCompare(b.data || ""));
+      session.pagsDoEditadoDe = uid;
+    } catch (err) { alert(friendlyFirestoreError(err)); }
+    session.pagsDoEditadoBusy = false;
+    render();
+  });
+
+  /* Relê os comprovantes do banco depois de cada mudança, para a tela e a soma
+     não ficarem contando com o que estava em memória antes da gravação. */
+  const recarregarPagsDoEditado = async (uid) => {
+    const snap = await getDocs(query(P.pagamentos(edicaoCtxId()), where("uid", "==", uid)));
+    session.pagsDoEditado = snap.docs
+      .map(d => ({ id: d.id, ...d.data() }))
+      .sort((a, b) => (a.data || "").localeCompare(b.data || ""));
+    session.pagsDoEditadoDe = uid;
+  };
+
+  /* O total é sempre ajustado pela DIFERENÇA, nunca refeito pela soma dos
+     comprovantes: parte do total pode ter vindo da importação do formato antigo,
+     sem comprovante atrás, e refazer a soma apagaria esse valor em silêncio.
+     Quem decide acertar os dois é o admin, no botão de recalcular. */
+  const ajustarTotal = async (uid, delta) => {
+    const pessoa = batuqueirosDaEdicao().find(x => x.id === uid);
+    const novo = Math.max(0, totalPago(pessoa || {}) + delta);
+    await updateDoc(P.inscricao(edicaoCtxId(), uid), { totalPago: novo });
+  };
+
+  onAll("[data-salvar-pag]", "click", async el => {
+    const id = el.dataset.salvarPag, uid = el.dataset.dono;
+    const original = (session.pagsDoEditado || []).find(x => x.id === id);
+    if (!original) return;
+    const data = $(`.pg-data[data-pag-id="${id}"]`).value;
+    const pagador = $(`.pg-pagador[data-pag-id="${id}"]`).value.trim();
+    const valor = parseFloat($(`.pg-valor[data-pag-id="${id}"]`).value);
+    if (!data || !(valor > 0)) { alert("Preencha a data e um valor maior que zero."); return; }
+    try {
+      await updateDoc(doc(P.pagamentos(edicaoCtxId()), id), { data, valor, pix: pagador, uid: original.uid });
+      await ajustarTotal(uid, valor - (original.valor || 0));
+      await recarregarPagsDoEditado(uid);
+      showToast("Pagamento corrigido.");
+    } catch (err) { alert(friendlyFirestoreError(err)); }
+    render();
+  });
+
+  onAll("[data-remover-pag]", "click", async el => {
+    const id = el.dataset.removerPag, uid = el.dataset.dono;
+    const pag = (session.pagsDoEditado || []).find(x => x.id === id);
+    if (!pag) return;
+    if (!confirm(`Remover o lançamento de ${currency(pag.valor)} do dia ${dateBR(pag.data)}?\n\nO valor sai do total desta pessoa e ela volta a ser cobrada por ele.`)) return;
+    try {
+      await deleteDoc(doc(P.pagamentos(edicaoCtxId()), id));
+      await ajustarTotal(uid, -(pag.valor || 0));
+      await recarregarPagsDoEditado(uid);
+      showToast("Lançamento removido.");
+    } catch (err) { alert(friendlyFirestoreError(err)); }
+    render();
+  });
+
+  onAll("[data-add-pag]", "click", async el => {
+    const uid = el.dataset.addPag;
+    const pessoa = batuqueirosDaEdicao().find(x => x.id === uid);
+    const data = $(`#novo-pag-data-${uid}`).value;
+    const valor = parseFloat($(`#novo-pag-valor-${uid}`).value);
+    const pagador = $(`#novo-pag-pagador-${uid}`).value.trim() || fullName(pessoa || {});
+    if (!data || !(valor > 0)) { alert("Preencha a data e um valor maior que zero."); return; }
+    try {
+      await setDoc(doc(P.pagamentos(edicaoCtxId())), {
+        uid, data, valor, pix: pagador, createdAt: serverTimestamp(), lancadoPelaOrganizacao: true,
+      });
+      await ajustarTotal(uid, valor);
+      await recarregarPagsDoEditado(uid);
+      showToast("Pagamento lançado.");
+    } catch (err) { alert(friendlyFirestoreError(err)); }
+    render();
+  });
+
+  onAll("[data-recalcular-total]", "click", async el => {
+    const uid = el.dataset.recalcularTotal;
+    const soma = (session.pagsDoEditado || []).reduce((s, x) => s + (x.valor || 0), 0);
+    const pessoa = batuqueirosDaEdicao().find(x => x.id === uid);
+    if (!confirm(`Acertar o total de ${fullName(pessoa || {})} de ${currency(totalPago(pessoa || {}))} para ${currency(soma)}?\n\nIsso descarta qualquer valor que esteja no total sem comprovante lançado aqui — normalmente resíduo da importação do site antigo. Não dá para desfazer pelo site.`)) return;
+    try {
+      await updateDoc(P.inscricao(edicaoCtxId(), uid), { totalPago: soma });
+      showToast("Total acertado pela soma dos comprovantes.");
+    } catch (err) { alert(friendlyFirestoreError(err)); }
+    render();
+  });
+
+  // Remover um lançamento próprio. É a única saída de quem digitou o valor ou a
+  // data errada: o comprovante não pode ser editado (mudaria um registro por
+  // baixo), e a organização não consegue nem ler o comprovante alheio para
+  // corrigir. Apagar só reduz o que a própria pessoa declarou ter pago, então
+  // não abre brecha para ninguém.
+  onAll("[data-remove-pay]", "click", async el => {
+    const id = el.dataset.removePay;
+    const pag = myPagamentos.find(p => p.id === id);
+    if (!pag) return;
+    if (!confirm(`Remover o lançamento de ${currency(pag.valor)} do dia ${dateBR(pag.data)}?\n\nEsse valor sai da sua conta e volta a ser cobrado. Se foi só um erro de digitação, remova e registre de novo com os dados certos.`)) return;
+    const eid = edicaoCtxId();
+    const u = perfilMesclado();
+    try {
+      const batch = writeBatch(db);
+      batch.delete(doc(P.pagamentos(eid), id));
+      // Calculado aqui, e não com increment(-valor), para nunca deixar o total
+      // negativo caso ele e os comprovantes estejam fora de sincronia (o total
+      // pode ter vindo da importação do formato antigo, sem comprovante atrás).
+      batch.update(P.inscricao(eid, fbUser.uid), { totalPago: Math.max(0, totalPago(u) - (pag.valor || 0)) });
+      await batch.commit();
+      showToast("Lançamento removido.");
+    } catch (err) { alert(friendlyFirestoreError(err)); }
+    render();
+  });
+
   on("#presenca-filtro-posicao", "change", e => { session.presencaFiltro = e.target.value; render(); });
   on("#presenca-filtro-ensaio", "change", e => { session.presencaEnsaioFiltro = e.target.value; render(); });
 
@@ -3439,6 +3720,7 @@ function wireEvents() {
   });
   on("#btn-migrar-legado", "click", migrarDoFormatoAntigo);
   on("#btn-separar-contatos", "click", separarContatos);
+  on("#btn-backup", "click", baixarBackup);
 
   // ADMIN — seed de dados iniciais da edição
   on("#btn-seed-defaults", "click", async () => {
@@ -3707,9 +3989,16 @@ function wireEvents() {
   // ADMIN — cadastros
   onAll("[data-edit-user]", "click", el => {
     session.adminEditingUser = session.adminEditingUser === el.dataset.editUser ? null : el.dataset.editUser;
+    // Os comprovantes carregados pertencem a quem estava aberto antes; deixá-los
+    // em memória mostraria o financeiro de uma pessoa no cadastro de outra.
+    session.pagsDoEditado = null; session.pagsDoEditadoDe = null;
     render();
   });
-  onAll("[data-cancel-admin-edit]", "click", () => { session.adminEditingUser = null; render(); });
+  onAll("[data-cancel-admin-edit]", "click", () => {
+    session.adminEditingUser = null;
+    session.pagsDoEditado = null; session.pagsDoEditadoDe = null;
+    render();
+  });
   onAll("[data-remove-user]", "click", async el => {
     const id = el.dataset.removeUser;
     const ed = edicaoCtx();
