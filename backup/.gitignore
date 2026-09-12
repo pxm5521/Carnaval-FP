@@ -1,0 +1,8 @@
+# A chave de serviço dá acesso total ao banco, ignorando todas as regras de
+# segurança. Ela NUNCA pode ir para o GitHub.
+chave-de-servico.json
+*.json.key
+
+# Os backups têm telefone e data de nascimento da bateria inteira.
+backups/
+node_modules/
