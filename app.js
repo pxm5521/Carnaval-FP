@@ -499,6 +499,8 @@ function trocarEdicaoCtx(eid) {
   session.presencaFiltro = "todas";
   session.adminPessoasFiltro = "todas";
   session.relatorioFiltroPosicao = "todas";
+  session.relatorioFiltroPago = "todos";
+  session.relatorioFiltroSaldo = "todos";
   ensureEdicaoListeners();
   render();
 }
@@ -756,6 +758,51 @@ function contagemPorCamisa(pessoas) {
 function filtroDePosicaoValido(valor, pessoas) {
   if (!valor || valor === "todas") return "todas";
   return posicoesUnicasOrdenadas(pessoas).includes(valor) ? valor : "todas";
+}
+
+/* Saldo em aberto de uma pessoa. Devolve null quando não dá para saber: quem
+   ainda não escolheu a forma de pagamento não tem valor devido definido, e
+   fingir que deve zero colocaria essa pessoa junto de quem já quitou. */
+function saldoEmAberto(p) {
+  if (isIsento(p)) return 0;
+  if (!planoComValor(p)) return null;
+  return Math.max(0, totalDevido(p) - totalPago(p));
+}
+
+/* Faixas de R$ 100 para os seletores de Pago e Saldo, geradas a partir do maior
+   valor que existe na lista — assim acompanham a anuidade de cada carnaval sem
+   nada fixo no código. A opção "zero" fica separada porque é a que mais se usa:
+   quem não pagou nada, e quem não deve mais nada. */
+function faixasDeValor(valores) {
+  const maximo = Math.max(0, ...valores.filter(v => typeof v === "number"));
+  const faixas = [];
+  for (let inicio = 0; inicio < maximo; inicio += 100) {
+    faixas.push({ chave: `${inicio}-${inicio + 100}`, min: inicio, max: inicio + 100 });
+  }
+  return faixas;
+}
+function rotuloDaFaixa(f) {
+  return f.min === 0 ? `Até ${currency(f.max)}` : `${currency(f.min)} a ${currency(f.max)}`;
+}
+/* Compara com a faixa. O limite inferior é exclusivo (e o zero sai por fora, na
+   opção própria), então uma pessoa nunca cai em duas faixas ao mesmo tempo. */
+function valorNaFaixa(valor, chave) {
+  if (!chave || chave === "todos") return true;
+  if (valor === null || valor === undefined) return false;  // indefinido só em "todos"
+  if (chave === "zero") return valor === 0;
+  const [min, max] = chave.split("-").map(Number);
+  return valor > min && valor <= max;
+}
+function selectDeFaixa(id, rotulo, valorAtual, valores, rotuloZero) {
+  const faixas = faixasDeValor(valores);
+  return `
+    <div><label>${rotulo}</label>
+      <select id="${id}">
+        <option value="todos" ${(valorAtual || "todos") === "todos" ? "selected" : ""}>Qualquer valor</option>
+        <option value="zero" ${valorAtual === "zero" ? "selected" : ""}>${rotuloZero}</option>
+        ${faixas.map(f => `<option value="${f.chave}" ${valorAtual === f.chave ? "selected" : ""}>${rotuloDaFaixa(f)}</option>`).join("")}
+      </select>
+    </div>`;
 }
 
 function contagemPorPosicao(pessoas) {
@@ -2481,6 +2528,14 @@ function viewAdminRelatorio() {
   // cobrança e reaparece embaixo, só quem tem valor pago.
   const aDevolver = naoVaoTocarNaEdicao().filter(p => totalPago(p) > 0);
   const posicaoFiltro = filtroDePosicaoValido(session.relatorioFiltroPosicao, todos);
+  const filtrados = todos.filter(p => {
+    const st = paymentStatus(p).label;
+    const okStatus = !session.relatorioFiltroStatus || session.relatorioFiltroStatus === "todos" || st === session.relatorioFiltroStatus;
+    const okPos = posicaoFiltro === "todas" || p.posicao === posicaoFiltro;
+    const okPago = valorNaFaixa(totalPago(p), session.relatorioFiltroPago);
+    const okSaldo = valorNaFaixa(saldoEmAberto(p), session.relatorioFiltroSaldo);
+    return okStatus && okPos && okPago && okSaldo;
+  });
   return `
   ${headerBar(u)}
   <div class="wrap">
@@ -2502,17 +2557,14 @@ function viewAdminRelatorio() {
             ${posicoesUnicasOrdenadas(todos).map(pos => `<option value="${esc(pos)}" ${posicaoFiltro === pos ? "selected" : ""}>${esc(pos)}</option>`).join("")}
           </select>
         </div>
+        ${selectDeFaixa("relatorio-filtro-pago", "Pago", session.relatorioFiltroPago, todos.map(totalPago), "Não pagou nada")}
+        ${selectDeFaixa("relatorio-filtro-saldo", "Saldo", session.relatorioFiltroSaldo, todos.map(saldoEmAberto), "Não deve nada")}
       </div>
       <div class="table-scroll">
         <table>
           <thead><tr><th>Nome</th><th>Posição</th><th>Forma pagto</th><th>Pago</th><th>Devido</th><th>Saldo</th><th>Status</th></tr></thead>
           <tbody>
-            ${todos.filter(p => {
-              const st = paymentStatus(p).label;
-              const okStatus = !session.relatorioFiltroStatus || session.relatorioFiltroStatus === "todos" || st === session.relatorioFiltroStatus;
-              const okPos = posicaoFiltro === "todas" || p.posicao === posicaoFiltro;
-              return okStatus && okPos;
-            }).map(p => {
+            ${filtrados.map(p => {
               const status = paymentStatus(p);
               // Coluna "Pago" preenchida mesmo para isentos: alguém pode ter pago
               // antes de ficar isento (por exemplo, avisou depois que não vai
@@ -2531,9 +2583,20 @@ function viewAdminRelatorio() {
               </tr>`;
             }).join("") || '<tr><td colspan="7" class="hint">Ninguém encontrado com esses filtros.</td></tr>'}
           </tbody>
+          <tfoot>
+            <tr>
+              <th>${filtrados.length} pessoa${filtrados.length === 1 ? "" : "s"}</th>
+              <th></th><th></th>
+              <th>${currency(filtrados.reduce((soma, p) => soma + totalPago(p), 0))}</th>
+              <th></th>
+              <th>${currency(filtrados.reduce((soma, p) => soma + (saldoEmAberto(p) || 0), 0))}</th>
+              <th></th>
+            </tr>
+          </tfoot>
         </table>
       </div>
-      <p class="hint" style="margin-top:10px;">A lista traz só quem vai desfilar. Quem avisou que não vai tocar está isento e não é cobrado.</p>
+      <p class="hint" style="margin-top:10px;">A lista traz só quem vai desfilar. Quem avisou que não vai tocar está isento e não é cobrado. O rodapé soma o que está na tela, então acompanha os filtros.</p>
+      <p class="hint">Quem ainda não escolheu a forma de pagamento não tem saldo definido — essas pessoas só aparecem com o filtro de Saldo em "Qualquer valor".</p>
     </div>
 
     ${aDevolver.length > 0 ? `
@@ -3348,6 +3411,8 @@ function wireEvents() {
   on("#btn-exportar-xlsx", "click", exportarXLSX);
   on("#relatorio-filtro-status", "change", e => { session.relatorioFiltroStatus = e.target.value; render(); });
   on("#relatorio-filtro-posicao", "change", e => { session.relatorioFiltroPosicao = e.target.value; render(); });
+  on("#relatorio-filtro-pago", "change", e => { session.relatorioFiltroPago = e.target.value; render(); });
+  on("#relatorio-filtro-saldo", "change", e => { session.relatorioFiltroSaldo = e.target.value; render(); });
   on("#admin-troca-edicao", "change", e => trocarEdicaoCtx(e.target.value));
 
   // HISTÓRICO

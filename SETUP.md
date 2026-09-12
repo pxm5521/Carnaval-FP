@@ -346,6 +346,12 @@ Sobre os dois formatos: o **.xlsx** é a planilha nativa do Excel, com cabeçalh
 
 A primeira linha do arquivo é um aviso de que ali há dados pessoais. Ele não protege nada tecnicamente — o ponto é que a planilha sai do controle de acesso do site: quem receber o arquivo passa a ter o telefone e a data de nascimento da bateria inteira, sem as restrições descritas acima. Vale mandar para quem realmente precisa, e não para o grupo do WhatsApp.
 
+**Como acho quem ainda não pagou?** No **relatório geral de pagamentos** há quatro filtros que funcionam juntos: Status, Posição, **Pago** e **Saldo**. Os dois de valor trabalham por faixa de R$ 100, geradas a partir dos valores daquele carnaval — então acompanham a anuidade de cada ano sozinhas. Cada um tem ainda a opção mais usada em destaque: "Não pagou nada" e "Não deve nada".
+
+O rodapé da tabela soma o que está na tela, acompanhando os filtros: quantas pessoas, quanto já entrou e quanto falta entrar naquele recorte.
+
+> Quem ainda não escolheu a forma de pagamento não tem saldo definido — não dá para dizer que deve zero nem que deve tudo. Essas pessoas só aparecem com o filtro de Saldo em "Qualquer valor"; para achá-las, use o filtro de Status em "Sem plano".
+
 **Posso ver os dados de um carnaval antigo?** Sim. No painel admin, o seletor **"Estou vendo os dados de"** troca a edição que está sendo exibida — todas as telas (ensaios, posições, músicas, relatório, cadastros) passam a mostrar aquele carnaval. Se a edição estiver encerrada, tudo fica só leitura, com um aviso no topo. Cada batuqueiro também tem o próprio "Meu histórico de carnavais".
 
 **E se eu quiser comparar todos os carnavais de uma vez?** Painel admin → **"Histórico geral"**. São duas tabelas com uma coluna por carnaval:

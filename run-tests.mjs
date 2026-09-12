@@ -817,6 +817,43 @@ async function main() {
   await page.waitForTimeout(200);
   await page.click('#btn-back-admin2');
   await page.waitForTimeout(200);
+
+  console.log('\n== 16a5. Relatório: filtros por valor pago e por saldo ==');
+  // As faixas são geradas a partir dos valores que existem na lista, então
+  // acompanham a anuidade de cada carnaval sem nada fixo no código.
+  await page.click('#btn-goto-relatorio');
+  await page.waitForTimeout(300);
+  const opcoesPago = await page.$$eval('#relatorio-filtro-pago option', els => els.map(e => e.value));
+  ok('O filtro de Pago começa por "qualquer valor" e "não pagou nada"', opcoesPago[0] === 'todos' && opcoesPago[1] === 'zero');
+  ok('E tem faixas de cem em cem', opcoesPago.includes('100-200'));
+  await page.selectOption('#relatorio-filtro-pago', 'zero');
+  await page.waitForTimeout(300);
+  html = await appHtml(page);
+  ok('Filtrando quem não pagou nada, quem pagou 115 sai da lista', !html.includes('Ana Silva'));
+  ok('E quem está zerado continua', html.includes('Duda Reis'));
+  await page.selectOption('#relatorio-filtro-pago', '100-200');
+  await page.waitForTimeout(300);
+  html = await appHtml(page);
+  ok('Na faixa de 100 a 200 aparece quem pagou 115', html.includes('Ana Silva'));
+  ok('E some quem não pagou nada', !html.includes('Duda Reis'));
+  ok('O rodapé soma só o que está na tela', html.includes('1 pessoa<'));
+  await page.selectOption('#relatorio-filtro-pago', 'todos');
+  await page.waitForTimeout(250);
+
+  // Saldo de Ana: 230 devidos menos 115 pagos = 115.
+  await page.selectOption('#relatorio-filtro-saldo', '100-200');
+  await page.waitForTimeout(300);
+  html = await appHtml(page);
+  ok('O filtro de saldo acha quem ainda deve 115', html.includes('Ana Silva'));
+  // Duda ainda não escolheu forma de pagamento: saldo indefinido, fora das faixas.
+  ok('Quem não escolheu plano fica fora das faixas de saldo', !html.includes('Duda Reis'));
+  await page.selectOption('#relatorio-filtro-saldo', 'todos');
+  await page.waitForTimeout(300);
+  html = await appHtml(page);
+  ok('Voltando para "qualquer valor", ela reaparece', html.includes('Duda Reis'));
+  await page.click('#btn-back-admin5');
+  await page.waitForTimeout(200);
+
   await logout(page);
   await login(page, 'ana@example.com');
   await page.waitForTimeout(400);
