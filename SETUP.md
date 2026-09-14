@@ -74,7 +74,7 @@ pelos valores reais copiados do Firebase. Salve o arquivo. (Essas chaves não s�
 ## Parte 2 — Colocar o código no GitHub
 
 1. Crie um repositório novo em [github.com/new](https://github.com/new) — por exemplo `carnaval-fogo-e-paixao`. Pode ser privado ou público.
-2. Suba todos os arquivos desta pasta (`index.html`, `app.js`, `styles.css`, `firebase-init.js`, `firestore.rules`, `_headers`, `_redirects`, e opcionalmente `test.html` e `firebase-init.mock.js`) para o repositório. A pasta `backup` não precisa ir para o site — ela roda no seu computador; se subir, o `.gitignore` que está lá dentro é o que impede a chave de serviço de ir junto. Os arquivos `_headers` e `_redirects` começam com underline e são lidos pelo Netlify — se a interface do GitHub esconder eles, arraste assim mesmo, que sobem. O jeito mais simples é pela própria interface do GitHub: **"Add file" → "Upload files"**, arrastar todos os arquivos, e clicar em **"Commit changes"**.
+2. Suba todos os arquivos desta pasta (`index.html`, `app.js`, `styles.css`, `firebase-init.js`, `firestore.rules`, `repertorio-historico.json`, `_headers`, `_redirects`, e opcionalmente `test.html` e `firebase-init.mock.js`) para o repositório. A pasta `backup` não precisa ir para o site — ela roda no seu computador; se subir, o `.gitignore` que está lá dentro é o que impede a chave de serviço de ir junto. Os arquivos `_headers` e `_redirects` começam com underline e são lidos pelo Netlify — se a interface do GitHub esconder eles, arraste assim mesmo, que sobem. O jeito mais simples é pela própria interface do GitHub: **"Add file" → "Upload files"**, arrastar todos os arquivos, e clicar em **"Commit changes"**.
 
 ---
 
@@ -353,6 +353,14 @@ O rodapé da tabela soma o que está na tela, acompanhando os filtros: quantas p
 > Quem ainda não escolheu a forma de pagamento não tem saldo definido — não dá para dizer que deve zero nem que deve tudo. Essas pessoas só aparecem com o filtro de Saldo em "Qualquer valor"; para achá-las, use o filtro de Status em "Sem plano".
 
 **Posso ver os dados de um carnaval antigo?** Sim. No painel admin, o seletor **"Estou vendo os dados de"** troca a edição que está sendo exibida — todas as telas (ensaios, posições, músicas, relatório, cadastros) passam a mostrar aquele carnaval. Se a edição estiver encerrada, tudo fica só leitura, com um aviso no topo. Cada batuqueiro também tem o próprio "Meu histórico de carnavais".
+
+**Como entra o repertório de antes do site?** O bloco tinha uma planilha com as músicas de cada ano desde 2011. Ela vem convertida no arquivo `repertorio-historico.json`, que fica junto do site, e entra com um clique: **Painel admin → "Repertório histórico" → "Importar repertório histórico"**. É passo único — se a coleção já tiver músicas, o site recusa, para não duplicar.
+
+Depois de importar, esses anos aparecem **na mesma tabela** "Músicas por carnaval" do Histórico geral, como colunas à direita dos carnavais do site. Uma música que tocou em 2014 e voltou em 2027 é uma linha só. A diferença entre as duas partes: nos carnavais do site a célula diz em quantos ensaios a música foi tocada; nos anos de arquivo diz só que tocou, porque a planilha antiga não registrava ensaio.
+
+**E o arquivo serve para alguma coisa além de consultar?** Serve na hora de montar o repertório. Na tela de **Repertório / músicas**, cada música cadastrada mostra em quantos anos já foi tocada e qual a vez mais recente. E aparece uma lista de **"Clássicas que ainda não estão neste carnaval"** — as que a bateria tocou em pelo menos metade dos anos registrados e que ainda ficaram de fora, com um botão para trazer cada uma para o repertório. Tom e cantor(a) entram em branco: a planilha antiga não tinha esses campos, e preencher com o de outro ano seria inventar informação.
+
+> Duas coisas que a planilha trazia e eu resolvi na conversão: "MEL NA SUA BOCA" e "AMOR DE CHOCOLATE" apareciam em duas linhas cada, com anos diferentes, e viraram uma música só; e vários nomes tinham espaço sobrando no fim, o que impediria a música de casar entre os anos. Ficou uma pendência para você decidir: a música "SÓ PRO MEU PRAZER - FESTIVAL 2029" está marcada em 2026 e o 2029 parece erro de digitação. Não mexi no nome — corrija no Firebase Console se quiser.
 
 **E se eu quiser comparar todos os carnavais de uma vez?** Painel admin → **"Histórico geral"**. São duas tabelas com uma coluna por carnaval:
 

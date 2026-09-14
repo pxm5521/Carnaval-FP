@@ -151,6 +151,15 @@ service cloud.firestore {
       allow delete: if isAdmin();
     }
 
+    // ---------- repertório histórico (anos anteriores ao site) ----------
+    // Só nome de música e em que anos tocou — nenhum dado pessoal. Qualquer
+    // pessoa logada lê (é o histórico da bateria, e ela também vê o repertório
+    // do ano); só a organização escreve.
+    match /repertorioHistorico/{id} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
+
     // ---------- edições do carnaval ----------
     match /edicoes/{eid} {
       allow read: if isSignedIn();

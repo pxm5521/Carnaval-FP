@@ -1581,6 +1581,93 @@ async function main() {
   const linhaAquarela = await page.locator('#hist-musicas-tbody tr[data-hist-nome*="aquarela (editada)"]').innerHTML();
   ok('Música cadastrada mas nunca ensaiada aparece como "No repertório"', linhaAquarela.includes('No repertório'));
 
+  console.log('\n== 26c2. Repertório histórico: importação e junção com o histórico do site ==');
+  // O arquivo de anos anteriores ao site é um JSON servido junto com a página.
+  // Como o test.html roda no mesmo servidor, o fetch funciona igual ao de
+  // produção — inclusive a guarda de importação única.
+  await page.click('#btn-back-admin8');
+  await page.waitForTimeout(300);
+  html = await appHtml(page);
+  ok('O painel oferece importar o repertório histórico', html.includes('btn-importar-repertorio'));
+  await page.click('#btn-importar-repertorio');
+  await page.waitForTimeout(1500);
+  const importado = await page.evaluate(() => {
+    const s = window.__mock.dumpStore().repertorioHistorico || {};
+    const musicas = Object.values(s);
+    return {
+      quantas: musicas.length,
+      quatroSemanas: musicas.find(m => m.nome === '4 SEMANAS'),
+      temEspacoSobrando: musicas.some(m => m.nome !== m.nome.trim()),
+      duplicadas: musicas.filter(m => m.nome === 'MEL NA SUA BOCA').length,
+    };
+  });
+  ok('As 171 músicas do arquivo entraram', importado.quantas === 171);
+  ok('Uma clássica traz todos os anos em que tocou', importado.quatroSemanas && importado.quatroSemanas.anos.length === 14);
+  ok('Nomes com espaço sobrando foram limpos', importado.temEspacoSobrando === false);
+  ok('As linhas repetidas da planilha viraram uma música só', importado.duplicadas === 1);
+
+  // rodar de novo não pode duplicar
+  html = await appHtml(page);
+  ok('Depois de importar, o botão some do painel', !html.includes('btn-importar-repertorio'));
+  ok('E o painel passa a mostrar o intervalo de anos', html.includes('171 músicas dos anos anteriores ao site'));
+
+  await page.click('#btn-goto-historico-geral');
+  await page.waitForTimeout(1500);
+  html = await appHtml(page);
+  ok('A tabela de músicas ganha colunas dos anos antigos', html.includes('>2011</th>') && html.includes('>2026</th>'));
+  ok('E as músicas do arquivo aparecem na mesma lista', html.includes('4 SEMANAS'));
+  const linhaDoSite = await page.evaluate(() => {
+    const tr = [...document.querySelectorAll('#hist-musicas-tbody tr')].find(t => t.textContent.includes('Aquarela'));
+    return tr ? tr.textContent : '';
+  });
+  ok('Uma música só do site continua aparecendo normalmente', linhaDoSite.includes('Aquarela'));
+  const linhaClassica = await page.evaluate(() => {
+    const tr = [...document.querySelectorAll('#hist-musicas-tbody tr')].find(t => t.textContent.includes('4 SEMANAS'));
+    if (!tr) return null;
+    return {
+      tocou: tr.querySelectorAll('.badge-isenta').length,
+      total: tr.querySelector('.hist-total-musica').textContent.trim(),
+    };
+  });
+  ok('A linha da clássica marca os 14 anos de arquivo', linhaClassica && linhaClassica.tocou === 14);
+  ok('E a coluna de total soma arquivo mais carnavais do site', linhaClassica && linhaClassica.total === '14');
+
+  console.log('\n== 26c3. O histórico ajuda a montar o repertório do ano ==');
+  await page.click('#btn-back-admin8');
+  await page.waitForTimeout(300);
+  await page.click('#btn-goto-musicas');
+  await page.waitForTimeout(900);
+  html = await appHtml(page);
+  ok('Há uma lista de clássicas que ficaram de fora deste carnaval', html.includes('Clássicas que ainda não estão neste carnaval'));
+  ok('Com uma das mais tocadas de todos os anos', html.includes('4 SEMANAS'));
+  const antesDeAdicionar = await page.evaluate(() => document.querySelectorAll('.musica-name-input').length);
+  await page.click('[data-add-classica="4 SEMANAS"]');
+  await page.waitForTimeout(700);
+  const depoisDeAdicionar = await page.evaluate(() => document.querySelectorAll('.musica-name-input').length);
+  ok('Adicionar traz a clássica para o repertório do carnaval', depoisDeAdicionar === antesDeAdicionar + 1);
+  html = await appHtml(page);
+  ok('E ela some da lista de sugestões', !html.includes('data-add-classica="4 SEMANAS"'));
+  const selo = await page.evaluate(() => {
+    const inp = [...document.querySelectorAll('.musica-name-input')].find(i => i.value === '4 SEMANAS');
+    if (!inp) return 'NAO-ACHOU-INPUT';
+    const linha = inp.closest('div[style*="border-bottom"]');
+    return linha ? linha.textContent : 'NAO-ACHOU-LINHA';
+  });
+  // 14 anos de arquivo mais o carnaval de 2028, onde ela acabou de entrar.
+  ok('Cada música do ano mostra em quantos anos já tocou', selo.includes('Já tocou em 15 anos'));
+  ok('E qual foi a vez mais recente', selo.includes('mais recente: 2028'));
+  // tom e cantor em branco: a planilha antiga não tinha esses campos
+  const tomVazio = await page.evaluate(() => {
+    const inp = [...document.querySelectorAll('.musica-name-input')].find(i => i.value === '4 SEMANAS');
+    const linha = inp.closest('div[style*="border-bottom"]');
+    return linha.querySelector('.musica-tom-input').value;
+  });
+  ok('Tom e cantor entram em branco, sem inventar dado', tomVazio === '');
+  await page.click('#btn-back-admin6');
+  await page.waitForTimeout(300);
+  await page.click('#btn-goto-historico-geral');
+  await page.waitForTimeout(1200);
+
   console.log('\n== 26d. Filtro do histórico geral (sem perder o foco do campo) ==');
   const rodapeAntes = await page.locator('.hist-rodape-pessoas').first().textContent();
   ok('Rodapé mostra quantos tocaram em 2027 antes do filtro (4)', rodapeAntes === '4');
