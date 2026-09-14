@@ -358,9 +358,15 @@ O rodapé da tabela soma o que está na tela, acompanhando os filtros: quantas p
 
 Depois de importar, esses anos aparecem **na mesma tabela** "Músicas por carnaval" do Histórico geral, como colunas à direita dos carnavais do site. Uma música que tocou em 2014 e voltou em 2027 é uma linha só. A diferença entre as duas partes: nos carnavais do site a célula diz em quantos ensaios a música foi tocada; nos anos de arquivo diz só que tocou, porque a planilha antiga não registrava ensaio.
 
+**Como corrijo alguma coisa no repertório histórico?** **Painel admin → "Repertório histórico" → "Ver e editar"**. A tela é a própria planilha: uma linha por música, uma coluna por ano, e cada ano é um botão que liga e desliga. Dá para corrigir o nome (clique no campo, altere e saia dele), acrescentar música que ficou de fora e remover alguma que não deveria estar lá. Tem busca por nome no topo.
+
+> **Cada alteração grava na hora, sem botão de salvar.** É diferente da tela de Repertório do carnaval, onde você mexe em várias músicas e salva tudo junto. Aqui são correções pontuais num registro que quase nunca muda; um botão de salvar só criaria a chance de sair da tela e perder a correção.
+
+Mudar o nome aqui muda só o arquivo — o repertório de cada carnaval no site é independente. Mas as duas listas se juntam **pelo nome** no Histórico geral, então mantenha a grafia igual se quiser que a música apareça numa linha só.
+
 **E o arquivo serve para alguma coisa além de consultar?** Serve na hora de montar o repertório. Na tela de **Repertório / músicas**, cada música cadastrada mostra em quantos anos já foi tocada e qual a vez mais recente. E aparece uma lista de **"Clássicas que ainda não estão neste carnaval"** — as que a bateria tocou em pelo menos metade dos anos registrados e que ainda ficaram de fora, com um botão para trazer cada uma para o repertório. Tom e cantor(a) entram em branco: a planilha antiga não tinha esses campos, e preencher com o de outro ano seria inventar informação.
 
-> Duas coisas que a planilha trazia e eu resolvi na conversão: "MEL NA SUA BOCA" e "AMOR DE CHOCOLATE" apareciam em duas linhas cada, com anos diferentes, e viraram uma música só; e vários nomes tinham espaço sobrando no fim, o que impediria a música de casar entre os anos. Ficou uma pendência para você decidir: a música "SÓ PRO MEU PRAZER - FESTIVAL 2029" está marcada em 2026 e o 2029 parece erro de digitação. Não mexi no nome — corrija no Firebase Console se quiser.
+> Duas coisas que a planilha trazia e eu resolvi na conversão: "MEL NA SUA BOCA" e "AMOR DE CHOCOLATE" apareciam em duas linhas cada, com anos diferentes, e viraram uma música só; e vários nomes tinham espaço sobrando no fim, o que impediria a música de casar entre os anos. Ficou uma pendência para você decidir: a música "SÓ PRO MEU PRAZER - FESTIVAL 2029" está marcada em 2026 e o 2029 parece erro de digitação. Não mexi no nome — corrija na tela de edição descrita abaixo.
 
 **E se eu quiser comparar todos os carnavais de uma vez?** Painel admin → **"Histórico geral"**. São duas tabelas com uma coluna por carnaval:
 

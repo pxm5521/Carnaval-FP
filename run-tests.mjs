@@ -1632,9 +1632,71 @@ async function main() {
   ok('A linha da clássica marca os 14 anos de arquivo', linhaClassica && linhaClassica.tocou === 14);
   ok('E a coluna de total soma arquivo mais carnavais do site', linhaClassica && linhaClassica.total === '14');
 
-  console.log('\n== 26c3. O histórico ajuda a montar o repertório do ano ==');
+  console.log('\n== 26c2b. Editar o repertório histórico pelo painel ==');
   await page.click('#btn-back-admin8');
   await page.waitForTimeout(300);
+  await page.click('#btn-goto-repertorio-historico');
+  await page.waitForTimeout(700);
+  html = await appHtml(page);
+  ok('A tela do arquivo abre com a tabela de músicas por ano', html.includes('rep-hist-tbody'));
+  ok('Com uma coluna por ano do arquivo', html.includes('>2011</th>') && html.includes('>2026</th>'));
+
+  // corrigir um nome errado — o caso que motivou a tela
+  const idFestival = await page.evaluate(() => {
+    const inp = [...document.querySelectorAll('.hist-nome-input')].find(i => i.value.includes('FESTIVAL 2029'));
+    return inp ? inp.dataset.histId : null;
+  });
+  ok('A música com o nome errado está lá', !!idFestival);
+  await page.fill(`.hist-nome-input[data-hist-id="${idFestival}"]`, 'SÓ PRO MEU PRAZER - FESTIVAL 2019');
+  await page.locator(`.hist-nome-input[data-hist-id="${idFestival}"]`).blur();
+  await page.waitForTimeout(600);
+  const nomeCorrigido = await page.evaluate((id) => window.__mock.dumpStore().repertorioHistorico[id].nome, idFestival);
+  ok('Corrigir o nome grava na hora', nomeCorrigido === 'SÓ PRO MEU PRAZER - FESTIVAL 2019');
+
+  // marcar e desmarcar um ano
+  const idClassica = await page.evaluate(() => {
+    const inp = [...document.querySelectorAll('.hist-nome-input')].find(i => i.value === 'EVA');
+    return inp ? inp.dataset.histId : null;
+  });
+  const anosAntes = await page.evaluate((id) => window.__mock.dumpStore().repertorioHistorico[id].anos.length, idClassica);
+  await page.click(`[data-hist-id="${idClassica}"][data-hist-ano="2011"]`);
+  await page.waitForTimeout(600);
+  const anosDepois = await page.evaluate((id) => window.__mock.dumpStore().repertorioHistorico[id].anos, idClassica);
+  ok('Clicar num ano marca que a música tocou nele', anosDepois.includes('2011') && anosDepois.length === anosAntes + 1);
+  await page.click(`[data-hist-id="${idClassica}"][data-hist-ano="2011"]`);
+  await page.waitForTimeout(600);
+  const anosDesmarcado = await page.evaluate((id) => window.__mock.dumpStore().repertorioHistorico[id].anos, idClassica);
+  ok('E clicar de novo desmarca', !anosDesmarcado.includes('2011') && anosDesmarcado.length === anosAntes);
+
+  // acrescentar uma música que ficou de fora
+  await page.fill('#nova-hist-nome', 'MUSICA ESQUECIDA DA PLANILHA');
+  await page.selectOption('#nova-hist-ano', '2015');
+  await page.click('#btn-add-hist');
+  await page.waitForTimeout(700);
+  const acrescentada = await page.evaluate(() => Object.values(window.__mock.dumpStore().repertorioHistorico).find(m => m.nome === 'MUSICA ESQUECIDA DA PLANILHA'));
+  ok('Dá para acrescentar música que faltou na planilha', acrescentada && acrescentada.anos[0] === '2015');
+
+  // o filtro
+  await page.fill('#rep-hist-filtro', 'ESQUECIDA');
+  await page.waitForTimeout(400);
+  const linhasFiltradas = await page.evaluate(() => document.querySelectorAll('#rep-hist-tbody tr').length);
+  ok('O filtro por nome reduz a tabela', linhasFiltradas === 1);
+  await page.fill('#rep-hist-filtro', '');
+  await page.waitForTimeout(400);
+
+  // remover
+  const idEsquecida = await page.evaluate(() => {
+    const inp = [...document.querySelectorAll('.hist-nome-input')].find(i => i.value === 'MUSICA ESQUECIDA DA PLANILHA');
+    return inp ? inp.dataset.histId : null;
+  });
+  await page.click(`[data-remove-hist="${idEsquecida}"]`);
+  await page.waitForTimeout(700);
+  const aindaExiste = await page.evaluate(() => Object.values(window.__mock.dumpStore().repertorioHistorico).some(m => m.nome === 'MUSICA ESQUECIDA DA PLANILHA'));
+  ok('E dá para remover do arquivo', aindaExiste === false);
+  await page.click('#btn-back-admin9');
+  await page.waitForTimeout(300);
+
+  console.log('\n== 26c3. O histórico ajuda a montar o repertório do ano ==');
   await page.click('#btn-goto-musicas');
   await page.waitForTimeout(900);
   html = await appHtml(page);

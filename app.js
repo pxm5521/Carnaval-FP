@@ -160,6 +160,7 @@ const session = {
   histGeral: null,            // carregado sob demanda no "Histórico geral" do admin
   histGeralBusy: false,
   histFiltro: "",
+  repHistFiltro: "",
   // Comprovantes da pessoa que o admin está editando. Carregados sob demanda —
   // não faz sentido manter um listener aberto para os pagamentos de todo mundo.
   pagsDoEditado: null,
@@ -358,6 +359,7 @@ function limparEstadoDeSessao() {
     histGeral: null,
     histGeralBusy: false,
     histFiltro: "",
+  repHistFiltro: "",
   // Comprovantes da pessoa que o admin está editando. Carregados sob demanda —
   // não faz sentido manter um listener aberto para os pagamentos de todo mundo.
   pagsDoEditado: null,
@@ -886,7 +888,7 @@ function go(view, extra = {}) {
 /* ============================================================
    RENDER — roteador principal
    ============================================================ */
-const VIEWS_ADMIN = ["admin", "admin-edicoes", "admin-historico", "admin-precos", "admin-ensaios", "admin-relatorio", "admin-posicoes", "admin-musicas", "admin-pessoas"];
+const VIEWS_ADMIN = ["admin", "admin-edicoes", "admin-historico", "admin-precos", "admin-ensaios", "admin-relatorio", "admin-posicoes", "admin-musicas", "admin-pessoas", "admin-repertorio-historico"];
 
 /* ============================================================
    REDESENHO POR DADOS QUE CHEGAM DE FORA
@@ -1013,6 +1015,7 @@ function render() {
       else if (session.view === "admin-relatorio") html = viewAdminRelatorio();
       else if (session.view === "admin-posicoes") html = viewAdminPosicoes();
       else if (session.view === "admin-musicas") html = viewAdminMusicas();
+      else if (session.view === "admin-repertorio-historico") html = viewAdminRepertorioHistorico();
       else if (session.view === "admin-pessoas") html = viewAdminPessoas();
       // Estas duas esperas existem para NÃO afirmar coisa errada enquanto os
       // dados ainda estão chegando. Sem elas, quem já respondeu tudo via, por
@@ -2164,10 +2167,12 @@ function viewAdmin() {
           <h2>Repertório histórico</h2>
           <p class="card-sub" style="margin-bottom:0">${(repertorioHistorico && repertorioHistorico.length) ? `${repertorioHistorico.length} músicas dos anos anteriores ao site, de ${anosDoRepertorioHistorico().slice(-1)[0]} a ${anosDoRepertorioHistorico()[0]}` : "As músicas que a bateria tocou antes deste site existir, vindas da planilha antiga"}</p>
         </div>
-        ${(repertorioHistorico && repertorioHistorico.length) ? "" : `<button class="btn-secondary btn-sm" id="btn-importar-repertorio">Importar repertório histórico</button>`}
+        ${(repertorioHistorico && repertorioHistorico.length)
+          ? `<button class="btn-secondary btn-sm" id="btn-goto-repertorio-historico">Ver e editar</button>`
+          : `<button class="btn-secondary btn-sm" id="btn-importar-repertorio">Importar repertório histórico</button>`}
       </div>
       <p class="hint">${(repertorioHistorico && repertorioHistorico.length)
-        ? `Esses anos aparecem no Histórico geral, na mesma tabela dos carnavais do site, e alimentam as sugestões na tela de Repertório.`
+        ? `Esses anos aparecem no Histórico geral, na mesma tabela dos carnavais do site, e alimentam as sugestões na tela de Repertório. Em "Ver e editar" dá para corrigir um nome, marcar ou desmarcar um ano e acrescentar música que ficou de fora da planilha.`
         : `Passo único. Depois de importar, os anos antigos entram na tabela "Músicas por carnaval" do Histórico geral e o site passa a dizer, em cada música, há quantos anos ela está no repertório.`}</p>
     </div>
 
@@ -2953,6 +2958,81 @@ function viewAdminMusicas() {
       </div>
       <p class="hint" style="margin-top:10px;">É lembrete, não obrigação — o repertório de cada ano é escolha da bateria. Tom e cantor(a) não vêm do arquivo, então entram em branco para você preencher.</p>
     </div>` : ""}
+  </div>`;
+}
+
+/* ============================================================
+   VIEW: ADMIN — repertório histórico
+   ------------------------------------------------------------
+   O arquivo dos anos anteriores ao site. Cada linha é uma música e um ano é um
+   botão que liga e desliga — a planilha original era exatamente isso, um X numa
+   célula, então a tela imita o gesto em vez de inventar um formulário.
+
+   Diferente da tela de músicas do carnaval, aqui cada mudança grava na hora. São
+   correções pontuais de um registro que quase nunca muda; um botão de "salvar
+   tudo" só criaria a chance de sair da tela e perder a correção.
+   ============================================================ */
+function viewAdminRepertorioHistorico() {
+  const u = perfilMesclado();
+  if (repertorioHistorico === null) {
+    if (!repertorioHistoricoCarregando) {
+      repertorioHistoricoCarregando = true;
+      carregarRepertorioHistorico().then(renderExterno);
+    }
+    return `${headerBar(u)}<div class="wrap"><div class="card">${viewLoading("Carregando o repertório histórico...")}</div></div>`;
+  }
+
+  const anos = anosDoRepertorioHistorico();
+  const termo = (session.repHistFiltro || "").trim().toLowerCase();
+  const lista = [...repertorioHistorico]
+    .sort((a, b) => (a.nome || "").localeCompare(b.nome || "", "pt-BR", { sensitivity: "base" }))
+    .filter(m => !termo || (m.nome || "").toLowerCase().includes(termo));
+
+  return `
+  ${headerBar(u)}
+  <div class="wrap">
+    <p><button class="link-btn" id="btn-back-admin9">← Voltar para o painel admin</button></p>
+    <div class="card">
+      <h2>Repertório histórico</h2>
+      <p class="card-sub">As músicas dos anos anteriores a este site, como estavam na planilha da bateria. Clique num ano para marcar ou desmarcar que a música tocou nele. Cada alteração grava na hora — não há botão de salvar.</p>
+
+      <div class="filter-row">
+        <div style="flex:1; min-width:240px;">
+          <label>Buscar música</label>
+          <input type="text" id="rep-hist-filtro" value="${esc(session.repHistFiltro || "")}" placeholder="Digite parte do nome">
+        </div>
+      </div>
+
+      <div class="add-pay-form open" style="margin-bottom:16px;">
+        <p class="card-sub" style="margin:0 0 10px;">Acrescentar uma música que ficou de fora da planilha</p>
+        <div class="grid-2">
+          <div class="field" style="margin-bottom:0;"><label>Nome da música</label><input type="text" id="nova-hist-nome" placeholder="Como aparece no repertório"></div>
+          <div class="field" style="margin-bottom:0;"><label>Ano em que tocou</label>
+            <select id="nova-hist-ano">${anos.map(a => `<option value="${esc(a)}">${esc(a)}</option>`).join("")}</select>
+          </div>
+        </div>
+        <button class="btn-primary btn-sm" id="btn-add-hist" style="margin-top:10px;">Acrescentar</button>
+        <p class="hint" style="margin-top:8px;">Depois de acrescentar, marque os outros anos direto na tabela.</p>
+      </div>
+
+      <div class="table-scroll">
+        <table>
+          <thead><tr><th>Música</th>${anos.map(a => `<th>${esc(a)}</th>`).join("")}<th>Anos</th><th></th></tr></thead>
+          <tbody id="rep-hist-tbody">
+            ${lista.map(m => {
+              const marcados = (m.anos || []).map(String);
+              return `<tr data-hist-musica="${esc((m.nome || "").toLowerCase())}">
+                <td class="name-cell"><input type="text" class="hist-nome-input" data-hist-id="${m.id}" value="${esc(m.nome)}" style="min-width:220px;"></td>
+                ${anos.map(a => `<td><button class="toggle ${marcados.includes(a) ? "on" : ""}" data-hist-ano="${esc(a)}" data-hist-id="${m.id}" title="${marcados.includes(a) ? `Tocou em ${esc(a)} — clique para desmarcar` : `Não tocou em ${esc(a)} — clique para marcar`}">${marcados.includes(a) ? "SIM" : "não"}</button></td>`).join("")}
+                <td>${marcados.length}</td>
+                <td class="row-actions"><button class="btn-ghost btn-sm" data-remove-hist="${m.id}">Remover</button></td>
+              </tr>`;
+            }).join("") || `<tr><td colspan="${3 + anos.length}" class="hint">Nenhuma música encontrada com esse filtro.</td></tr>`}
+          </tbody>
+        </table>
+      </div>
+      <p class="hint" style="margin-top:10px;">${repertorioHistorico.length} músicas no arquivo${termo ? `, ${lista.length} com o filtro atual` : ""}. Mudar o nome aqui muda só o arquivo — o repertório de cada carnaval no site é independente, mas as duas listas se juntam pelo nome no Histórico geral, então vale manter a grafia igual.</p>
+    </div>
   </div>`;
 }
 
@@ -3971,6 +4051,79 @@ function wireEvents() {
   on("#btn-separar-contatos", "click", separarContatos);
   on("#btn-backup", "click", baixarBackup);
   on("#btn-importar-repertorio", "click", importarRepertorioHistorico);
+  on("#btn-goto-repertorio-historico", "click", () => go("admin-repertorio-historico"));
+  on("#btn-back-admin9", "click", () => go("admin"));
+
+  /* ---------- edição do repertório histórico ---------- */
+  // O filtro só mexe no estado e redesenha por fora, para não perder o foco de
+  // quem está digitando — mesmo cuidado do filtro do histórico geral.
+  on("#rep-hist-filtro", "input", e => { session.repHistFiltro = e.target.value; renderExterno(); });
+
+  /* Atualiza o arquivo em memória junto com o banco, para a tela responder na
+     hora — não há listener aberto nesta coleção (é dado que quase nunca muda). */
+  const atualizarMusicaHistorica = (id, mudanca) => {
+    repertorioHistorico = (repertorioHistorico || []).map(m => (m.id === id ? { ...m, ...mudanca } : m));
+  };
+
+  onAll("[data-hist-ano]", "click", async el => {
+    const id = el.dataset.histId, ano = el.dataset.histAno;
+    const musica = (repertorioHistorico || []).find(m => m.id === id);
+    if (!musica) return;
+    const atuais = (musica.anos || []).map(String);
+    const novos = atuais.includes(ano) ? atuais.filter(a => a !== ano) : [...atuais, ano].sort((a, b) => b.localeCompare(a));
+    try {
+      await updateDoc(P.musicaHistorica(id), { anos: novos });
+      atualizarMusicaHistorica(id, { anos: novos });
+      session.histGeral = null;   // o histórico geral precisa ser refeito
+    } catch (err) { alert(friendlyFirestoreError(err)); }
+    render();
+  });
+
+  // O nome grava ao sair do campo, não a cada tecla: gravar por tecla encheria
+  // o banco de escritas e brigaria com o redesenho enquanto a pessoa digita.
+  onAll(".hist-nome-input", "change", async el => {
+    const id = el.dataset.histId;
+    const nome = el.value.trim();
+    const musica = (repertorioHistorico || []).find(m => m.id === id);
+    if (!musica || nome === (musica.nome || "").trim()) return;
+    if (!nome) { alert("O nome da música não pode ficar vazio."); render(); return; }
+    try {
+      await updateDoc(P.musicaHistorica(id), { nome });
+      atualizarMusicaHistorica(id, { nome });
+      session.histGeral = null;
+      showToast("Nome corrigido.");
+    } catch (err) { alert(friendlyFirestoreError(err)); }
+    render();
+  });
+
+  onAll("[data-remove-hist]", "click", async el => {
+    const id = el.dataset.removeHist;
+    const musica = (repertorioHistorico || []).find(m => m.id === id);
+    if (!musica) return;
+    if (!confirm(`Remover "${musica.nome}" do repertório histórico?\n\nIsso apaga o registro de que ela tocou nos anos marcados. O repertório dos carnavais do site não é afetado.`)) return;
+    try {
+      await deleteDoc(P.musicaHistorica(id));
+      repertorioHistorico = (repertorioHistorico || []).filter(m => m.id !== id);
+      session.histGeral = null;
+      showToast("Música removida do arquivo.");
+    } catch (err) { alert(friendlyFirestoreError(err)); }
+    render();
+  });
+
+  on("#btn-add-hist", "click", async () => {
+    const nome = $("#nova-hist-nome").value.trim();
+    const ano = $("#nova-hist-ano").value;
+    if (!nome) { alert("Diga o nome da música."); return; }
+    const jaExiste = (repertorioHistorico || []).some(m => (m.nome || "").trim().toLowerCase() === nome.toLowerCase());
+    if (jaExiste) { alert("Essa música já está no arquivo. Marque o ano direto na tabela."); return; }
+    try {
+      const ref = await addDoc(P.repertorioHistorico(), { nome, anos: [ano] });
+      repertorioHistorico = [...(repertorioHistorico || []), { id: ref.id, nome, anos: [ano] }];
+      session.histGeral = null;
+      showToast(`"${nome}" entrou no arquivo.`);
+    } catch (err) { alert(friendlyFirestoreError(err)); }
+    render();
+  });
   // Adiciona ao repertório do ano uma música vinda do arquivo. Tom e cantor
   // ficam em branco de propósito: a planilha antiga não tinha esses campos, e
   // preencher com o de outro ano seria inventar informação.
