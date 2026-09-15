@@ -360,6 +360,8 @@ Depois de importar, esses anos aparecem **na mesma tabela** "Músicas por carnav
 
 **Como corrijo alguma coisa no repertório histórico?** **Painel admin → "Repertório histórico" → "Ver e editar"**. A tela é a própria planilha: uma linha por música, uma coluna por ano, e cada ano é um botão que liga e desliga. Dá para corrigir o nome (clique no campo, altere e saia dele), acrescentar música que ficou de fora e remover alguma que não deveria estar lá. Tem busca por nome no topo.
 
+As três primeiras colunas são **Música**, **Anos** (em quantos anos ela tocou) e o botão **Remover** — ficam juntas à esquerda justamente para você não precisar rolar a tabela para o lado passando por todas as colunas de ano. Ao lado da busca há **"Ordenar por"**, com três opções: ordem alfabética (o padrão), mais tocadas primeiro e menos tocadas primeiro. "Mais tocadas primeiro" é o atalho para ver as clássicas do bloco; "menos tocadas primeiro" costuma trazer à tona o que entrou uma vez só — inclusive nome digitado de dois jeitos diferentes, que é o erro mais comum de se achar aqui.
+
 > **Cada alteração grava na hora, sem botão de salvar.** É diferente da tela de Repertório do carnaval, onde você mexe em várias músicas e salva tudo junto. Aqui são correções pontuais num registro que quase nunca muda; um botão de salvar só criaria a chance de sair da tela e perder a correção.
 
 Mudar o nome aqui muda só o arquivo — o repertório de cada carnaval no site é independente. Mas as duas listas se juntam **pelo nome** no Histórico geral, então mantenha a grafia igual se quiser que a música apareça numa linha só.

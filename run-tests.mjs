@@ -1684,6 +1684,58 @@ async function main() {
   await page.fill('#rep-hist-filtro', '');
   await page.waitForTimeout(400);
 
+  // A contagem de anos e o Remover precisam ficar ao lado do nome: com 16 colunas
+  // de ano no meio, quem quisesse remover uma música tinha que rolar a tabela
+  // inteira para o lado. A ordem das colunas é o conserto, então ela é testada.
+  const ordemColunas = await page.evaluate(() => {
+    const ths = [...document.querySelectorAll('#rep-hist-tbody')][0]
+      .closest('table').querySelectorAll('thead th');
+    const tr = document.querySelector('#rep-hist-tbody tr');
+    const tds = tr.querySelectorAll('td');
+    return {
+      cabecalhos: [...ths].slice(0, 3).map(t => t.textContent.trim()),
+      celula1EhNome: !!tds[0].querySelector('.hist-nome-input'),
+      celula2EhNumero: /^\d+$/.test(tds[1].textContent.trim()),
+      celula3EhRemover: !!tds[2].querySelector('[data-remove-hist]'),
+    };
+  });
+  ok('A tabela começa por Música, Anos e a ação — os anos vêm depois',
+     ordemColunas.cabecalhos[0] === 'Música' && ordemColunas.cabecalhos[1] === 'Anos');
+  ok('E cada linha segue a mesma ordem: nome, contagem, Remover',
+     ordemColunas.celula1EhNome && ordemColunas.celula2EhNumero && ordemColunas.celula3EhRemover);
+
+  const lerLista = () => page.evaluate(() => [...document.querySelectorAll('#rep-hist-tbody tr')].map(tr => ({
+    nome: tr.querySelector('.hist-nome-input') ? tr.querySelector('.hist-nome-input').value : '',
+    anos: parseInt(tr.querySelectorAll('td')[1].textContent.trim(), 10),
+  })));
+
+  await page.selectOption('#rep-hist-ordem', 'mais');
+  await page.waitForTimeout(400);
+  const porMais = await lerLista();
+  ok('Ordenar por mais tocadas põe a música com mais anos em primeiro',
+     porMais.length > 100 && porMais[0].anos === Math.max(...porMais.map(m => m.anos)));
+  ok('E a lista inteira desce sem subir de novo',
+     porMais.every((m, i) => i === 0 || porMais[i - 1].anos >= m.anos));
+
+  await page.selectOption('#rep-hist-ordem', 'menos');
+  await page.waitForTimeout(400);
+  const porMenos = await lerLista();
+  // A primeira linha sozinha não prova nada: por acaso a música alfabeticamente
+  // primeira tocou um ano só. A prova é que a mais tocada foi para o fim.
+  ok('Ordenar por menos tocadas inverte a lista',
+     porMenos[0].anos === Math.min(...porMenos.map(m => m.anos)) &&
+     porMenos[porMenos.length - 1].anos === Math.max(...porMenos.map(m => m.anos)));
+  ok('E a lista inteira sobe sem descer de novo',
+     porMenos.every((m, i) => i === 0 || porMenos[i - 1].anos <= m.anos));
+  ok('Sem perder nenhuma música ao reordenar', porMenos.length === porMais.length);
+
+  await page.selectOption('#rep-hist-ordem', 'alfabetica');
+  await page.waitForTimeout(400);
+  const porNomeLista = await lerLista();
+  ok('E voltar para ordem alfabética reordena pelo nome',
+     porNomeLista.every((m, i) => i === 0 ||
+       porNomeLista[i - 1].nome.localeCompare(m.nome, 'pt-BR', { sensitivity: 'base' }) <= 0));
+
   // remover
   const idEsquecida = await page.evaluate(() => {
     const inp = [...document.querySelectorAll('.hist-nome-input')].find(i => i.value === 'MUSICA ESQUECIDA DA PLANILHA');

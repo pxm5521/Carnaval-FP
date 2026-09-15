@@ -161,6 +161,7 @@ const session = {
   histGeralBusy: false,
   histFiltro: "",
   repHistFiltro: "",
+  repHistOrdem: "alfabetica",
   // Comprovantes da pessoa que o admin está editando. Carregados sob demanda —
   // não faz sentido manter um listener aberto para os pagamentos de todo mundo.
   pagsDoEditado: null,
@@ -360,6 +361,7 @@ function limparEstadoDeSessao() {
     histGeralBusy: false,
     histFiltro: "",
   repHistFiltro: "",
+  repHistOrdem: "alfabetica",
   // Comprovantes da pessoa que o admin está editando. Carregados sob demanda —
   // não faz sentido manter um listener aberto para os pagamentos de todo mundo.
   pagsDoEditado: null,
@@ -2984,9 +2986,16 @@ function viewAdminRepertorioHistorico() {
 
   const anos = anosDoRepertorioHistorico();
   const termo = (session.repHistFiltro || "").trim().toLowerCase();
+  const ordem = session.repHistOrdem || "alfabetica";
+  const porNome = (a, b) => (a.nome || "").localeCompare(b.nome || "", "pt-BR", { sensitivity: "base" });
+  const qtd = m => (m.anos || []).length;
   const lista = [...repertorioHistorico]
-    .sort((a, b) => (a.nome || "").localeCompare(b.nome || "", "pt-BR", { sensitivity: "base" }))
-    .filter(m => !termo || (m.nome || "").toLowerCase().includes(termo));
+    .filter(m => !termo || (m.nome || "").toLowerCase().includes(termo))
+    .sort((a, b) => {
+      if (ordem === "mais") return qtd(b) - qtd(a) || porNome(a, b);
+      if (ordem === "menos") return qtd(a) - qtd(b) || porNome(a, b);
+      return porNome(a, b);
+    });
 
   return `
   ${headerBar(u)}
@@ -3000,6 +3009,13 @@ function viewAdminRepertorioHistorico() {
         <div style="flex:1; min-width:240px;">
           <label>Buscar música</label>
           <input type="text" id="rep-hist-filtro" value="${esc(session.repHistFiltro || "")}" placeholder="Digite parte do nome">
+        </div>
+        <div><label>Ordenar por</label>
+          <select id="rep-hist-ordem">
+            <option value="alfabetica" ${ordem === "alfabetica" ? "selected" : ""}>Ordem alfabética</option>
+            <option value="mais" ${ordem === "mais" ? "selected" : ""}>Mais tocadas primeiro</option>
+            <option value="menos" ${ordem === "menos" ? "selected" : ""}>Menos tocadas primeiro</option>
+          </select>
         </div>
       </div>
 
@@ -3017,15 +3033,15 @@ function viewAdminRepertorioHistorico() {
 
       <div class="table-scroll">
         <table>
-          <thead><tr><th>Música</th>${anos.map(a => `<th>${esc(a)}</th>`).join("")}<th>Anos</th><th></th></tr></thead>
+          <thead><tr><th>Música</th><th>Anos</th><th></th>${anos.map(a => `<th>${esc(a)}</th>`).join("")}</tr></thead>
           <tbody id="rep-hist-tbody">
             ${lista.map(m => {
               const marcados = (m.anos || []).map(String);
               return `<tr data-hist-musica="${esc((m.nome || "").toLowerCase())}">
                 <td class="name-cell"><input type="text" class="hist-nome-input" data-hist-id="${m.id}" value="${esc(m.nome)}" style="min-width:220px;"></td>
-                ${anos.map(a => `<td><button class="toggle ${marcados.includes(a) ? "on" : ""}" data-hist-ano="${esc(a)}" data-hist-id="${m.id}" title="${marcados.includes(a) ? `Tocou em ${esc(a)} — clique para desmarcar` : `Não tocou em ${esc(a)} — clique para marcar`}">${marcados.includes(a) ? "SIM" : "não"}</button></td>`).join("")}
-                <td>${marcados.length}</td>
+                <td><b>${marcados.length}</b></td>
                 <td class="row-actions"><button class="btn-ghost btn-sm" data-remove-hist="${m.id}">Remover</button></td>
+                ${anos.map(a => `<td><button class="toggle ${marcados.includes(a) ? "on" : ""}" data-hist-ano="${esc(a)}" data-hist-id="${m.id}" title="${marcados.includes(a) ? `Tocou em ${esc(a)} — clique para desmarcar` : `Não tocou em ${esc(a)} — clique para marcar`}">${marcados.includes(a) ? "SIM" : "não"}</button></td>`).join("")}
               </tr>`;
             }).join("") || `<tr><td colspan="${3 + anos.length}" class="hint">Nenhuma música encontrada com esse filtro.</td></tr>`}
           </tbody>
@@ -4058,6 +4074,7 @@ function wireEvents() {
   // O filtro só mexe no estado e redesenha por fora, para não perder o foco de
   // quem está digitando — mesmo cuidado do filtro do histórico geral.
   on("#rep-hist-filtro", "input", e => { session.repHistFiltro = e.target.value; renderExterno(); });
+  on("#rep-hist-ordem", "change", e => { session.repHistOrdem = e.target.value; render(); });
 
   /* Atualiza o arquivo em memória junto com o banco, para a tela responder na
      hora — não há listener aberto nesta coleção (é dado que quase nunca muda). */

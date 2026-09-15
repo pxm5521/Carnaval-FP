@@ -182,7 +182,11 @@
   .table-scroll { overflow-x: auto; border-radius: 12px; border: 1px solid var(--gridline); }
   table { border-collapse: collapse; width: 100%; font-size: 13.5px; }
   th, td { padding: 10px 12px; text-align: left; border-bottom: 1px solid var(--gridline); white-space: nowrap; vertical-align: middle; }
-  td.row-actions { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+  /* Não pode ser display:flex: isso tira a célula do layout de tabela e ela
+     deixa de acompanhar a altura da linha — os botões apareciam desalinhados em
+     relação ao resto. Como célula normal, o alinhamento vertical volta. */
+  td.row-actions { vertical-align: middle; white-space: nowrap; }
+  td.row-actions > *:not(:last-child) { margin-right: 6px; }
   thead th { background: var(--surface-2); color: var(--text-secondary); font-size: 12px; text-transform: uppercase; letter-spacing: 0.03em; position: sticky; top: 0; }
   tbody tr:last-child td { border-bottom: none; }
   tbody tr.me { background: color-mix(in srgb, var(--brand-fire) 8%, transparent); }
