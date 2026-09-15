@@ -362,11 +362,17 @@ Depois de importar, esses anos aparecem **na mesma tabela** "Músicas por carnav
 
 As três primeiras colunas são **Música**, **Anos** (em quantos anos ela tocou) e o botão **Remover** — ficam juntas à esquerda justamente para você não precisar rolar a tabela para o lado passando por todas as colunas de ano. Ao lado da busca há **"Ordenar por"**, com três opções: ordem alfabética (o padrão), mais tocadas primeiro e menos tocadas primeiro. "Mais tocadas primeiro" é o atalho para ver as clássicas do bloco; "menos tocadas primeiro" costuma trazer à tona o que entrou uma vez só — inclusive nome digitado de dois jeitos diferentes, que é o erro mais comum de se achar aqui.
 
+Embaixo de cada ano, no cabeçalho, aparece **quantas músicas estão marcadas naquele ano** — é o tamanho do repertório daquele carnaval. O número conta o que está na tabela: com filtro aplicado, ele acompanha o filtro, para não haver dois totais discordando na mesma tela.
+
 > **Cada alteração grava na hora, sem botão de salvar.** É diferente da tela de Repertório do carnaval, onde você mexe em várias músicas e salva tudo junto. Aqui são correções pontuais num registro que quase nunca muda; um botão de salvar só criaria a chance de sair da tela e perder a correção.
 
 Mudar o nome aqui muda só o arquivo — o repertório de cada carnaval no site é independente. Mas as duas listas se juntam **pelo nome** no Histórico geral, então mantenha a grafia igual se quiser que a música apareça numa linha só.
 
-**E o arquivo serve para alguma coisa além de consultar?** Serve na hora de montar o repertório. Na tela de **Repertório / músicas**, cada música cadastrada mostra em quantos anos já foi tocada e qual a vez mais recente. E aparece uma lista de **"Clássicas que ainda não estão neste carnaval"** — as que a bateria tocou em pelo menos metade dos anos registrados e que ainda ficaram de fora, com um botão para trazer cada uma para o repertório. Tom e cantor(a) entram em branco: a planilha antiga não tinha esses campos, e preencher com o de outro ano seria inventar informação.
+**E o arquivo serve para alguma coisa além de consultar?** Serve na hora de montar o repertório. Na tela de **Repertório / músicas**, cada música cadastrada mostra em quantos anos já foi tocada e qual a vez mais recente. Embaixo, a lista **"Músicas que a bateria já tocou"** traz **tudo** que já foi tocado e ainda não está no repertório deste carnaval — o arquivo antigo mais os carnavais anteriores do próprio site —, da mais tocada para a menos tocada, com **em quantos anos**, **a última vez** e um botão para trazer cada uma para o repertório. Tem busca por nome no topo da lista, para quando você já sabe qual música quer.
+
+> Antes essa lista só mostrava as "clássicas", com um corte em metade dos anos registrados. O corte saiu: o que é tradição e o que foi experiência de um ano só é decisão da bateria, não do site — e a ordem por quantidade de anos mais a busca já resolvem achar qualquer uma das duas.
+
+Tom e cantor(a) entram em branco ao trazer uma música da lista: a planilha antiga não tinha esses campos, e preencher com o de outro ano seria inventar informação.
 
 > Duas coisas que a planilha trazia e eu resolvi na conversão: "MEL NA SUA BOCA" e "AMOR DE CHOCOLATE" apareciam em duas linhas cada, com anos diferentes, e viraram uma música só; e vários nomes tinham espaço sobrando no fim, o que impediria a música de casar entre os anos. Ficou uma pendência para você decidir: a música "SÓ PRO MEU PRAZER - FESTIVAL 2029" está marcada em 2026 e o 2029 parece erro de digitação. Não mexi no nome — corrija na tela de edição descrita abaixo.
 

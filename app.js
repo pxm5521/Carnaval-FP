@@ -162,6 +162,7 @@ const session = {
   histFiltro: "",
   repHistFiltro: "",
   repHistOrdem: "alfabetica",
+  repSugestaoFiltro: "",
   // Comprovantes da pessoa que o admin está editando. Carregados sob demanda —
   // não faz sentido manter um listener aberto para os pagamentos de todo mundo.
   pagsDoEditado: null,
@@ -250,6 +251,7 @@ onAuthStateChanged(auth, (user) => {
     myPessoa = null; pessoaLoaded = false; myLegado = null; legadoConsultado = false;
     pessoasCache = []; edicoesCache = []; contatosCache = {}; edicoesLoaded = false;
     repertorioHistorico = null; repertorioHistoricoCarregando = false; musicasDaEdicaoCache = {};
+    musicasDeOutrasEdicoesCarregando = false; musicasDeOutrasEdicoesFalhou = false;
     limparCachesDaEdicao();
     if (session.view && !["landing", "login", "register1"].includes(session.view)) session.view = "landing";
     render();
@@ -362,6 +364,7 @@ function limparEstadoDeSessao() {
     histFiltro: "",
   repHistFiltro: "",
   repHistOrdem: "alfabetica",
+  repSugestaoFiltro: "",
   // Comprovantes da pessoa que o admin está editando. Carregados sob demanda —
   // não faz sentido manter um listener aberto para os pagamentos de todo mundo.
   pagsDoEditado: null,
@@ -471,7 +474,7 @@ function ensureEdicaoListeners() {
 
   unsubEd.musicas = onSnapshot(P.musicas(eid), snap => {
     musicasCache = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-    musicasDaEdicaoCache[eid] = new Set(musicasCache.map(m => (m.nome || "").trim().toLowerCase()));
+    musicasDaEdicaoCache[eid] = new Map(musicasCache.map(m => [(m.nome || "").trim().toLowerCase(), m.nome]));
     edicaoCarregou.musicas = true;
     renderExterno();
   }, onErr("músicas"));
@@ -2322,8 +2325,53 @@ function historicoDaMusica(nome) {
 
 /* Nomes das músicas de cada edição do site, para historicoDaMusica() não ter que
    ir ao banco a cada linha. Preenchido pelo listener de músicas da edição em
-   contexto e pelo carregamento do histórico geral. */
+   contexto e pelo carregamento do histórico geral. Map de nome-normalizado para
+   o nome como foi escrito, para a sugestão poder mostrar a grafia original. */
 let musicasDaEdicaoCache = {};
+let musicasDeOutrasEdicoesCarregando = false;
+let musicasDeOutrasEdicoesFalhou = false;
+
+/* O listener só traz as músicas da edição em contexto. Para a tela de repertório
+   sugerir também o que tocou nos carnavais anteriores DO SITE (e não só no
+   arquivo antigo), faltam as outras edições. São leituras pequenas — só a
+   coleção de músicas de cada uma — e acontecem uma vez por sessão. */
+async function carregarMusicasDasOutrasEdicoes() {
+  const faltando = edicoesCache.filter(e => !musicasDaEdicaoCache[e.id]);
+  if (!faltando.length || musicasDeOutrasEdicoesCarregando || musicasDeOutrasEdicoesFalhou) return false;
+  musicasDeOutrasEdicoesCarregando = true;
+  try {
+    const snaps = await Promise.all(faltando.map(e => getDocs(P.musicas(e.id))));
+    faltando.forEach((e, i) => {
+      musicasDaEdicaoCache[e.id] = new Map(snaps[i].docs.map(d => [(d.data().nome || "").trim().toLowerCase(), d.data().nome]));
+    });
+  } catch (err) {
+    // Sem a trava, o cache continuaria vazio, o render chamaria de novo e a tela
+    // ficaria num laço de leituras que falham.
+    musicasDeOutrasEdicoesFalhou = true;
+    console.error("músicas de outras edições", err);
+  }
+  musicasDeOutrasEdicoesCarregando = false;
+  return true;
+}
+
+/* Tudo que a bateria já tocou — arquivo antigo mais os carnavais do site —
+   com em quantos anos e a vez mais recente. A mesma música é reconhecida de um
+   ano para o outro pelo nome, que é o único identificador estável entre edições. */
+function tudoQueJaTocou() {
+  const nomes = new Map();
+  (repertorioHistorico || []).forEach(m => {
+    const chave = (m.nome || "").trim().toLowerCase();
+    if (chave) nomes.set(chave, m.nome);
+  });
+  Object.values(musicasDaEdicaoCache).forEach(mapa => {
+    if (!mapa || typeof mapa.forEach !== "function") return;
+    mapa.forEach((nome, chave) => { if (chave && !nomes.has(chave)) nomes.set(chave, nome); });
+  });
+  return [...nomes.values()].map(nome => {
+    const h = historicoDaMusica(nome);
+    return { nome, total: h.total, ultimo: h.ultimo };
+  });
+}
 
 /* Importa o arquivo de repertório que vem junto com o site. Passo único: se a
    coleção já tem música, recusa — rodar duas vezes duplicaria o histórico. */
@@ -2396,7 +2444,7 @@ async function carregarHistoricoGeral() {
         if (m.cantor) reg.cantor = m.cantor;
         reg.porEdicao[ed.id] = { ensaios: ensaios.filter(e => (e.musicaIds || []).includes(d.id)).length };
       });
-      musicasDaEdicaoCache[ed.id] = new Set(musSnap.docs.map(d => (d.data().nome || "").trim().toLowerCase()));
+      musicasDaEdicaoCache[ed.id] = new Map(musSnap.docs.map(d => [(d.data().nome || "").trim().toLowerCase(), d.data().nome]));
     }
 
     // O arquivo entra na MESMA lista: uma música que tocou em 2014 e voltou em
@@ -2885,16 +2933,22 @@ function viewAdminMusicas() {
     repertorioHistoricoCarregando = true;
     carregarRepertorioHistorico().then(renderExterno);
   }
+  // As músicas dos outros carnavais do site também entram na sugestão, então a
+  // tela busca as que o listener não trouxe.
+  if (repertorioHistorico !== null) carregarMusicasDasOutrasEdicoes().then(mudou => { if (mudou) renderExterno(); });
+
   const jaNoAno = new Set(draft.map(m => (m.nome || "").trim().toLowerCase()));
-  const anosConhecidos = anosDoRepertorioHistorico().length;
-  // "Clássicas de fora": as que mais aparecem no histórico e que ainda não estão
-  // no repertório deste carnaval. O corte em metade dos anos é arbitrário, mas
-  // separa bem o que é tradição do que foi experiência de um ano só.
-  const classicasDeFora = (repertorioHistorico || [])
+  // Tudo que a bateria já tocou e ainda não está neste carnaval, da mais tocada
+  // para a menos tocada. Sem corte por quantidade de anos: o que é clássica e o
+  // que foi experiência de um ano só é decisão da bateria, não do site — a ordem
+  // e a busca já resolvem achar qualquer uma das duas.
+  const termoSugestao = (session.repSugestaoFiltro || "").trim().toLowerCase();
+  const jaTocadas = tudoQueJaTocou()
     .filter(m => !jaNoAno.has((m.nome || "").trim().toLowerCase()))
-    .map(m => ({ nome: m.nome, total: (m.anos || []).length, ultimo: (m.anos || []).map(String).sort().slice(-1)[0] }))
-    .filter(m => anosConhecidos > 0 && m.total >= Math.ceil(anosConhecidos / 2))
     .sort((a, b) => b.total - a.total || a.nome.localeCompare(b.nome, "pt-BR", { sensitivity: "base" }));
+  const sugestoes = termoSugestao
+    ? jaTocadas.filter(m => (m.nome || "").toLowerCase().includes(termoSugestao))
+    : jaTocadas;
 
   return `
   ${headerBar(u)}
@@ -2936,29 +2990,37 @@ function viewAdminMusicas() {
       <datalist id="lista-cantores">${cantoresSugeridos.map(c => `<option value="${esc(c)}">`).join("")}</datalist>
     </div>
 
-    ${classicasDeFora.length && editavel ? `
+    ${jaTocadas.length && editavel ? `
     <div class="card">
       <div class="card-head">
         <div>
-          <h2>Clássicas que ainda não estão neste carnaval</h2>
-          <p class="card-sub" style="margin-bottom:0">${classicasDeFora.length} música${classicasDeFora.length === 1 ? "" : "s"} que a bateria já tocou em pelo menos metade dos anos registrados e que não está no repertório de ${esc(edicaoLabel(ed))}</p>
+          <h2>Músicas que a bateria já tocou</h2>
+          <p class="card-sub" style="margin-bottom:0">${jaTocadas.length} música${jaTocadas.length === 1 ? "" : "s"} do arquivo e dos carnavais anteriores que ainda não está no repertório de ${esc(edicaoLabel(ed))}, das mais tocadas para as menos tocadas</p>
         </div>
       </div>
+
+      <div class="filter-row">
+        <div style="flex:1; min-width:240px;">
+          <label>Procurar música</label>
+          <input type="text" id="rep-sugestao-filtro" value="${esc(session.repSugestaoFiltro || "")}" placeholder="Digite parte do nome">
+        </div>
+      </div>
+
       <div class="table-scroll">
         <table>
-          <thead><tr><th>Música</th><th>Anos</th><th>Última vez</th><th></th></tr></thead>
-          <tbody>
-            ${classicasDeFora.map(m => `
+          <thead><tr><th>Música</th><th class="center">Anos</th><th class="center">Última vez</th><th></th></tr></thead>
+          <tbody id="rep-sugestao-tbody">
+            ${sugestoes.map(m => `
               <tr>
-                <td class="name-cell">${esc(m.nome)}</td>
-                <td>${m.total}</td>
-                <td>${esc(m.ultimo || "—")}</td>
+                <td class="name-cell cell-wrap">${esc(m.nome)}</td>
+                <td class="center">${m.total}</td>
+                <td class="center">${esc(m.ultimo || "—")}</td>
                 <td class="row-actions"><button class="btn-secondary btn-sm" data-add-classica="${esc(m.nome)}">Adicionar ao repertório</button></td>
-              </tr>`).join("")}
+              </tr>`).join("") || `<tr><td colspan="4" class="hint">Nenhuma música encontrada com esse nome.</td></tr>`}
           </tbody>
         </table>
       </div>
-      <p class="hint" style="margin-top:10px;">É lembrete, não obrigação — o repertório de cada ano é escolha da bateria. Tom e cantor(a) não vêm do arquivo, então entram em branco para você preencher.</p>
+      <p class="hint" style="margin-top:10px;">${termoSugestao ? `${sugestoes.length} com o filtro atual. ` : ""}É lembrete, não obrigação — o repertório de cada ano é escolha da bateria. Tom e cantor(a) não vêm do arquivo, então entram em branco para você preencher.</p>
     </div>` : ""}
   </div>`;
 }
@@ -2997,13 +3059,23 @@ function viewAdminRepertorioHistorico() {
       return porNome(a, b);
     });
 
+  // Quantas músicas estão marcadas em cada ano. Conta a lista que está na tela,
+  // não o arquivo inteiro: com filtro aplicado, o número tem que bater com o que
+  // dá para conferir olhando a coluna, senão vira dois totais discordando.
+  const porAno = {};
+  anos.forEach(a => { porAno[a] = 0; });
+  lista.forEach(m => (m.anos || []).forEach(a => {
+    const k = String(a);
+    if (k in porAno) porAno[k]++;
+  }));
+
   return `
   ${headerBar(u)}
   <div class="wrap">
     <p><button class="link-btn" id="btn-back-admin9">← Voltar para o painel admin</button></p>
     <div class="card">
       <h2>Repertório histórico</h2>
-      <p class="card-sub">As músicas dos anos anteriores a este site, como estavam na planilha da bateria. Clique num ano para marcar ou desmarcar que a música tocou nele. Cada alteração grava na hora — não há botão de salvar.</p>
+      <p class="card-sub">As músicas dos anos anteriores a este site, como estavam na planilha da bateria. Clique num ano para marcar ou desmarcar que a música tocou nele. Cada alteração grava na hora — não há botão de salvar. O número embaixo de cada ano é quantas músicas da tabela estão marcadas naquele ano.</p>
 
       <div class="filter-row">
         <div style="flex:1; min-width:240px;">
@@ -3033,15 +3105,15 @@ function viewAdminRepertorioHistorico() {
 
       <div class="table-scroll">
         <table>
-          <thead><tr><th>Música</th><th>Anos</th><th></th>${anos.map(a => `<th>${esc(a)}</th>`).join("")}</tr></thead>
+          <thead><tr><th>Música</th><th class="center">Anos</th><th></th>${anos.map(a => `<th class="center" data-ano-col="${esc(a)}">${esc(a)}<span class="th-sub">${porAno[a]}</span></th>`).join("")}</tr></thead>
           <tbody id="rep-hist-tbody">
             ${lista.map(m => {
               const marcados = (m.anos || []).map(String);
               return `<tr data-hist-musica="${esc((m.nome || "").toLowerCase())}">
                 <td class="name-cell"><input type="text" class="hist-nome-input" data-hist-id="${m.id}" value="${esc(m.nome)}" style="min-width:220px;"></td>
-                <td><b>${marcados.length}</b></td>
+                <td class="center"><b>${marcados.length}</b></td>
                 <td class="row-actions"><button class="btn-ghost btn-sm" data-remove-hist="${m.id}">Remover</button></td>
-                ${anos.map(a => `<td><button class="toggle ${marcados.includes(a) ? "on" : ""}" data-hist-ano="${esc(a)}" data-hist-id="${m.id}" title="${marcados.includes(a) ? `Tocou em ${esc(a)} — clique para desmarcar` : `Não tocou em ${esc(a)} — clique para marcar`}">${marcados.includes(a) ? "SIM" : "não"}</button></td>`).join("")}
+                ${anos.map(a => `<td class="center"><button class="toggle ${marcados.includes(a) ? "on" : ""}" data-hist-ano="${esc(a)}" data-hist-id="${m.id}" title="${marcados.includes(a) ? `Tocou em ${esc(a)} — clique para desmarcar` : `Não tocou em ${esc(a)} — clique para marcar`}">${marcados.includes(a) ? "SIM" : "não"}</button></td>`).join("")}
               </tr>`;
             }).join("") || `<tr><td colspan="${3 + anos.length}" class="hint">Nenhuma música encontrada com esse filtro.</td></tr>`}
           </tbody>
@@ -4075,6 +4147,7 @@ function wireEvents() {
   // quem está digitando — mesmo cuidado do filtro do histórico geral.
   on("#rep-hist-filtro", "input", e => { session.repHistFiltro = e.target.value; renderExterno(); });
   on("#rep-hist-ordem", "change", e => { session.repHistOrdem = e.target.value; render(); });
+  on("#rep-sugestao-filtro", "input", e => { session.repSugestaoFiltro = e.target.value; renderExterno(); });
 
   /* Atualiza o arquivo em memória junto com o banco, para a tela responder na
      hora — não há listener aberto nesta coleção (é dado que quase nunca muda). */

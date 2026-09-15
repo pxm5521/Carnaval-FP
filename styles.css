@@ -188,6 +188,16 @@
   td.row-actions { vertical-align: middle; white-space: nowrap; }
   td.row-actions > *:not(:last-child) { margin-right: 6px; }
   thead th { background: var(--surface-2); color: var(--text-secondary); font-size: 12px; text-transform: uppercase; letter-spacing: 0.03em; position: sticky; top: 0; }
+  th.center, td.center { text-align: center; }
+  /* Nome comprido não pode empurrar as outras colunas para fora do cartão: sem
+     isto, uma música de nome longo tira o botão de ação da tela e obriga a rolar
+     a tabela para o lado. Quebra em duas linhas em vez de alargar. */
+  td.cell-wrap { white-space: normal; max-width: 520px; }
+  /* Segunda linha do cabeçalho: o total da coluna. Fica embaixo do rótulo, não
+     numa linha própria, para o número acompanhar a coluna quando a tabela rola
+     para o lado — e sem caixa alta nem espaçamento de rótulo, senão um número
+     de dois dígitos fica parecendo texto. */
+  .th-sub { display: block; margin-top: 2px; font-size: 12px; font-weight: 700; letter-spacing: 0; text-transform: none; color: var(--text-primary); }
   tbody tr:last-child td { border-bottom: none; }
   tbody tr.me { background: color-mix(in srgb, var(--brand-fire) 8%, transparent); }
   td.name-cell { font-weight: 600; position: sticky; left: 0; background: var(--surface-1); }

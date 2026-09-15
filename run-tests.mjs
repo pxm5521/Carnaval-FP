@@ -1639,7 +1639,7 @@ async function main() {
   await page.waitForTimeout(700);
   html = await appHtml(page);
   ok('A tela do arquivo abre com a tabela de músicas por ano', html.includes('rep-hist-tbody'));
-  ok('Com uma coluna por ano do arquivo', html.includes('>2011</th>') && html.includes('>2026</th>'));
+  ok('Com uma coluna por ano do arquivo', html.includes('data-ano-col="2011"') && html.includes('data-ano-col="2026"'));
 
   // corrigir um nome errado — o caso que motivou a tela
   const idFestival = await page.evaluate(() => {
@@ -1704,6 +1704,64 @@ async function main() {
   ok('E cada linha segue a mesma ordem: nome, contagem, Remover',
      ordemColunas.celula1EhNome && ordemColunas.celula2EhNumero && ordemColunas.celula3EhRemover);
 
+  // O total embaixo de cada ano tem que bater com a coluna — é o número que o
+  // Pedro usa para saber quantas músicas a bateria tocou naquele carnaval.
+  const totaisPorAno = await page.evaluate(() => {
+    const table = document.querySelector('#rep-hist-tbody').closest('table');
+    const ths = [...table.querySelectorAll('thead th[data-ano-col]')];
+    return ths.map(th => {
+      const ano = th.dataset.anoCol;
+      const sub = th.querySelector('.th-sub');
+      const marcadas = table.querySelectorAll(`#rep-hist-tbody [data-hist-ano="${ano}"].on`).length;
+      return { ano, exibido: sub ? parseInt(sub.textContent.trim(), 10) : null, marcadas };
+    });
+  });
+  ok('Cada ano mostra embaixo do rótulo quantas músicas estão com SIM',
+     totaisPorAno.length > 10 && totaisPorAno.every(t => t.exibido !== null));
+  ok('E o número bate com a quantidade de SIM daquela coluna',
+     totaisPorAno.every(t => t.exibido === t.marcadas));
+  ok('Nem todos os anos têm o mesmo total (o número é da coluna, não fixo)',
+     new Set(totaisPorAno.map(t => t.exibido)).size > 1);
+
+  // marcar um ano tem que mexer no total daquele ano
+  const totalAntes2011 = totaisPorAno.find(t => t.ano === '2011').exibido;
+  const idParaTotal = await page.evaluate(() => {
+    const inp = [...document.querySelectorAll('.hist-nome-input')].find(i => i.value === 'EVA');
+    return inp ? inp.dataset.histId : null;
+  });
+  await page.click(`[data-hist-id="${idParaTotal}"][data-hist-ano="2011"]`);
+  await page.waitForTimeout(700);
+  const total2011Depois = await page.evaluate(() =>
+    parseInt(document.querySelector('thead th[data-ano-col="2011"] .th-sub').textContent.trim(), 10));
+  ok('Marcar um ano soma no total daquele ano', total2011Depois === totalAntes2011 + 1);
+  await page.click(`[data-hist-id="${idParaTotal}"][data-hist-ano="2011"]`);
+  await page.waitForTimeout(700);
+  const total2011Volta = await page.evaluate(() =>
+    parseInt(document.querySelector('thead th[data-ano-col="2011"] .th-sub').textContent.trim(), 10));
+  ok('E desmarcar devolve o total', total2011Volta === totalAntes2011);
+
+  // com filtro, o total tem que ser o da tabela visível — dois números
+  // discordando na mesma tela seria pior do que não ter número nenhum
+  await page.fill('#rep-hist-filtro', 'ESQUECIDA');
+  await page.waitForTimeout(400);
+  const total2015Filtrado = await page.evaluate(() =>
+    parseInt(document.querySelector('thead th[data-ano-col="2015"] .th-sub').textContent.trim(), 10));
+  ok('Com filtro, o total conta só as músicas que estão na tela', total2015Filtrado === 1);
+  await page.fill('#rep-hist-filtro', '');
+  await page.waitForTimeout(400);
+
+  // centralização: o cabeçalho e o conteúdo das colunas de ano alinhados
+  const centralizado = await page.evaluate(() => {
+    const th = document.querySelector('thead th[data-ano-col="2011"]');
+    const tdAno = document.querySelector('#rep-hist-tbody tr td:nth-child(2)');
+    const tdToggle = document.querySelector('#rep-hist-tbody tr td:nth-child(4)');
+    const g = el => getComputedStyle(el).textAlign;
+    return { th: g(th), tdAno: g(tdAno), tdToggle: g(tdToggle) };
+  });
+  ok('O cabeçalho do ano fica centralizado', centralizado.th === 'center');
+  ok('E o conteúdo das colunas de ano e de Anos acompanha',
+     centralizado.tdAno === 'center' && centralizado.tdToggle === 'center');
+
   const lerLista = () => page.evaluate(() => [...document.querySelectorAll('#rep-hist-tbody tr')].map(tr => ({
     nome: tr.querySelector('.hist-nome-input') ? tr.querySelector('.hist-nome-input').value : '',
     anos: parseInt(tr.querySelectorAll('td')[1].textContent.trim(), 10),
@@ -1752,8 +1810,48 @@ async function main() {
   await page.click('#btn-goto-musicas');
   await page.waitForTimeout(900);
   html = await appHtml(page);
-  ok('Há uma lista de clássicas que ficaram de fora deste carnaval', html.includes('Clássicas que ainda não estão neste carnaval'));
+  ok('Há uma lista do que a bateria já tocou e ficou de fora deste carnaval', html.includes('Músicas que a bateria já tocou'));
   ok('Com uma das mais tocadas de todos os anos', html.includes('4 SEMANAS'));
+
+  // A lista tem que trazer TUDO, não só as clássicas: antes havia um corte em
+  // metade dos anos registrados, e uma música de um ano só nunca aparecia.
+  const sugeridas = await page.evaluate(() => [...document.querySelectorAll('#rep-sugestao-tbody tr')].map(tr => ({
+    nome: tr.querySelector('.name-cell') ? tr.querySelector('.name-cell').textContent.trim() : '',
+    total: parseInt(tr.querySelectorAll('td')[1].textContent.trim(), 10),
+  })));
+  ok('A lista traz todas as já tocadas, não só as clássicas', sugeridas.length > 150);
+  ok('Inclusive as que tocaram num ano só', sugeridas.some(m => m.total === 1));
+  ok('Ordenada da mais tocada para a menos tocada',
+     sugeridas.every((m, i) => i === 0 || sugeridas[i - 1].total >= m.total));
+  ok('E começa pela mais tocada de todas',
+     sugeridas[0].total === Math.max(...sugeridas.map(m => m.total)));
+  // O arquivo antigo não é a única fonte: o que tocou nos carnavais do site
+  // também tem que ser oferecido. Ventania só existe no repertório de 2027.
+  ok('As músicas dos carnavais anteriores do site também entram',
+     sugeridas.some(m => m.nome === 'Ventania'));
+
+  // Nome comprido não pode empurrar o botão para fora: com 173 músicas, uma delas
+  // alargava a tabela e obrigava a rolar para o lado para clicar em "Adicionar".
+  const larguraSugestao = await page.evaluate(() => {
+    const cont = document.querySelector('#rep-sugestao-tbody').closest('.table-scroll');
+    return { scroll: cont.scrollWidth, visivel: cont.clientWidth };
+  });
+  ok('A tabela de sugestões cabe na tela, sem rolagem lateral para o botão',
+     larguraSugestao.scroll <= larguraSugestao.visivel + 1);
+
+  // a busca
+  await page.fill('#rep-sugestao-filtro', 'EVIDÊNCIAS');
+  await page.waitForTimeout(400);
+  const filtradas = await page.evaluate(() => [...document.querySelectorAll('#rep-sugestao-tbody tr')]
+    .map(tr => tr.querySelector('.name-cell') ? tr.querySelector('.name-cell').textContent.trim() : ''));
+  ok('A busca por nome reduz a lista de sugestões', filtradas.length === 1 && filtradas[0] === 'EVIDÊNCIAS');
+  await page.fill('#rep-sugestao-filtro', 'NAO EXISTE ESSA MUSICA');
+  await page.waitForTimeout(400);
+  html = await appHtml(page);
+  ok('E avisa quando não acha nada em vez de mostrar tabela vazia', html.includes('Nenhuma música encontrada com esse nome'));
+  await page.fill('#rep-sugestao-filtro', '');
+  await page.waitForTimeout(400);
+
   const antesDeAdicionar = await page.evaluate(() => document.querySelectorAll('.musica-name-input').length);
   await page.click('[data-add-classica="4 SEMANAS"]');
   await page.waitForTimeout(700);
