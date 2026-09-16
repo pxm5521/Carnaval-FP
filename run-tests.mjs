@@ -90,7 +90,9 @@ async function logout(page) {
 
 async function main() {
   const browser = await chromium.launch({ executablePath: '/opt/pw-browsers/chromium' });
-  const ctx = await browser.newContext();
+  // O site é usado no Brasil, e data é justamente onde o fuso morde: rodar o
+  // teste em UTC escondia o bug de virar o dia às 21h.
+  const ctx = await browser.newContext({ timezoneId: 'America/Sao_Paulo', locale: 'pt-BR' });
   const page = await ctx.newPage();
   page.on('console', msg => { if (msg.type() === 'error') console.log('  [console:error]', msg.text()); });
   page.on('pageerror', err => console.log('  [pageerror]', err.message));
@@ -503,10 +505,107 @@ async function main() {
   await page.waitForTimeout(300);
   html = await appHtml(page);
   ok('Edição da música foi salva', html.includes('value="Aquarela (Editada)"'));
+  console.log('\n== 12b. Rascunho: a música só aparece para os outros quando é publicada ==');
+  // Música nova entra como rascunho de propósito: dá para montar o repertório
+  // inteiro com calma e só depois anunciar.
+  html = await appHtml(page);
+  ok('Música recém-cadastrada entra marcada como rascunho', (html.match(/>Rascunho</g) || []).length === 2);
+  ok('E a tela avisa quantas estão em rascunho', html.includes('2 músicas em rascunho'));
+
   await page.click('#btn-back-admin6');
   await page.waitForTimeout(200);
   html = await appHtml(page);
   ok('Card do painel admin mostra "2 músicas cadastradas"', html.includes('2 músicas cadastradas'));
+  ok('E destaca que as duas estão em rascunho', html.includes('2 em rascunho'));
+
+  // o que o batuqueiro vê enquanto está tudo em rascunho
+  await page.click('#btn-back-batuqueiro');
+  await page.waitForTimeout(400);
+  html = await appHtml(page);
+  ok('Enquanto é rascunho, o batuqueiro não vê a tabela de repertório', !html.includes('<h2>Repertório</h2>'));
+  ok('E não vê o nome da música em lugar nenhum', !html.includes('Ventania'));
+
+  // nem dá para marcar num ensaio: marcar publicaria o nome pela linha do ensaio
+  await page.click('#btn-goto-admin');
+  await page.waitForTimeout(300);
+  await page.click('#btn-goto-ensaios');
+  await page.waitForTimeout(300);
+  await page.click('[data-toggle-musicas-ensaio]');
+  await page.waitForTimeout(250);
+  html = await appHtml(page);
+  ok('Música em rascunho não pode ser marcada no ensaio', !html.includes('musica-ensaio-check'));
+  ok('E o ensaio explica por quê, em vez de dizer que não há música', html.includes('ainda estão em rascunho'));
+  await page.click('[data-cancel-musicas-ensaio]');
+  await page.waitForTimeout(200);
+  await page.click('#btn-back-admin4');
+  await page.waitForTimeout(200);
+
+  // publicar uma só, pelo botão da linha
+  await page.click('#btn-goto-musicas');
+  await page.waitForTimeout(300);
+  const idVentania = await page.evaluate(() => {
+    const inp = [...document.querySelectorAll('.musica-name-input')].find(i => i.value === 'Ventania');
+    return inp ? inp.dataset.musicaId : null;
+  });
+  await page.click(`[data-publicar-musica="${idVentania}"]`);
+  await page.waitForTimeout(500);
+  html = await appHtml(page);
+  ok('Publicar uma música tira só ela do rascunho', (html.match(/>Rascunho</g) || []).length === 1);
+  const gravouPublicacao = await page.evaluate(() => {
+    const s = window.__mock.dumpStore();
+    const musicas = Object.values(s['edicoes/2027-1/musicas'] || {});
+    const v = musicas.find(m => m.nome === 'Ventania');
+    const a = musicas.find(m => (m.nome || '').startsWith('Aquarela'));
+    return { ventania: v && v.rascunho, aquarela: a && a.rascunho };
+  });
+  ok('E grava no banco na hora, sem depender do "Salvar todas"', gravouPublicacao.ventania === false);
+  ok('Sem publicar a outra junto', gravouPublicacao.aquarela === true);
+
+  // voltar para rascunho
+  await page.click(`[data-despublicar-musica="${idVentania}"]`);
+  await page.waitForTimeout(500);
+  const voltouParaRascunho = await page.evaluate(() => {
+    const musicas = Object.values(window.__mock.dumpStore()['edicoes/2027-1/musicas'] || {});
+    const v = musicas.find(m => m.nome === 'Ventania');
+    return v && v.rascunho;
+  });
+  ok('Dá para voltar uma música publicada para rascunho', voltouParaRascunho === true);
+
+  // publicar todas de uma vez (o confirm é aceito pelo handler global)
+  await page.click('#btn-publicar-todas-musicas');
+  await page.waitForTimeout(600);
+  html = await appHtml(page);
+  ok('O botão de publicar todas limpa o rascunho de uma vez', !html.includes('>Rascunho<'));
+  ok('E o aviso de rascunho some da tela', !html.includes('músicas em rascunho'));
+  const todasPublicadas = await page.evaluate(() => Object.values(window.__mock.dumpStore()['edicoes/2027-1/musicas'] || {})
+    .every(m => m.rascunho === false));
+  ok('As duas ficaram publicadas no banco', todasPublicadas);
+
+  // e "Salvar todas as músicas" não pode desfazer a publicação: o rascunho local
+  // guarda um `rascunho` que pode estar velho, e gravá-lo junto do nome
+  // despublicaria a música sem ninguém pedir
+  // O "Salvar todas" zera o rascunho local e o listener redesenha a tela logo
+  // depois; digitar em cima desse redesenho perde a alteração. Por isso o texto
+  // é escrito, espera o redesenho e é reescrito antes de salvar.
+  const renomearPrimeira = async (nome) => {
+    await page.waitForTimeout(900);
+    await page.locator('input.musica-name-input').nth(0).fill(nome);
+    await page.waitForTimeout(200);
+    await page.click('#btn-save-all-musicas');
+    await page.waitForTimeout(900);
+  };
+  await renomearPrimeira('Aquarela (Renomeada)');
+  const aindaPublicadas = await page.evaluate(() => Object.values(window.__mock.dumpStore()['edicoes/2027-1/musicas'] || {})
+    .every(m => m.rascunho === false));
+  ok('Salvar nome/tom/cantor não devolve a música para rascunho', aindaPublicadas);
+  await renomearPrimeira('Aquarela (Editada)');
+  html = await appHtml(page);
+  ok('E o nome volta a ser o que os testes seguintes esperam', html.includes('value="Aquarela (Editada)"'));
+
+  await page.click('#btn-back-admin6');
+  await page.waitForTimeout(200);
+  html = await appHtml(page);
+  ok('Publicado tudo, o card do painel não fala mais em rascunho', !html.includes('em rascunho'));
 
   console.log('\n== 13. Marcar músicas ensaiadas num ensaio ==');
   await page.click('#btn-goto-ensaios');
@@ -532,6 +631,43 @@ async function main() {
   await page.waitForTimeout(300);
   html = await appHtml(page);
   ok('Música aparece marcada como ensaiada, com tom e cantor, na linha do ensaio', html.includes('Ventania (Sol maior · Carla)'));
+
+  // Salvar precisa FECHAR o editor. Enquanto ele continuava aberto com o
+  // rascunho já zerado, marcar mais uma música criava um rascunho do zero e o
+  // segundo "Salvar" gravava só ela — apagando as que tinham acabado de ser
+  // salvas, com o toast dizendo "salvas".
+  const editorFechou = await page.evaluate(() => document.querySelectorAll('.musica-ensaio-check').length === 0);
+  ok('Salvar as músicas do ensaio fecha o editor', editorFechou);
+
+  await page.click('[data-toggle-musicas-ensaio]');
+  await page.waitForTimeout(300);
+  const jaMarcada = await page.locator('label:has-text("Ventania") input.musica-ensaio-check').first().isChecked();
+  ok('E ao reabrir, a música salva continua marcada', jaMarcada);
+  await page.locator('label:has-text("Aquarela") input.musica-ensaio-check').first().check();
+  await page.waitForTimeout(150);
+  await page.click('[data-save-musicas-ensaio]');
+  await page.waitForTimeout(600);
+  const duasNoEnsaio = await page.evaluate(() => {
+    const ens = Object.values(window.__mock.dumpStore()['edicoes/2027-1/ensaios'] || {});
+    const comMusica = ens.find(e => (e.musicaIds || []).length);
+    return comMusica ? comMusica.musicaIds.length : 0;
+  });
+  ok('Marcar mais uma música depois de salvar SOMA, não substitui', duasNoEnsaio === 2);
+
+  // Desfaz: as seções seguintes contam com Aquarela nunca ensaiada.
+  await page.click('[data-toggle-musicas-ensaio]');
+  await page.waitForTimeout(300);
+  await page.locator('label:has-text("Aquarela") input.musica-ensaio-check').first().uncheck();
+  await page.waitForTimeout(150);
+  await page.click('[data-save-musicas-ensaio]');
+  await page.waitForTimeout(600);
+  const voltouAUma = await page.evaluate(() => {
+    const ens = Object.values(window.__mock.dumpStore()['edicoes/2027-1/ensaios'] || {});
+    const comMusica = ens.find(e => (e.musicaIds || []).length);
+    return comMusica ? comMusica.musicaIds.length : 0;
+  });
+  ok('E desmarcar tira só aquela música', voltouAUma === 1);
+
   await page.click('#btn-back-admin4');
   await page.waitForTimeout(200);
 
@@ -851,6 +987,93 @@ async function main() {
   await page.waitForTimeout(300);
   html = await appHtml(page);
   ok('Voltando para "qualquer valor", ela reaparece', html.includes('Duda Reis'));
+
+  // A faixa escolhida some do seletor quando o maior valor da lista cai. Sem
+  // validar, nenhuma opção ficava marcada, o seletor exibia "Qualquer valor" e o
+  // filtro antigo continuava valendo — a tabela ficava vazia sem saída, porque
+  // reselecionar o que já aparece não dispara change.
+  await page.evaluate(async () => {
+    const fb = await import('./firebase-init.mock.js');
+    const uid = window.__mock.uidPorEmail('ana@example.com');
+    await fb.updateDoc(fb.doc(fb.db, 'edicoes', '2027-1', 'inscricoes', uid), { totalPago: 250 });
+  });
+  await page.waitForTimeout(600);
+  await page.selectOption('#relatorio-filtro-pago', '200-300');
+  await page.waitForTimeout(300);
+  await page.evaluate(async () => {
+    const fb = await import('./firebase-init.mock.js');
+    const uid = window.__mock.uidPorEmail('ana@example.com');
+    await fb.updateDoc(fb.doc(fb.db, 'edicoes', '2027-1', 'inscricoes', uid), { totalPago: 0 });
+  });
+  await page.waitForTimeout(600);
+  const estadoFiltro = await page.evaluate(() => {
+    const sel = document.querySelector('#relatorio-filtro-pago');
+    return { valor: sel.value, opcoes: [...sel.options].map(o => o.value) };
+  });
+  html = await appHtml(page);
+  ok('Some a faixa selecionada, o filtro volta sozinho para "qualquer valor"', estadoFiltro.valor === 'todos');
+  ok('E a faixa que sumiu não é mais oferecida', !estadoFiltro.opcoes.includes('200-300'));
+  ok('E a tabela não fica vazia com o seletor mentindo', !html.includes('Ninguém encontrado'));
+  await page.evaluate(async () => {
+    const fb = await import('./firebase-init.mock.js');
+    const uid = window.__mock.uidPorEmail('ana@example.com');
+    await fb.updateDoc(fb.doc(fb.db, 'edicoes', '2027-1', 'inscricoes', uid), { totalPago: 115 });
+  });
+  await page.waitForTimeout(500);
+
+  console.log('\n== 16a6. Dinheiro: centavo do parcelamento e valor gravado como texto ==');
+  // 3x de R$ 250 é exibido como "3x de R$ 83,33". Quem paga exatamente isso três
+  // vezes deposita R$ 249,99: antes ficava eternamente "Atrasado" com saldo de
+  // um centavo e fora da adimplência do painel.
+  await page.evaluate(async () => {
+    const fb = await import('./firebase-init.mock.js');
+    const uid = window.__mock.uidPorEmail('ana@example.com');
+    await fb.updateDoc(fb.doc(fb.db, 'edicoes', '2027-1', 'inscricoes', uid), { formaPagamento: 'tresVezes', totalPago: 83.33 * 3 });
+  });
+  await page.waitForTimeout(700);
+  html = await appHtml(page);
+  const linhaAnaParcelas = await page.evaluate(() => {
+    const tr = [...document.querySelectorAll('table tr')].find(t => t.textContent.includes('Ana Silva'));
+    return tr ? tr.textContent : '';
+  });
+  ok('Pagando as 3 parcelas exibidas, a pessoa fica Quitada', linhaAnaParcelas.includes('Quitado'));
+  ok('E não sobra saldo de um centavo', !linhaAnaParcelas.includes('R$ 0,01'));
+
+  // Valor gravado como texto pelo formato antigo: sem converter, a soma vira
+  // concatenação de string e a porcentagem vira NaN.
+  await page.evaluate(async () => {
+    const fb = await import('./firebase-init.mock.js');
+    const uid = window.__mock.uidPorEmail('ana@example.com');
+    await fb.updateDoc(fb.doc(fb.db, 'edicoes', '2027-1', 'inscricoes', uid), { totalPago: '150,00' });
+  });
+  await page.waitForTimeout(700);
+  html = await appHtml(page);
+  ok('Valor gravado como texto não vira NaN na tela', !html.includes('NaN'));
+  ok('Nem vira soma de strings', !/R\$\s*0150/.test(html));
+  const somaComTexto = await page.evaluate(() => {
+    const tr = [...document.querySelectorAll('table tr')].find(t => t.textContent.includes('Ana Silva'));
+    return tr ? tr.textContent : '';
+  });
+  ok('O texto "150,00" é lido como cento e cinquenta reais', somaComTexto.includes('150,00'));
+  // O tile "Arrecadado" do painel é onde a soma acontece: sem converter, o
+  // total virava a string "0150,00100" em vez de somar.
+  await page.click('#btn-back-admin5');
+  await page.waitForTimeout(400);
+  const arrecadado = await page.evaluate(() => {
+    const tile = [...document.querySelectorAll('.stat-tile')].find(t => t.textContent.includes('Arrecadado'));
+    return tile ? tile.querySelector('.value').textContent.trim() : '';
+  });
+  ok('O total arrecadado soma o valor em texto em vez de concatenar', /^R\$\s*\d{1,3}(\.\d{3})*,\d{2}$/.test(arrecadado));
+  ok('E o valor em texto entra na soma', arrecadado.includes('150,00') || arrecadado.includes('275,00') || Number(arrecadado.replace(/[^\d,]/g, '').replace(',', '.')) >= 150);
+  await page.click('#btn-goto-relatorio');
+  await page.waitForTimeout(400);
+  await page.evaluate(async () => {
+    const fb = await import('./firebase-init.mock.js');
+    const uid = window.__mock.uidPorEmail('ana@example.com');
+    await fb.updateDoc(fb.doc(fb.db, 'edicoes', '2027-1', 'inscricoes', uid), { formaPagamento: 'duasVezes', totalPago: 115 });
+  });
+  await page.waitForTimeout(600);
+
   await page.click('#btn-back-admin5');
   await page.waitForTimeout(200);
 
@@ -1171,7 +1394,18 @@ async function main() {
   // No .xlsx os valores vão como NÚMERO, não texto: sem isso não dá para somar
   // a coluna no Excel, que é metade do motivo de exportar.
   const colDevido = matriz[1].indexOf('Valor devido');
-  ok('Os valores vão como número, para poderem ser somados no Excel', matriz.slice(2).every(l => typeof l[colDevido] === 'number'));
+  const colSaldo = matriz[1].indexOf('Saldo');
+  const colPlano = matriz[1].indexOf('Forma de pagamento');
+  // Quem tem plano sai como NÚMERO, para a coluna poder ser somada no Excel —
+  // metade do motivo de exportar. Quem NÃO escolheu plano sai em branco, e não
+  // zero: somar zero ali fazia a planilha dizer que não falta entrar nada.
+  const comPlano = matriz.slice(2).filter(l => l[colPlano]);
+  const semPlano = matriz.slice(2).filter(l => !l[colPlano] && l[matriz[1].indexOf('Isento')] === 'Não');
+  ok('Os valores vão como número, para poderem ser somados no Excel',
+     comPlano.length > 0 && comPlano.every(l => typeof l[colDevido] === 'number' && typeof l[colSaldo] === 'number'));
+  ok('Quem não escolheu plano sai em branco, não como saldo zero',
+     semPlano.length > 0 && semPlano.every(l => l[colDevido] === '' && l[colSaldo] === ''));
+  ok('E existe uma coluna para quem pagou a mais do que o plano cobra', matriz[1].includes('Pago a mais'));
 
   await page.evaluate(() => { delete window.XLSX; });
   await page.route('**/xlsx.full.min.js', r => r.abort());
@@ -1362,7 +1596,7 @@ async function main() {
   await page.click('#btn-goto-admin');
   await page.waitForTimeout(300);
   html = await appHtml(page);
-  ok('O painel avisa o que o backup não leva', html.includes('comprovantes individuais de pagamento'));
+  ok('O painel diz que o backup inclui os comprovantes', html.includes('os comprovantes de pagamento de cada pessoa'));
   const [arquivoBackup] = await Promise.all([
     page.waitForEvent('download'),
     page.click('#btn-backup'),
@@ -1382,7 +1616,12 @@ async function main() {
   // O valor já pago mora na inscrição, então o financeiro consolidado é salvo
   // mesmo sem os comprovantes individuais.
   ok('O total pago de cada pessoa é preservado', bkp.edicoes['2027-1'].inscricoes[uids.ana].totalPago === 125);
-  ok('O arquivo diz em si mesmo o que não contém', bkp.aviso.includes('NÃO inclui os comprovantes'));
+  ok('O arquivo avisa que carrega dado pessoal', bkp.aviso.includes('dados pessoais'));
+  // Os comprovantes entram no backup: são o único dado que não dá para
+  // reconstruir depois, e as regras já deixam a organização lê-los.
+  const pagsNoBackup = bkp.edicoes['2027-1'].pagamentos || {};
+  ok('O backup leva os comprovantes de pagamento', Object.keys(pagsNoBackup).length > 0);
+  ok('Com valor, data e quem pagou', Object.values(pagsNoBackup).every(p => typeof p.valor === 'number' && !!p.data));
   ok('E registra quando e por quem foi gerado', !!bkp.geradoEm && bkp.geradoPor === 'ana@example.com');
   await page.click('#btn-back-batuqueiro');
   await page.waitForTimeout(300);
@@ -1803,6 +2042,29 @@ async function main() {
   await page.waitForTimeout(700);
   const aindaExiste = await page.evaluate(() => Object.values(window.__mock.dumpStore().repertorioHistorico).some(m => m.nome === 'MUSICA ESQUECIDA DA PLANILHA'));
   ok('E dá para remover do arquivo', aindaExiste === false);
+  // A classe .toggle é a mesma dos botões de presença. Sem exigir data-uid no
+  // seletor, cada clique num ano caía também no gravador de presença e criava um
+  // documento "undefined_undefined" — em produção, um alerta de erro por clique.
+  const presencasLixo = await page.evaluate(() => {
+    const st = window.__mock.dumpStore();
+    return Object.keys(st).filter(k => k.includes('presencas'))
+      .flatMap(k => Object.keys(st[k]).map(id => k + '/' + id))
+      .filter(caminho => caminho.includes('undefined'));
+  });
+  ok('Clicar num ano do arquivo não grava presença de ninguém', presencasLixo.length === 0);
+
+  // O ano precisa existir mesmo quando nenhuma música está marcada nele: o
+  // arquivo não tem 2021 nem 2022, e sem coluna não havia como registrar a
+  // primeira música desses anos.
+  const anosNaTela = await page.evaluate(() => [...document.querySelectorAll('thead th[data-ano-col]')].map(t => t.dataset.anoCol));
+  ok('Todo ano entre o mais antigo e o mais novo tem coluna, mesmo vazio',
+     anosNaTela.includes('2021') && anosNaTela.includes('2022'));
+  ok('E a sequência não tem buraco',
+     anosNaTela.every((a, i) => i === 0 || Number(anosNaTela[i - 1]) - Number(a) === 1));
+  const totalVazio = await page.evaluate(() =>
+    parseInt(document.querySelector('thead th[data-ano-col="2021"] .th-sub').textContent.trim(), 10));
+  ok('Um ano sem música marcada mostra zero, e não some da tabela', totalVazio === 0);
+
   await page.click('#btn-back-admin9');
   await page.waitForTimeout(300);
 
@@ -1865,9 +2127,27 @@ async function main() {
     const linha = inp.closest('div[style*="border-bottom"]');
     return linha ? linha.textContent : 'NAO-ACHOU-LINHA';
   });
+  // Ela entra como rascunho, então ainda NÃO conta como tocada em 2028: são os
+  // 14 anos do arquivo. Rascunho não é repertório.
+  ok('A clássica trazida da lista entra como rascunho', selo.includes('Rascunho'));
+  ok('E enquanto é rascunho não conta como tocada neste carnaval', selo.includes('Já tocou em 14 anos'));
+  ok('A vez mais recente segue sendo a do arquivo', selo.includes('mais recente: 2026'));
+
+  // publicada, passa a contar
+  const id4Semanas = await page.evaluate(() => {
+    const inp = [...document.querySelectorAll('.musica-name-input')].find(i => i.value === '4 SEMANAS');
+    return inp ? inp.dataset.musicaId : null;
+  });
+  await page.click(`[data-publicar-musica="${id4Semanas}"]`);
+  await page.waitForTimeout(700);
+  const seloPublicado = await page.evaluate(() => {
+    const inp = [...document.querySelectorAll('.musica-name-input')].find(i => i.value === '4 SEMANAS');
+    const linha = inp.closest('div[style*="border-bottom"]');
+    return linha ? linha.textContent : '';
+  });
   // 14 anos de arquivo mais o carnaval de 2028, onde ela acabou de entrar.
-  ok('Cada música do ano mostra em quantos anos já tocou', selo.includes('Já tocou em 15 anos'));
-  ok('E qual foi a vez mais recente', selo.includes('mais recente: 2028'));
+  ok('Publicada, passa a contar como tocada em 2028 (15 anos)', seloPublicado.includes('Já tocou em 15 anos'));
+  ok('E qual foi a vez mais recente', seloPublicado.includes('mais recente: 2028'));
   // tom e cantor em branco: a planilha antiga não tinha esses campos
   const tomVazio = await page.evaluate(() => {
     const inp = [...document.querySelectorAll('.musica-name-input')].find(i => i.value === '4 SEMANAS');

@@ -221,11 +221,11 @@ O backup do Google, agendado ou não, vive na **mesma conta Google** do projeto.
 
 ### O rápido: botão no painel
 
-**Painel admin → role até "Todos os carnavais juntos" → "Baixar backup"**. Baixa um arquivo `.json` com os cadastros, os contatos e todos os carnavais (inscrições, posições, ensaios, músicas, valores, presenças). Um clique, sem instalar nada.
+**Painel admin → role até "Todos os carnavais juntos" → "Baixar backup"**. Baixa um arquivo `.json` com os cadastros, os contatos e todos os carnavais (inscrições, posições, ensaios, músicas, valores, presenças e os comprovantes de pagamento). Um clique, sem instalar nada.
 
 Vale rodar antes de encerrar um carnaval, antes de importar dados antigos, e de vez em quando por garantia.
 
-**O que ele não leva:** os comprovantes individuais de pagamento. As regras de segurança reservam cada comprovante ao próprio dono — nem você lê os dos outros, e isso é intencional. O total pago de cada pessoa vai junto (ele fica na inscrição), então o financeiro consolidado está salvo; o que falta é o detalhe de cada lançamento. É exatamente esse buraco que o script abaixo fecha.
+Os comprovantes passaram a entrar quando as regras de segurança começaram a deixar a organização lê-los — antes ficavam de fora por falta de permissão, e era justamente o dado que não dá para reconstruir depois. **Se o arquivo baixado trouxer um aviso dizendo que não foi possível lê-los**, é sinal de que as regras atualizadas ainda não foram publicadas no Console do Firebase; publique e gere o backup de novo. O script abaixo continua sendo o backup completo de verdade, porque roda fora do navegador e não depende de regra nenhuma.
 
 ### O completo: script no seu computador
 
@@ -292,6 +292,12 @@ No Windows, **Agendador de Tarefas** → Criar Tarefa Básica → semanal → In
 
 **Como registro quais músicas foram ensaiadas?** Painel admin → "Repertório / músicas" cadastra o repertório (nome, tom e cantor(a) de cada música, em ordem alfabética). Depois, em Painel admin → Ensaios, cada data tem um botão "Editar músicas" onde você marca quais músicas dessa lista foram tocadas naquele ensaio. Tanto o repertório quanto as marcações valem só para a edição em que foram feitos.
 
+**Dá para montar o repertório sem anunciar antes da hora?** Dá. **Toda música nova entra como rascunho**, com um selo "Rascunho" na linha. Enquanto está assim, ela não aparece na área do batuqueiro, não pode ser marcada num ensaio e não conta no histórico — é como se ainda não existisse para o resto do bloco. Quando estiver do jeito que você quer, publique: o botão **"Publicar"** na linha da música solta uma de cada vez, e o aviso amarelo no topo da tela tem um botão para **publicar todas de uma vez**. Publicar e despublicar gravam na hora, sem depender do "Salvar todas as músicas" — e o "Salvar todas" mexe só em nome, tom e cantor(a), nunca devolve uma música publicada para rascunho.
+
+Uma música já publicada pode voltar para rascunho pelo botão **"Voltar para rascunho"**. Se ela já estava marcada em algum ensaio, o site avisa: ela some da lista daquele ensaio para os batuqueiros, mas a marcação continua guardada e reaparece quando você publicar de novo.
+
+> **O rascunho esconde da tela, não do banco.** As regras do Firestore deixam qualquer pessoa com cadastro no site ler a coleção de músicas do carnaval, então alguém que saiba abrir o console do navegador consegue ver as músicas em rascunho. Serve para não anunciar antes da hora para o bloco — não é segredo à prova de curioso técnico. Se quiser fechar isso de verdade, dá para mudar a regra para o batuqueiro só conseguir ler as músicas publicadas; é uma alteração maior, que muda como o site lê a lista e exige marcar as músicas antigas, e por isso não foi feita junto.
+
 **Quem fica isento da anuidade?** Três situações, e basta uma delas: quem respondeu que NÃO vai tocar naquele carnaval; quem está numa função marcada como isenta (Voz, Mestre, Apoio etc., configurável em Posições); e quem recebeu isenção individual pelo painel. Se a pessoa já tinha pago antes de ficar isenta, o valor continua aparecendo para ela e no relatório — a cobrança some, o registro não.
 
 **Alguém lançou um pagamento errado. Dá para corrigir?** De dois jeitos.
@@ -340,7 +346,9 @@ Vale entender por que o contato precisou ficar separado, porque a mesma armadilh
 
 **O site tem aviso de privacidade?** Sim, no rodapé de todas as telas: o que é guardado, para que serve, quem enxerga o quê e como pedir correção ou exclusão. Sobre a LGPD, vale a ressalva honesta: um bloco de carnaval fica numa zona cinzenta da lei (o art. 4º, I exclui tratamento feito por pessoa natural para fins particulares e não econômicos, mas há cobrança de anuidade aqui). O aviso e a restrição do contato não são um parecer jurídico — são o mínimo razoável, e existem principalmente porque as pessoas estão entregando telefone e data de nascimento para um site.
 
-**Como faço para exportar a lista para uma planilha?** No painel admin, em **Cadastros**, há dois botões: **"Baixar Excel (.xlsx)"** e **"Baixar CSV"**. Os dois trazem exatamente o mesmo conteúdo — uma linha por pessoa inscrita no carnaval que estiver selecionado, com nome, apelido, e-mail, celular, nascimento, idade, se vai tocar, posição, camisa, isenção e o motivo dela, forma de pagamento, valor devido, valor pago, saldo, situação, presenças e os acessos de organização. O filtro de posição da tela não muda o arquivo: a planilha sai sempre completa.
+**Como faço para exportar a lista para uma planilha?** No painel admin, em **Cadastros**, há dois botões: **"Baixar Excel (.xlsx)"** e **"Baixar CSV"**. Os dois trazem exatamente o mesmo conteúdo — uma linha por pessoa inscrita no carnaval que estiver selecionado, com nome, apelido, e-mail, celular, nascimento, idade, se vai tocar, posição, camisa, isenção e o motivo dela, forma de pagamento, valor devido, valor pago, saldo, quanto pagou a mais, situação, presenças e os acessos de organização. O filtro de posição da tela não muda o arquivo: a planilha sai sempre completa.
+
+> **Valor devido e Saldo saem em branco para quem ainda não escolheu a forma de pagamento** — em branco, não zero. Não dá para dizer quanto essa pessoa deve, e sair zero fazia a soma da coluna Saldo no Excel responder que não falta entrar nada, com a bateria inteira ainda sem plano escolhido. A coluna **Pago a mais** só é preenchida quando alguém pagou acima do plano, o que normalmente acontece quando o plano é trocado depois do pagamento.
 
 Sobre os dois formatos: o **.xlsx** é a planilha nativa do Excel, com cabeçalho e colunas dimensionadas, mas ele precisa buscar uma biblioteca na internet no momento do clique. Se essa busca falhar (internet ruim, rede corporativa bloqueando), o site avisa e baixa o **CSV** no lugar, sem perder o clique. O **CSV** não depende de nada e abre no Excel em português já separado em colunas — ele é gravado com ponto-e-vírgula e com a marca de codificação que faz os acentos aparecerem certos. Se você abrir o CSV no Google Sheets em vez do Excel, escolha ponto-e-vírgula como separador na importação.
 
@@ -348,7 +356,7 @@ A primeira linha do arquivo é um aviso de que ali há dados pessoais. Ele não 
 
 **Como acho quem ainda não pagou?** No **relatório geral de pagamentos** há quatro filtros que funcionam juntos: Status, Posição, **Pago** e **Saldo**. Os dois de valor trabalham por faixa de R$ 100, geradas a partir dos valores daquele carnaval — então acompanham a anuidade de cada ano sozinhas. Cada um tem ainda a opção mais usada em destaque: "Não pagou nada" e "Não deve nada".
 
-O rodapé da tabela soma o que está na tela, acompanhando os filtros: quantas pessoas, quanto já entrou e quanto falta entrar naquele recorte.
+O rodapé da tabela soma o que está na tela, acompanhando os filtros: quantas pessoas, quanto já entrou e quanto falta entrar naquele recorte. Embaixo do total de saldo ele avisa quantas pessoas do recorte ainda não têm saldo definido, para o número não ser lido como "só falta isso".
 
 > Quem ainda não escolheu a forma de pagamento não tem saldo definido — não dá para dizer que deve zero nem que deve tudo. Essas pessoas só aparecem com o filtro de Saldo em "Qualquer valor"; para achá-las, use o filtro de Status em "Sem plano".
 

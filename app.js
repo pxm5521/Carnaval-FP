@@ -163,6 +163,8 @@ const session = {
   repHistFiltro: "",
   repHistOrdem: "alfabetica",
   repSugestaoFiltro: "",
+  relatorioFiltroPago: "todos",
+  relatorioFiltroSaldo: "todos",
   // Comprovantes da pessoa que o admin está editando. Carregados sob demanda —
   // não faz sentido manter um listener aberto para os pagamentos de todo mundo.
   pagsDoEditado: null,
@@ -184,10 +186,33 @@ const ordenarMusicasAlfabetica = ordenarPosicoesAlfabetica;
 function posicoesUnicasOrdenadas(pessoas) {
   return [...new Set(pessoas.map(p => p.posicao))].sort((a, b) => (a || "").localeCompare(b || "", "pt-BR", { sensitivity: "base" }));
 }
+/* ------------------------------------------------------------
+   Rascunho de repertório
+   ------------------------------------------------------------
+   Cada música do carnaval carrega um campo `rascunho`. Enquanto ele for true, a
+   música existe só para o admin: não aparece para o batuqueiro, não entra na
+   lista de ensaio e não conta no histórico. Publicar é tirar essa marca.
+
+   Música antiga, gravada antes deste campo existir, não tem `rascunho` — por
+   isso o teste é `=== true` e não "é verdadeiro": o que já estava publicado
+   continua publicado, ninguém some da tela por causa da atualização.
+
+   Aviso que vale repetir: isto esconde da TELA, não do banco. A regra do
+   Firestore deixa qualquer pessoa logada ler a coleção de músicas, então quem
+   souber abrir o console do navegador consegue ver o rascunho. Serve para não
+   anunciar antes da hora, não para guardar segredo.
+   ------------------------------------------------------------ */
+function ehRascunho(m) { return !!m && m.rascunho === true; }
+function musicasPublicadas(lista) { return (lista || musicasCache).filter(m => !ehRascunho(m)); }
+function musicasEmRascunho(lista) { return (lista || musicasCache).filter(ehRascunho); }
+
 /* Nome da música + tom/cantor entre parênteses, quando cadastrados (ex: "Vem Ni Mim (Sol maior · Carla)"). */
 function musicaResumo(id) {
   const m = musicasCache.find(x => x.id === id);
-  if (!m) return null;
+  // Música que voltou para rascunho depois de ter sido marcada num ensaio sai da
+  // linha do ensaio também — senão o nome vazaria justamente por onde o
+  // batuqueiro olha.
+  if (!m || ehRascunho(m)) return null;
   const extras = [m.tom, m.cantor].filter(Boolean).join(" · ");
   return extras ? `${m.nome} (${extras})` : m.nome;
 }
@@ -365,6 +390,8 @@ function limparEstadoDeSessao() {
   repHistFiltro: "",
   repHistOrdem: "alfabetica",
   repSugestaoFiltro: "",
+  relatorioFiltroPago: "todos",
+  relatorioFiltroSaldo: "todos",
   // Comprovantes da pessoa que o admin está editando. Carregados sob demanda —
   // não faz sentido manter um listener aberto para os pagamentos de todo mundo.
   pagsDoEditado: null,
@@ -437,13 +464,7 @@ function ensureEdicaoListeners() {
   teardownEdicaoListeners();
   edicaoListenersFor = eid;
   limparCachesDaEdicao();
-  // Os rascunhos de posições/músicas pertencem à edição anterior. Sem zerá-los
-  // aqui, uma troca de edição que acontece SOZINHA (outro admin abre um novo
-  // carnaval, e o contexto muda por baixo) deixava a tela com o cabeçalho do
-  // carnaval novo e as linhas do antigo — e "Salvar" gravava por cima, porque a
-  // cópia entre edições preserva os ids dos documentos.
-  session.posicoesDraft = null; session.musicasDraft = null;
-  session.ensaioMusicasAberto = null; session.ensaioMusicasDraft = null;
+  limparEstadoDaEdicao();
   edicaoCarregou = { posicoes: false, precos: false, musicas: false, inscricoes: false };
   if (!eid || !fbUser) return;
 
@@ -474,7 +495,9 @@ function ensureEdicaoListeners() {
 
   unsubEd.musicas = onSnapshot(P.musicas(eid), snap => {
     musicasCache = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-    musicasDaEdicaoCache[eid] = new Map(musicasCache.map(m => [(m.nome || "").trim().toLowerCase(), m.nome]));
+    // Só as publicadas entram no histórico: o que está em rascunho ainda não é
+    // repertório deste carnaval.
+    musicasDaEdicaoCache[eid] = new Map(musicasPublicadas().map(m => [chaveMusica(m.nome), m.nome]));
     edicaoCarregou.musicas = true;
     renderExterno();
   }, onErr("músicas"));
@@ -503,12 +526,21 @@ function ensureEdicaoListeners() {
 }
 
 /* Troca a edição que está sendo visualizada (só o admin faz isso). */
-function trocarEdicaoCtx(eid) {
-  session.edicaoId = eid;
+/* Tudo que na sessão pertence a UMA edição. Precisa rodar tanto quando o admin
+   troca de carnaval no seletor quanto quando a troca acontece sozinha — outro
+   organizador abre um carnaval novo e o contexto muda por baixo de quem está
+   com uma tela aberta. Antes, a troca automática limpava só os rascunhos, e o
+   resto atravessava: o cadastro que estava aberto continuava aberto, com os
+   COMPROVANTES da edição anterior na tela; o botão "Acertar total" ali do lado
+   gravava aquele valor na inscrição do carnaval novo, dando por quitada uma
+   pessoa que não pagou nada nele. */
+function limparEstadoDaEdicao() {
   session.posicoesDraft = null; session.musicasDraft = null;
   session.ensaioMusicasAberto = null; session.ensaioMusicasDraft = null;
   session.adminEditingUser = null;
   session.editingMyData = false;
+  // Comprovantes carregados sob demanda: são de uma pessoa NUMA edição.
+  session.pagsDoEditado = null; session.pagsDoEditadoDe = null; session.pagsDoEditadoBusy = false;
   // Os filtros guardam id de ensaio e nome de posição, que não existem na outra
   // edição: mantê-los deixava a tabela de presença sem nenhuma coluna e a lista
   // de cadastros vazia, com o seletor exibindo "Todos"/"Todas" — ou seja,
@@ -519,6 +551,11 @@ function trocarEdicaoCtx(eid) {
   session.relatorioFiltroPosicao = "todas";
   session.relatorioFiltroPago = "todos";
   session.relatorioFiltroSaldo = "todos";
+}
+
+function trocarEdicaoCtx(eid) {
+  session.edicaoId = eid;
+  limparEstadoDaEdicao();
   ensureEdicaoListeners();
   render();
 }
@@ -590,7 +627,10 @@ const $ = (sel, el = document) => el.querySelector(sel);
 const esc = v => String(v == null ? "" : v)
   .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
   .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
-const currency = v => (v || 0).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+/* Passa por numero() porque o valor pode chegar como texto do formato antigo:
+   String.prototype.toLocaleString ignora as opções de moeda e devolveria a
+   própria string, então "150,00" saía na tela sem o R$ e sem soma possível. */
+const currency = v => numero(v).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
 /* Escapa na origem: esta função é interpolada crua em dezenas de pontos, e as
    datas vêm do banco (inclusive de importação de dados antigos, que ninguém
    validou). Escapar aqui é mais seguro que lembrar de escapar em cada uso. */
@@ -606,10 +646,34 @@ const nomeExibicao = u => apelidoDe(u) || (u && u.nome) || "";
 const nomeComApelido = u => `${esc(fullName(u))}${apelidoDe(u) ? ` <span class="muted-sm">“${esc(apelidoDe(u))}”</span>` : ""}`;
 /* Texto usado para busca: encontra tanto pelo nome quanto pelo apelido. */
 const textoBusca = u => `${fullName(u)} ${apelidoDe(u)}`.trim().toLowerCase();
-const hojeISO = () => new Date().toISOString().slice(0, 10);
+/* Data de hoje no fuso de quem está usando o site. NÃO pode ser toISOString():
+   aquilo devolve UTC, e no Brasil (UTC-3) das 21h em diante já é o dia seguinte.
+   O efeito era o site virar o dia à noite: parcela marcada como atrasada 27h
+   antes do prazo, ensaio de amanhã contado como realizado, e o campo "data em
+   que você pagou" vindo preenchido com a data de amanhã. */
+const hojeISO = () => {
+  const d = new Date();
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const dd = String(d.getDate()).padStart(2, "0");
+  return `${d.getFullYear()}-${mm}-${dd}`;
+};
 const ensaioLabel = e => dateBR(e.data);
+/* Data de nascimento válida é só o formato aaaa-mm-dd. Vale para tudo que vem
+   do banco: o formato antigo guardava "10/05/1990" em alguns cadastros, e essa
+   string entrava direto em calcIdade, que devolvia NaN — a tela imprimia
+   "(NaN anos)" e a planilha exportada saía com NaN na coluna Idade. */
+const ehDataISO = v => /^\d{4}-\d{2}-\d{2}$/.test(String(v || ""));
+function dataNascimentoNormalizada(v) {
+  const texto = String(v || "").trim();
+  if (ehDataISO(texto)) return texto;
+  // "10/05/1990" e "10-05-1990" são o formato brasileiro do cadastro antigo.
+  const br = texto.match(/^(\d{2})[\/-](\d{2})[\/-](\d{4})$/);
+  if (br) return `${br[3]}-${br[2]}-${br[1]}`;
+  return "";
+}
+
 function calcIdade(dataNascISO) {
-  if (!dataNascISO) return null;
+  if (!ehDataISO(dataNascISO)) return null;
   const [y, m, d] = dataNascISO.split("-").map(Number);
   const hoje = new Date();
   let idade = hoje.getFullYear() - y;
@@ -702,14 +766,25 @@ function posicaoOptionsHtml(selected) {
   return opts;
 }
 function chavePixDaEdicao() { return ((precosCache && precosCache.chavePix) || "").trim(); }
-function valorDoPlano(k) { return precosCache && precosCache[k] ? precosCache[k].valor : 0; }
+/* Dinheiro que vem do banco pode chegar como texto: o formato antigo gravava
+   "150,00" e a migração copia o campo cru. Sem converter, `0 + "150,00" + 100`
+   vira a string "0150,00100" no tile de arrecadação e `"150,00" / 250` vira NaN
+   na barra de progresso — e a comparação com o valor devido nunca é verdadeira,
+   então a pessoa não quita nunca. Aceita ponto e vírgula decimal. */
+function numero(v) {
+  if (typeof v === "number") return isFinite(v) ? v : 0;
+  if (v === null || v === undefined || v === "") return 0;
+  const n = parseFloat(String(v).replace(/\s/g, "").replace(/\.(?=\d{3}\b)/g, "").replace(",", "."));
+  return isFinite(n) ? n : 0;
+}
+function valorDoPlano(k) { return precosCache && precosCache[k] ? numero(precosCache[k].valor) : 0; }
 function prazosDoPlano(k) { return precosCache && precosCache[k] ? precosCache[k].prazos : []; }
 function totalDevido(u) { return planoValido(u.formaPagamento) ? valorDoPlano(u.formaPagamento) : null; }
 function planoLabel(k) {
   const p = PLANOS[k], total = valorDoPlano(k);
   return p.parcelas === 1 ? `${p.label} — ${currency(total)}` : `${p.label} — ${currency(total)} (${p.parcelas}x de ${currency(total / p.parcelas)})`;
 }
-function totalPago(u) { return u.totalPago || 0; }
+function totalPago(u) { return numero(u.totalPago); }
 /* Só trata como plano válido o que existe em PLANOS — protege contra um valor
    inesperado gravado no banco (dado antigo, importação, edição manual). */
 function planoValido(k) { return !!(k && PLANOS[k]); }
@@ -720,6 +795,22 @@ function planoValido(k) { return !!(k && PLANOS[k]); }
    adimplência do painel indo a 100% sem ninguém ter pago nada. */
 function planoComValor(u) { return planoValido(u.formaPagamento) && !!precosCache && valorDoPlano(u.formaPagamento) > 0; }
 
+/* Tolerância de centavo do parcelamento.
+
+   A parcela é exibida arredondada (R$ 250 em 3x vira "3x de R$ 83,33"), mas a
+   conferência usava o alvo exato. Quem pagava exatamente o que o site pediu
+   depositava 83,33 tres vezes = R$ 249,99 e ficava eternamente "Atrasado", com
+   saldo de R$ 0,01 e fora da adimplência. Cada parcela pode se afastar meio
+   centavo do exato por causa do arredondamento, então a folga aceita é meio
+   centavo por parcela — o suficiente para o erro de exibição, pequeno demais
+   para perdoar qualquer pagamento a menos de verdade. */
+function folgaDeCentavos(parcelas) { return 0.005 * Math.max(1, parcelas || 1); }
+function estaQuitado(u) {
+  const meta = totalDevido(u);
+  const { parcelas } = PLANOS[u.formaPagamento] || { parcelas: 1 };
+  return totalPago(u) >= meta - folgaDeCentavos(parcelas);
+}
+
 function parcelasInfo(u) {
   if (!planoComValor(u)) return [];
   const { parcelas } = PLANOS[u.formaPagamento];
@@ -727,7 +818,8 @@ function parcelasInfo(u) {
   const valorParcela = meta / parcelas;
   const out = [];
   for (let i = 0; i < parcelas; i++) {
-    const alvo = valorParcela * (i + 1);
+    // A última parcela fecha no total devido, não no múltiplo do valor exibido.
+    const alvo = i === parcelas - 1 ? meta - folgaDeCentavos(parcelas) : valorParcela * (i + 1);
     const prazo = prazos[i];
     let status;
     if (pago >= alvo - 0.005) status = { label: "Paga", cls: "badge-good" };
@@ -742,8 +834,7 @@ function isAtrasado(u) { return parcelasInfo(u).some(p => p.status.label === "At
 function paymentStatus(u) {
   if (isIsento(u)) return { label: "Isenta", cls: "badge-isenta" };
   if (!planoComValor(u)) return { label: "Sem plano", cls: "badge-warning" };
-  const pago = totalPago(u), meta = totalDevido(u);
-  if (pago >= meta) return { label: "Quitado", cls: "badge-good" };
+  if (estaQuitado(u)) return { label: "Quitado", cls: "badge-good" };
   if (isAtrasado(u)) return { label: "Atrasado", cls: "badge-critical" };
   return { label: "No prazo", cls: "badge-warning" };
 }
@@ -810,6 +901,15 @@ function valorNaFaixa(valor, chave) {
   if (chave === "zero") return valor === 0;
   const [min, max] = chave.split("-").map(Number);
   return valor > min && valor <= max;
+}
+/* A faixa escolhida some do seletor quando o maior valor da lista cai (alguém
+   saiu da edição, o filtro de posição mudou). Sem validar, nenhuma <option>
+   ficava marcada, o navegador exibia "Qualquer valor" e o filtro ANTIGO
+   continuava valendo: a tabela dizia "Ninguém encontrado" e não havia como
+   desfazer, porque reselecionar o que já aparece não dispara change. */
+function faixaValida(chave, valores) {
+  if (!chave || chave === "todos" || chave === "zero") return chave || "todos";
+  return faixasDeValor(valores).some(f => f.chave === chave) ? chave : "todos";
 }
 function selectDeFaixa(id, rotulo, valorAtual, valores, rotuloZero) {
   const faixas = faixasDeValor(valores);
@@ -923,6 +1023,14 @@ function seletorDoCampo(el) {
   return `${el.tagName.toLowerCase()}${classe ? "." + CSS.escape(classe) : ""}${attrs}`;
 }
 
+/* De qual edição são os campos que estão na tela agora. Gravado a cada render e
+   comparado na hora de restaurar: quando a troca de carnaval acontece sozinha
+   (outro organizador abre uma edição nova), a foto dos formulários pertence ao
+   carnaval antigo, e restaurá-la em cima da tela nova é pior do que perder o que
+   foi digitado — a tela de Valores passava a mostrar o cabeçalho do carnaval
+   novo com os preços do antigo, e "Salvar" gravava os preços errados por cima. */
+let domDaEdicao = null;
+
 function fotografarFormularios() {
   const app = document.getElementById("app");
   if (!app) return null;
@@ -952,19 +1060,27 @@ function fotografarFormularios() {
   const foco = ativo && app.contains(ativo) ? seletorDoCampo(ativo) : null;
   let selInicio = null, selFim = null;
   if (foco && typeof ativo.selectionStart === "number") { selInicio = ativo.selectionStart; selFim = ativo.selectionEnd; }
-  return { valores, pills, visibilidade, foco, selInicio, selFim };
+  return { valores, pills, visibilidade, foco, selInicio, selFim, edicao: domDaEdicao };
 }
 
 function restaurarFormularios(foto) {
   if (!foto) return;
+  if (foto.edicao !== domDaEdicao) return;   // a tela trocou de carnaval no meio
   const app = document.getElementById("app");
   if (!app) return;
   foto.valores.forEach(({ sel, valor }) => {
     let el;
     try { el = app.querySelector(sel); } catch { return; }
     if (!el) return;
-    if (el.type === "checkbox" || el.type === "radio") el.checked = valor;
-    else el.value = valor;
+    if (el.type === "checkbox" || el.type === "radio") { el.checked = valor; return; }
+    // Num <select>, repor um valor que não existe mais entre as opções deixa o
+    // campo com value "" e o navegador exibindo a primeira opção — o seletor
+    // passa a mentir sobre o próprio estado. Acontece sempre que a lista de
+    // opções encolhe (uma faixa de valor some, um ensaio é removido). Nesse
+    // caso a escolha recém-renderizada é a boa: ela já foi validada por quem
+    // desenhou a tela.
+    if (el.tagName === "SELECT" && !Array.from(el.options).some(o => o.value === valor)) return;
+    el.value = valor;
   });
   (foto.pills || []).forEach(({ row, valor }) => {
     const el = document.getElementById(row);
@@ -994,6 +1110,7 @@ function renderExterno() {
 
 function render() {
   const app = document.getElementById("app");
+  domDaEdicao = edicaoCtxId();
   let html = "";
 
   if (fbUser) {
@@ -1401,7 +1518,7 @@ function viewBatuqueiro() {
     </div>
 
     <!-- BOX 4: REPERTÓRIO ENSAIADO -->
-    ${musicasCache.length > 0 ? `
+    ${musicasPublicadas().length > 0 ? `
     <div class="card">
       <div class="card-head">
         <div><h2>Repertório</h2><p class="card-sub" style="margin-bottom:0">Músicas do ${esc(edicaoLabel(ed))} e em quais ensaios cada uma foi tocada</p></div>
@@ -1410,7 +1527,7 @@ function viewBatuqueiro() {
         <table>
           <thead><tr><th>Música</th><th>Tom</th><th>Cantor(a)</th><th>Ensaiada em</th></tr></thead>
           <tbody>
-            ${ordenarMusicasAlfabetica(musicasCache).map(m => {
+            ${ordenarMusicasAlfabetica(musicasPublicadas()).map(m => {
               const datas = ensaiosCache.filter(e => (e.musicaIds || []).includes(m.id)).map(ensaioLabel);
               return `<tr>
                 <td class="name-cell">${esc(m.nome)}</td>
@@ -1474,11 +1591,16 @@ function renderPaymentBoxBody(u, editavel = true) {
   }
   const meta = totalDevido(u);
   const pago = totalPago(u);
-  const pct = meta ? Math.min(100, Math.round((pago / meta) * 100)) : 0;
+  const pct = meta > 0 ? Math.min(100, Math.round((pago / meta) * 100)) : 0;
   const parcelas = parcelasInfo(u);
+  // Pagou mais do que o plano cobra — acontece quando o plano é trocado depois
+  // do pagamento (de 3x R$ 250 para à vista R$ 210, por exemplo). Sem dizer isso
+  // aqui, o crédito sumia: a barra travava em 100% e o saldo em R$ 0,00.
+  const credito = pago - meta;
   return `
     <div class="progress-bar"><div style="width:${pct}%"></div></div>
     <div class="hint">${currency(pago)} pagos de ${currency(meta)} (${pct}%)</div>
+    ${credito > 0.005 ? `<div class="hint"><b>Você pagou ${currency(credito)} a mais do que este plano cobra.</b> Fale com a organização para devolver ou usar como crédito.</div>` : ""}
 
     <div style="margin-top:14px;">
       ${parcelas.map(pc => `
@@ -1743,12 +1865,14 @@ function statusPagamentoHistorico(insc, posicoes, precos) {
   const cfg = precos[insc.formaPagamento];
   // valor 0 não é "quitado": é anuidade que ninguém configurou ainda.
   if (!cfg || !(cfg.valor > 0)) return "Sem plano";
-  const pago = insc.totalPago || 0;
-  if (pago >= cfg.valor) return "Quitado";
+  const pago = numero(insc.totalPago);
   const parcelas = PLANOS[insc.formaPagamento].parcelas;
+  // Mesma folga de centavo do resto do site: sem ela, 3x de R$ 83,33 somava
+  // R$ 249,99 e a pessoa aparecia "Atrasado" no histórico por um centavo.
+  if (pago >= cfg.valor - folgaDeCentavos(parcelas)) return "Quitado";
   const hoje = hojeISO();
   for (let i = 0; i < parcelas; i++) {
-    const alvo = (cfg.valor / parcelas) * (i + 1);
+    const alvo = i === parcelas - 1 ? cfg.valor - folgaDeCentavos(parcelas) : (cfg.valor / parcelas) * (i + 1);
     const prazo = (cfg.prazos || [])[i];
     if (pago < alvo - 0.005 && prazo && prazo <= hoje) return "Atrasado";
   }
@@ -1783,7 +1907,7 @@ function dadosDaExportacao() {
     "Nome", "Sobrenome", "Apelido", "E-mail", "Celular", "Data de nascimento", "Idade",
     "Vai tocar", "Posição", "Camisa",
     "Isento", "Motivo da isenção",
-    "Forma de pagamento", "Valor devido", "Valor pago", "Saldo", "Situação",
+    "Forma de pagamento", "Valor devido", "Valor pago", "Saldo", "Pago a mais", "Situação",
     "Presenças", "Total de ensaios", "% presença",
     "Acesso admin", "Marca presença",
   ];
@@ -1792,8 +1916,16 @@ function dadosDaExportacao() {
     const presencas = ensaios.filter(e => presencasCache[p.id] && presencasCache[p.id][e.id]).length;
     const isento = isIsento(p);
     // Quem é isento não deve nada, mesmo tendo plano escolhido antes da isenção.
+    const semPlano = !isento && !planoComValor(p);
     const devido = isento ? 0 : (planoComValor(p) ? valorDoPlano(p.formaPagamento) : 0);
     const pago = totalPago(p);
+    // Quem ainda não escolheu o plano não deve zero — não se sabe quanto deve.
+    // Sair como 0 fazia a soma da coluna "Saldo" no Excel dizer que não falta
+    // entrar nada, com a bateria inteira sem plano escolhido.
+    const saldo = semPlano ? "" : Math.max(0, devido - pago);
+    // Pagou mais do que o plano cobra (normalmente porque o plano foi trocado
+    // depois do pagamento). O crédito ficava escondido pelo Math.max.
+    const credito = !semPlano && pago > devido ? pago - devido : "";
     return [
       p.nome || "", p.sobrenome || "", apelidoDe(p), p.email || "",
       p.celular || "", p.dataNascimento ? dateBR(p.dataNascimento) : "",
@@ -1802,7 +1934,7 @@ function dadosDaExportacao() {
       p.camisa || "",
       isento ? "Sim" : "Não", isento ? isentoMotivo(p) : "",
       planoValido(p.formaPagamento) ? PLANOS[p.formaPagamento].label : "",
-      devido, pago, Math.max(0, devido - pago),
+      semPlano ? "" : devido, pago, saldo, credito,
       paymentStatus(p).label,
       presencas, totalEnsaios,
       totalEnsaios ? Math.round((presencas / totalEnsaios) * 100) + "%" : "",
@@ -1847,12 +1979,13 @@ async function baixarBackup() {
       geradoEm: new Date().toISOString(),
       geradoPor: (meuCadastro() && meuCadastro().email) || "",
       formato: 1,
-      aviso: "Backup parcial: NÃO inclui os comprovantes individuais de pagamento, que as regras de segurança reservam a cada dono. Contém dados pessoais da bateria — guarde em local privado.",
+      aviso: "Contém dados pessoais da bateria (telefone, data de nascimento e os comprovantes de pagamento) — guarde em local privado.",
       pessoas: await lerColecao(P.pessoas()),
       contatos: await lerColecao(P.contatos()),
       edicoes: {},
     };
 
+    const naoLidos = [];
     const edicoes = await getDocs(P.edicoes());
     for (const ed of edicoes.docs) {
       const eid = ed.id;
@@ -1863,6 +1996,16 @@ async function baixarBackup() {
         ensaios: await lerColecao(P.ensaios(eid)),
         musicas: await lerColecao(P.musicas(eid)),
         presencas: await lerColecao(P.presencas(eid)),
+        // Os comprovantes entram desde que as regras passaram a deixar o admin
+        // lê-los. Antes ficavam de fora por falta de permissão, e o backup saía
+        // sem o detalhe de cada lançamento — justamente o que não dá para
+        // reconstruir depois. Se a leitura falhar (regra antiga ainda publicada),
+        // o backup continua, marcando o que faltou em vez de morrer na metade.
+        pagamentos: await lerColecao(P.pagamentos(eid)).catch(err => {
+          console.warn("backup: pagamentos de " + eid, err);
+          naoLidos.push(eid);
+          return null;
+        }),
         config: {},
       };
       const precos = await getDoc(P.precos(eid));
@@ -1875,7 +2018,8 @@ async function baixarBackup() {
       `backup-carnaval-FP-${hojeISO()}.json`,
       new Blob([JSON.stringify(backup, null, 2)], { type: "application/json" })
     );
-    showToast(`Backup baixado: ${quantas} cadastros e ${quantasEd} carnaval${quantasEd === 1 ? "" : "s"}.`);
+    if (naoLidos.length) backup.aviso += " ATENÇÃO: não foi possível ler os comprovantes de pagamento de " + naoLidos.join(", ") + " — publique as regras de segurança atualizadas e gere o backup de novo.";
+    showToast(`Backup baixado: ${quantas} cadastros e ${quantasEd} carnaval${quantasEd === 1 ? "" : "s"}.${naoLidos.length ? " Sem os comprovantes — veja o aviso no arquivo." : ""}`);
   } catch (err) {
     alert("Não foi possível montar o backup: " + friendlyFirestoreError(err));
   }
@@ -2017,7 +2161,7 @@ function viewAdmin() {
   // planoComValor, não planoValido: com um plano de valor 0 (documento de preços
   // incompleto), totalPago >= 0 é sempre verdade e a adimplência ia a 100% com o
   // painel logo abaixo dizendo "Sem plano: 12". É o mesmo guard de paymentStatus.
-  const quitados = pagantes.filter(p => planoComValor(p) && totalPago(p) >= totalDevido(p)).length;
+  const quitados = pagantes.filter(p => planoComValor(p) && estaQuitado(p)).length;
   const adimplencia = pagantes.length ? Math.round((quitados / pagantes.length) * 100) : 0;
   const hoje = hojeISO();
   const ensaiosRealizados = ensaiosCache.filter(e => e.data <= hoje);
@@ -2081,7 +2225,7 @@ function viewAdmin() {
     </div>` : ""}
 
     <div class="stat-row">
-      <div class="stat-tile"><div class="label">Vão desfilar</div><div class="value">${totalInscritos}</div></div>
+      <div class="stat-tile"><div class="label">Vão desfilar</div><div class="value">${totalInscritos}</div>${totalInscritos !== confirmados ? `<div class="sub">${confirmados} confirmaram, ${totalInscritos - confirmados} ainda não responderam</div>` : ""}</div>
       <div class="stat-tile"><div class="label">Avisaram que não vão tocar</div><div class="value">${foraDesteCarnaval.length}</div></div>
       <div class="stat-tile"><div class="label">Arrecadado</div><div class="value">${currency(arrecadado)}</div></div>
       <div class="stat-tile"><div class="label">Adimplência (pagantes)</div><div class="value">${adimplencia}<small>%</small></div></div>
@@ -2112,7 +2256,7 @@ function viewAdmin() {
 
     <div class="card">
       <div class="card-head">
-        <div><h2>Repertório / músicas</h2><p class="card-sub" style="margin-bottom:0">${musicasCache.length} música${musicasCache.length === 1 ? "" : "s"} cadastrada${musicasCache.length === 1 ? "" : "s"}</p></div>
+        <div><h2>Repertório / músicas</h2><p class="card-sub" style="margin-bottom:0">${musicasCache.length} música${musicasCache.length === 1 ? "" : "s"} cadastrada${musicasCache.length === 1 ? "" : "s"}${musicasEmRascunho().length ? ` · <b>${musicasEmRascunho().length} em rascunho</b>` : ""}</p></div>
         <button class="btn-secondary btn-sm" id="btn-goto-musicas">Gerenciar músicas</button>
       </div>
     </div>
@@ -2185,12 +2329,12 @@ function viewAdmin() {
       <div class="card-head">
         <div>
           <h2>Backup do banco</h2>
-          <p class="card-sub" style="margin-bottom:0">Baixa num arquivo só os cadastros, os contatos e todos os carnavais com ensaios, músicas, posições, valores, inscrições e presenças</p>
+          <p class="card-sub" style="margin-bottom:0">Baixa num arquivo só os cadastros, os contatos e todos os carnavais com ensaios, músicas, posições, valores, inscrições, presenças e comprovantes de pagamento</p>
         </div>
         <button class="btn-secondary btn-sm" id="btn-backup">Baixar backup</button>
       </div>
       <p class="hint">Vale rodar antes de encerrar um carnaval, antes de importar dados ou de tempos em tempos. O arquivo contém telefone e data de nascimento de todo mundo — guarde num lugar privado, não no grupo.</p>
-      <p class="hint"><b>O que este backup não leva:</b> os comprovantes individuais de pagamento. As regras de segurança reservam cada comprovante ao próprio dono — nem você lê os dos outros, e isso é de propósito. O total pago de cada pessoa vai junto, então o financeiro consolidado está coberto; falta só o detalhe de cada lançamento. Para o backup completo, use os scripts da pasta <code>backup/</code> — o SETUP explica em cinco passos.</p>
+      <p class="hint">O arquivo leva também os comprovantes de pagamento de cada pessoa, que hoje as regras deixam a organização ler. Se o backup avisar que não conseguiu lê-los, é sinal de que as regras de segurança atualizadas ainda não foram publicadas no Console do Firebase. Para o backup completo do banco, fora do navegador, use os scripts da pasta <code>backup/</code> — o SETUP explica em cinco passos.</p>
     </div>
   </div>`;
 }
@@ -2301,19 +2445,39 @@ async function carregarRepertorioHistorico() {
 }
 
 /* Anos do arquivo, do mais recente para o mais antigo. */
+/* Os anos do arquivo. Não é só a lista dos que têm música marcada: se fosse,
+   um ano em que ninguém marcou nada não teria coluna nem opção no seletor —
+   não haveria como registrar a primeira música dele. Pior, desmarcar a última
+   música de um ano fazia a coluna desaparecer e o ano virava inalcançável pelo
+   site. Por isso o intervalo é contínuo, do ano mais antigo do arquivo até o
+   mais recente entre arquivo e carnavais do site. */
 function anosDoRepertorioHistorico() {
   const anos = new Set();
   (repertorioHistorico || []).forEach(m => (m.anos || []).forEach(a => anos.add(String(a))));
-  return [...anos].sort((a, b) => b.localeCompare(a));
+  edicoesCache.forEach(e => { const a = String(e.ano || (e.id || "").split("-")[0]); if (/^\d{4}$/.test(a)) anos.add(a); });
+  const numeros = [...anos].map(Number).filter(n => n >= 1900 && n <= 2999);
+  if (!numeros.length) return [];
+  const menor = Math.min(...numeros), maior = Math.max(...numeros);
+  const todos = [];
+  for (let a = maior; a >= menor; a--) todos.push(String(a));
+  return todos;
 }
 
 /* Quantos anos (arquivo + carnavais do site) uma música já teve, e qual foi o
    mais recente. É o que transforma a planilha em ajuda na hora de montar o
    repertório do ano, em vez de tabela para consultar. */
+/* Chave de comparação de nome de música. Uma só, usada em todo lugar que
+   pergunta "é a mesma música?": sem isso, o botão Adicionar comparava sem
+   .trim() enquanto a checagem do Salvar comparava com — dava para criar
+   "Vem Ni Mim " ao lado de "Vem Ni Mim", a música aparecia duas vezes para o
+   batuqueiro e o botão "Salvar todas as músicas" travava a tela inteira
+   acusando nome repetido. */
+function chaveMusica(nome) { return (nome || "").trim().toLowerCase(); }
+
 function historicoDaMusica(nome) {
-  const chave = (nome || "").trim().toLowerCase();
+  const chave = chaveMusica(nome);
   if (!chave) return { anos: [], total: 0, ultimo: null };
-  const reg = (repertorioHistorico || []).find(m => (m.nome || "").trim().toLowerCase() === chave);
+  const reg = (repertorioHistorico || []).find(m => chaveMusica(m.nome) === chave);
   const anosArquivo = reg ? (reg.anos || []).map(String) : [];
   // os carnavais do site entram pelo ano da edição, para a conta ser uma só
   const anosDoSite = edicoesCache
@@ -2342,7 +2506,7 @@ async function carregarMusicasDasOutrasEdicoes() {
   try {
     const snaps = await Promise.all(faltando.map(e => getDocs(P.musicas(e.id))));
     faltando.forEach((e, i) => {
-      musicasDaEdicaoCache[e.id] = new Map(snaps[i].docs.map(d => [(d.data().nome || "").trim().toLowerCase(), d.data().nome]));
+      musicasDaEdicaoCache[e.id] = new Map(snaps[i].docs.filter(d => d.data().rascunho !== true).map(d => [chaveMusica(d.data().nome), d.data().nome]));
     });
   } catch (err) {
     // Sem a trava, o cache continuaria vazio, o render chamaria de novo e a tela
@@ -2432,6 +2596,7 @@ async function carregarHistoricoGeral() {
       const ensaios = ensSnap.docs.map(d => d.data());
       musSnap.docs.forEach(d => {
         const m = d.data();
+        if (m.rascunho === true) return; // rascunho não é repertório: fica fora do histórico
         // As músicas são documentos independentes em cada edição (a cópia de um
         // ano para o outro gera ids novos), então o nome é o que identifica a
         // mesma música ao longo dos carnavais.
@@ -2444,7 +2609,7 @@ async function carregarHistoricoGeral() {
         if (m.cantor) reg.cantor = m.cantor;
         reg.porEdicao[ed.id] = { ensaios: ensaios.filter(e => (e.musicaIds || []).includes(d.id)).length };
       });
-      musicasDaEdicaoCache[ed.id] = new Map(musSnap.docs.map(d => [(d.data().nome || "").trim().toLowerCase(), d.data().nome]));
+      musicasDaEdicaoCache[ed.id] = new Map(musSnap.docs.filter(d => d.data().rascunho !== true).map(d => [chaveMusica(d.data().nome), d.data().nome]));
     }
 
     // O arquivo entra na MESMA lista: uma música que tocou em 2014 e voltou em
@@ -2494,11 +2659,19 @@ function viewAdminHistorico() {
   const termo = (session.histFiltro || "").trim().toLowerCase();
 
   if (session.histGeralBusy || !dados) {
+    // Sem o botão aqui, uma falha de rede deixava a tela girando para sempre: o
+    // toast de erro sumia em segundos e o "Atualizar" só existia no caminho de
+    // sucesso, então não havia como tentar de novo sem sair da tela.
     return `
     ${headerBar(u)}
     <div class="wrap">
       <p><button class="link-btn" id="btn-back-admin8">← Voltar para o painel admin</button></p>
-      <div class="card"><h2>Histórico geral</h2>${viewLoading("Juntando os dados de todos os carnavais...")}</div>
+      <div class="card"><h2>Histórico geral</h2>
+        ${session.histGeralBusy
+          ? viewLoading("Juntando os dados de todos os carnavais...")
+          : `<p class="hint">Não foi possível carregar o histórico agora.</p>
+             <button class="btn-secondary btn-sm" id="btn-recarregar-historico">Tentar de novo</button>`}
+      </div>
     </div>`;
   }
 
@@ -2590,8 +2763,13 @@ function viewAdminHistorico() {
           </tr></thead>
           <tbody id="hist-musicas-tbody">
             ${musicasFiltradas.map(m => {
-              const doArquivo = m.anosArquivo || [];
-              const total = eds.filter(e => m.porEdicao[e.id]).length + doArquivo.length;
+              const doArquivo = (m.anosArquivo || []).map(String);
+              // Contar sem juntar dava número diferente do que a tela de
+              // Repertório mostra para a mesma música: um carnaval do site cujo
+              // ano também está no arquivo era contado duas vezes.
+              const anosDaMusica = new Set(doArquivo);
+              eds.filter(e => m.porEdicao[e.id]).forEach(e => anosDaMusica.add(String(e.ano || (e.id || "").split("-")[0])));
+              const total = anosDaMusica.size;
               return `<tr data-hist-nome="${esc(m.nome.toLowerCase())}">
                 <td class="name-cell">${esc(m.nome)}</td>
                 <td>${esc(m.tom) || "—"}</td>
@@ -2678,9 +2856,9 @@ function viewAdminEnsaios() {
               ${aberto ? `<tr><td colspan="5">
                 <div class="add-pay-form open">
                   <p class="card-sub" style="margin:0 0 10px;">Marque as músicas ensaiadas em ${dateBR(e.data)}:</p>
-                  ${musicasCache.length === 0 ? `<p class="hint">Nenhuma música cadastrada ainda. Cadastre no repertório (painel admin → Repertório / músicas).</p>` : `
+                  ${musicasPublicadas().length === 0 ? `<p class="hint">${musicasEmRascunho().length ? "As músicas deste carnaval ainda estão em rascunho. Publique no repertório (painel admin → Repertório / músicas) para poder marcá-las nos ensaios." : "Nenhuma música cadastrada ainda. Cadastre no repertório (painel admin → Repertório / músicas)."}</p>` : `
                   <div style="display:flex; flex-direction:column; gap:8px;">
-                    ${ordenarMusicasAlfabetica(musicasCache).map(m => `
+                    ${ordenarMusicasAlfabetica(musicasPublicadas()).map(m => `
                       <label style="display:flex; align-items:center; gap:6px; font-weight:400; font-size:13.5px;">
                         <input type="checkbox" class="musica-ensaio-check" data-musica-id="${m.id}" ${draftIds.includes(m.id) ? "checked" : ""} style="width:auto;"> ${esc(m.nome)}${(m.tom || m.cantor) ? ` <span class="hint">${esc([m.tom, m.cantor].filter(Boolean).join(" · "))}</span>` : ""}
                       </label>`).join("")}
@@ -2716,14 +2894,19 @@ function viewAdminRelatorio() {
   // cobrança e reaparece embaixo, só quem tem valor pago.
   const aDevolver = naoVaoTocarNaEdicao().filter(p => totalPago(p) > 0);
   const posicaoFiltro = filtroDePosicaoValido(session.relatorioFiltroPosicao, todos);
+  // Quem não escolheu plano não entra na soma de saldo: não dá para saber quanto
+  // deve, e somar zero faria o rodapé dizer que não falta entrar nada.
+  const filtroPago = faixaValida(session.relatorioFiltroPago, todos.map(totalPago));
+  const filtroSaldo = faixaValida(session.relatorioFiltroSaldo, todos.map(saldoEmAberto));
   const filtrados = todos.filter(p => {
     const st = paymentStatus(p).label;
     const okStatus = !session.relatorioFiltroStatus || session.relatorioFiltroStatus === "todos" || st === session.relatorioFiltroStatus;
     const okPos = posicaoFiltro === "todas" || p.posicao === posicaoFiltro;
-    const okPago = valorNaFaixa(totalPago(p), session.relatorioFiltroPago);
-    const okSaldo = valorNaFaixa(saldoEmAberto(p), session.relatorioFiltroSaldo);
+    const okPago = valorNaFaixa(totalPago(p), filtroPago);
+    const okSaldo = valorNaFaixa(saldoEmAberto(p), filtroSaldo);
     return okStatus && okPos && okPago && okSaldo;
   });
+  const semSaldoConhecido = filtrados.filter(p => saldoEmAberto(p) === null).length;
   return `
   ${headerBar(u)}
   <div class="wrap">
@@ -2745,8 +2928,8 @@ function viewAdminRelatorio() {
             ${posicoesUnicasOrdenadas(todos).map(pos => `<option value="${esc(pos)}" ${posicaoFiltro === pos ? "selected" : ""}>${esc(pos)}</option>`).join("")}
           </select>
         </div>
-        ${selectDeFaixa("relatorio-filtro-pago", "Pago", session.relatorioFiltroPago, todos.map(totalPago), "Não pagou nada")}
-        ${selectDeFaixa("relatorio-filtro-saldo", "Saldo", session.relatorioFiltroSaldo, todos.map(saldoEmAberto), "Não deve nada")}
+        ${selectDeFaixa("relatorio-filtro-pago", "Pago", filtroPago, todos.map(totalPago), "Não pagou nada")}
+        ${selectDeFaixa("relatorio-filtro-saldo", "Saldo", filtroSaldo, todos.map(saldoEmAberto), "Não deve nada")}
       </div>
       <div class="table-scroll">
         <table>
@@ -2777,7 +2960,7 @@ function viewAdminRelatorio() {
               <th></th><th></th>
               <th>${currency(filtrados.reduce((soma, p) => soma + totalPago(p), 0))}</th>
               <th></th>
-              <th>${currency(filtrados.reduce((soma, p) => soma + (saldoEmAberto(p) || 0), 0))}</th>
+              <th>${currency(filtrados.reduce((soma, p) => soma + (saldoEmAberto(p) || 0), 0))}${semSaldoConhecido ? `<div class="hint" style="font-weight:400">+ ${semSaldoConhecido} sem plano escolhido</div>` : ""}</th>
               <th></th>
             </tr>
           </tfoot>
@@ -2920,9 +3103,10 @@ function viewAdminMusicas() {
   // digitadas se a tela for redesenhada por outro motivo antes de salvar.
   // Mesmo cuidado das posições: só monta o rascunho depois que o cache respondeu.
   if (!session.musicasDraft && edicaoCarregou.musicas) {
-    session.musicasDraft = ordenarMusicasAlfabetica(musicasCache.map(m => ({ id: m.id, nome: m.nome, tom: m.tom || "", cantor: m.cantor || "" })));
+    session.musicasDraft = ordenarMusicasAlfabetica(musicasCache.map(m => ({ id: m.id, nome: m.nome, tom: m.tom || "", cantor: m.cantor || "", rascunho: ehRascunho(m) })));
   }
   const draft = session.musicasDraft || [];
+  const emRascunho = draft.filter(m => m.rascunho);
   const tonsSugeridos = valoresUnicosOrdenados(draft, "tom");
   const cantoresSugeridos = valoresUnicosOrdenados(draft, "cantor");
 
@@ -2937,14 +3121,14 @@ function viewAdminMusicas() {
   // tela busca as que o listener não trouxe.
   if (repertorioHistorico !== null) carregarMusicasDasOutrasEdicoes().then(mudou => { if (mudou) renderExterno(); });
 
-  const jaNoAno = new Set(draft.map(m => (m.nome || "").trim().toLowerCase()));
+  const jaNoAno = new Set(draft.map(m => chaveMusica(m.nome)));
   // Tudo que a bateria já tocou e ainda não está neste carnaval, da mais tocada
   // para a menos tocada. Sem corte por quantidade de anos: o que é clássica e o
   // que foi experiência de um ano só é decisão da bateria, não do site — a ordem
   // e a busca já resolvem achar qualquer uma das duas.
   const termoSugestao = (session.repSugestaoFiltro || "").trim().toLowerCase();
   const jaTocadas = tudoQueJaTocou()
-    .filter(m => !jaNoAno.has((m.nome || "").trim().toLowerCase()))
+    .filter(m => !jaNoAno.has(chaveMusica(m.nome)))
     .sort((a, b) => b.total - a.total || a.nome.localeCompare(b.nome, "pt-BR", { sensitivity: "base" }));
   const sugestoes = termoSugestao
     ? jaTocadas.filter(m => (m.nome || "").toLowerCase().includes(termoSugestao))
@@ -2958,16 +3142,26 @@ function viewAdminMusicas() {
     <div class="card">
       <h2>Repertório / músicas — ${esc(edicaoLabel(ed))}</h2>
       <p class="card-sub">Cadastre aqui as músicas do repertório deste carnaval, o tom e quem canta (voz) cada uma — em ordem alfabética. Tom e Cantor(a) são campos livres: comece a digitar e os valores já usados em outras músicas aparecem como sugestão, mas você também pode digitar um novo. Elas ficam disponíveis para marcar quais foram ensaiadas em cada data (painel admin → Ensaios). Depois de editar, clique em "Salvar todas as músicas" uma única vez.</p>
+
+      ${emRascunho.length && editavel ? `
+      <div class="ok-box" style="display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; background:var(--warning-bg); color:#8a5a00;">
+        <span><b>${emRascunho.length} música${emRascunho.length === 1 ? "" : "s"} em rascunho.</b> Só você vê — ${emRascunho.length === 1 ? "ela não aparece" : "elas não aparecem"} para os batuqueiros nem ${emRascunho.length === 1 ? "pode ser marcada" : "podem ser marcadas"} nos ensaios até serem publicadas.</span>
+        <button class="btn-primary btn-sm" id="btn-publicar-todas-musicas">${emRascunho.length === 1 ? "Publicar a música" : `Publicar as ${emRascunho.length} músicas`}</button>
+      </div>` : ""}
+
       ${draft.length === 0 ? `<p class="hint">Nenhuma música cadastrada ainda.</p>` : ""}
       ${draft.map(m => `
-        <div style="border-bottom:1px solid var(--gridline); padding:10px 0;">
+        <div style="border-bottom:1px solid var(--gridline); padding:10px 0;${m.rascunho ? " background:color-mix(in srgb, var(--warning) 6%, transparent);" : ""}">
           <div class="grid-3">
-            <div class="field" style="margin-bottom:0;"><label>Música</label><input type="text" class="musica-name-input" data-musica-id="${m.id}" value="${esc(m.nome)}" ${editavel ? "" : "disabled"}></div>
+            <div class="field" style="margin-bottom:0;"><label>Música ${m.rascunho ? `<span class="badge badge-warning" style="margin-left:4px;">Rascunho</span>` : ""}</label><input type="text" class="musica-name-input" data-musica-id="${m.id}" value="${esc(m.nome)}" ${editavel ? "" : "disabled"}></div>
             <div class="field" style="margin-bottom:0;"><label>Tom</label><input type="text" class="musica-tom-input" data-musica-id="${m.id}" value="${esc(m.tom)}" list="lista-tons" placeholder="Ex: Sol maior" ${editavel ? "" : "disabled"}></div>
             <div class="field" style="margin-bottom:0;"><label>Cantor(a) / voz</label><input type="text" class="musica-cantor-input" data-musica-id="${m.id}" value="${esc(m.cantor)}" list="lista-cantores" placeholder="Nome" ${editavel ? "" : "disabled"}></div>
           </div>
           <div style="display:flex; gap:10px; align-items:center; margin-top:8px; flex-wrap:wrap;">
             ${editavel ? `<button class="btn-ghost btn-sm" data-remove-musica="${m.id}">Remover</button>` : ""}
+            ${editavel ? (m.rascunho
+              ? `<button class="btn-secondary btn-sm" data-publicar-musica="${m.id}">Publicar</button>`
+              : `<button class="btn-ghost btn-sm" data-despublicar-musica="${m.id}">Voltar para rascunho</button>`) : ""}
             ${(() => {
               const h = historicoDaMusica(m.nome);
               if (!h.total) return `<span class="hint">Música nova — não aparece no histórico</span>`;
@@ -3397,7 +3591,7 @@ async function separarContatos() {
     // não sobrescreve um contato já separado que esteja mais atualizado
     escritas.push([P.contato(p.id), {
       celular: atual.celular || p.celular || "",
-      dataNascimento: atual.dataNascimento || p.dataNascimento || "",
+      dataNascimento: dataNascimentoNormalizada(atual.dataNascimento || p.dataNascimento),
     }]);
   });
   try {
@@ -3480,12 +3674,12 @@ async function migrarDoFormatoAntigo() {
         criadoEm: v.createdAt || serverTimestamp(),
       }]);
       escritas.push([P.contato(d.id), {
-        celular: v.celular || "", dataNascimento: v.dataNascimento || "",
+        celular: v.celular || "", dataNascimento: dataNascimentoNormalizada(v.dataNascimento),
       }]);
       escritas.push([P.inscricao(eid, d.id), {
         vaiTocar: respostaVaiTocar(v), posicao: v.posicao || "", posicaoOutro: v.posicaoOutro || "",
         camisa: v.camisa || "", isentoManual: !!v.isentoManual,
-        formaPagamento: v.formaPagamento || null, totalPago: v.totalPago || 0,
+        formaPagamento: v.formaPagamento || null, totalPago: numero(v.totalPago),
         inscritoEm: serverTimestamp(),
       }]);
     });
@@ -3798,7 +3992,7 @@ function wireEvents() {
     };
     const contatoPatch = {
       celular: $("#e-celular").value.trim(),
-      dataNascimento: lerDataNascimento("e-datanasc") || u.dataNascimento,
+      dataNascimento: lerDataNascimento("e-datanasc") || dataNascimentoNormalizada(u.dataNascimento),
     };
     const inscricaoPatch = {
       vaiTocar: $("#edit-radio-vaitocar .radio-pill.active")?.dataset.val || u.vaiTocar,
@@ -3934,6 +4128,13 @@ function wireEvents() {
      comprovantes: parte do total pode ter vindo da importação do formato antigo,
      sem comprovante atrás, e refazer a soma apagaria esse valor em silêncio.
      Quem decide acertar os dois é o admin, no botão de recalcular. */
+  /* Trava de duplo clique, do mesmo tipo que a da presença e a de #btn-save-pay.
+     O botão não desabilita e o retorno só aparece no toast, segundos depois —
+     no celular é fácil tocar duas vezes. Cada clique somava a mesma diferença:
+     corrigir um comprovante de R$ 100 para R$ 250 subia o total R$ 300 em vez de
+     R$ 150, e o admin só via a divergência depois, sem saber de onde veio. */
+  const pagsEmVoo = new Set();
+
   const ajustarTotal = async (uid, delta) => {
     const pessoa = batuqueirosDaEdicao().find(x => x.id === uid);
     const novo = Math.max(0, totalPago(pessoa || {}) + delta);
@@ -3944,16 +4145,19 @@ function wireEvents() {
     const id = el.dataset.salvarPag, uid = el.dataset.dono;
     const original = (session.pagsDoEditado || []).find(x => x.id === id);
     if (!original) return;
+    if (pagsEmVoo.has(id)) return;
     const data = $(`.pg-data[data-pag-id="${id}"]`).value;
     const pagador = $(`.pg-pagador[data-pag-id="${id}"]`).value.trim();
     const valor = parseFloat($(`.pg-valor[data-pag-id="${id}"]`).value);
     if (!data || !(valor > 0)) { alert("Preencha a data e um valor maior que zero."); return; }
+    pagsEmVoo.add(id);
     try {
       await updateDoc(doc(P.pagamentos(edicaoCtxId()), id), { data, valor, pix: pagador, uid: original.uid });
-      await ajustarTotal(uid, valor - (original.valor || 0));
+      await ajustarTotal(uid, valor - numero(original.valor));
       await recarregarPagsDoEditado(uid);
       showToast("Pagamento corrigido.");
     } catch (err) { alert(friendlyFirestoreError(err)); }
+    finally { pagsEmVoo.delete(id); }
     render();
   });
 
@@ -3962,12 +4166,15 @@ function wireEvents() {
     const pag = (session.pagsDoEditado || []).find(x => x.id === id);
     if (!pag) return;
     if (!confirm(`Remover o lançamento de ${currency(pag.valor)} do dia ${dateBR(pag.data)}?\n\nO valor sai do total desta pessoa e ela volta a ser cobrada por ele.`)) return;
+    if (pagsEmVoo.has(id)) return;
+    pagsEmVoo.add(id);
     try {
       await deleteDoc(doc(P.pagamentos(edicaoCtxId()), id));
-      await ajustarTotal(uid, -(pag.valor || 0));
+      await ajustarTotal(uid, -numero(pag.valor));
       await recarregarPagsDoEditado(uid);
       showToast("Lançamento removido.");
     } catch (err) { alert(friendlyFirestoreError(err)); }
+    finally { pagsEmVoo.delete(id); }
     render();
   });
 
@@ -4032,11 +4239,19 @@ function wireEvents() {
   // BATUQUEIRO — presença (só quem tem acesso — admin ou presencaAccess — pode alterar; os
   // demais só veem a tabela, o próprio HTML nem gera o toggle clicável para eles, mas o
   // guard abaixo é uma segunda camada de proteção do lado do cliente).
-  onAll(".toggle", "click", async el => {
+  // O seletor precisa exigir data-uid: a classe .toggle também é usada nos botões
+  // de ano do repertório histórico, que não têm uid nem ensaio. Sem isso, cada
+  // clique num ano caía aqui e gravava uma presença de ninguém — em produção o
+  // SDK recusa o `undefined` e o admin levava um alerta de erro a cada célula
+  // clicada; no banco de teste o documento "undefined_undefined" era criado de
+  // verdade. A guarda logo abaixo é a segunda trava, para o dia em que outra
+  // tela reaproveitar a classe.
+  onAll(".toggle[data-uid]", "click", async el => {
     const u = perfilMesclado();
     const ed = edicaoCtx();
     if (!souEditorDePresenca() || !edicaoEditavel(ed)) return;
     const targetUid = el.dataset.uid, eid = el.dataset.eid;
+    if (!targetUid || !eid) return;
     // O valor atual vem do cache, que só é atualizado pelo snapshot seguinte.
     // Dois cliques rápidos na mesma célula liam o mesmo "atual" e gravavam o
     // mesmo valor duas vezes — o segundo clique não desfazia o primeiro e a
@@ -4204,7 +4419,7 @@ function wireEvents() {
     const nome = $("#nova-hist-nome").value.trim();
     const ano = $("#nova-hist-ano").value;
     if (!nome) { alert("Diga o nome da música."); return; }
-    const jaExiste = (repertorioHistorico || []).some(m => (m.nome || "").trim().toLowerCase() === nome.toLowerCase());
+    const jaExiste = (repertorioHistorico || []).some(m => chaveMusica(m.nome) === chaveMusica(nome));
     if (jaExiste) { alert("Essa música já está no arquivo. Marque o ano direto na tabela."); return; }
     try {
       const ref = await addDoc(P.repertorioHistorico(), { nome, anos: [ano] });
@@ -4219,12 +4434,12 @@ function wireEvents() {
   // preencher com o de outro ano seria inventar informação.
   onAll("[data-add-classica]", "click", async el => {
     const nome = el.dataset.addClassica;
-    const jaExiste = arr => (arr || []).some(m => (m.nome || "").trim().toLowerCase() === nome.trim().toLowerCase());
+    const jaExiste = arr => (arr || []).some(m => chaveMusica(m.nome) === chaveMusica(nome));
     if (jaExiste(musicasCache) || jaExiste(session.musicasDraft)) { alert("Essa música já está no repertório deste carnaval."); return; }
     try {
-      const ref = await addDoc(P.musicas(edicaoCtxId()), { nome, tom: "", cantor: "" });
+      const ref = await addDoc(P.musicas(edicaoCtxId()), { nome, tom: "", cantor: "", rascunho: true });
       if (session.musicasDraft) {
-        session.musicasDraft = ordenarMusicasAlfabetica([...session.musicasDraft, { id: ref.id, nome, tom: "", cantor: "" }]);
+        session.musicasDraft = ordenarMusicasAlfabetica([...session.musicasDraft, { id: ref.id, nome, tom: "", cantor: "", rascunho: true }]);
       }
       showToast(`"${nome}" entrou no repertório.`);
     } catch (err) { alert(friendlyFirestoreError(err)); }
@@ -4313,6 +4528,10 @@ function wireEvents() {
       session.ensaioMusicasDraft = null;
       showToast("Músicas do ensaio salvas!");
     } catch (err) { alert(friendlyFirestoreError(err)); }
+    // Sem este render o editor continuava aberto na tela com o rascunho já
+    // zerado: marcar mais uma música criava um rascunho do zero, e salvar de
+    // novo gravava SÓ ela, apagando as que tinham acabado de ser salvas.
+    render();
   });
 
   // ADMIN — valores/prazos
@@ -4381,7 +4600,7 @@ function wireEvents() {
       row.nome = (row.nome || "").trim();
       if (!row.nome) { alert("O nome da posição não pode ficar vazio."); return; }
     }
-    const nomesMinusculos = draft.map(r => r.nome.toLowerCase());
+    const nomesMinusculos = draft.map(r => chaveMusica(r.nome));
     const duplicado = nomesMinusculos.find((n, i) => nomesMinusculos.indexOf(n) !== i);
     if (duplicado) { alert(`Existe mais de uma posição chamada "${duplicado}". Ajuste os nomes antes de salvar.`); return; }
     try {
@@ -4404,6 +4623,10 @@ function wireEvents() {
       await batch.commit();
       session.posicoesDraft = null;
       showToast("Posições salvas!");
+      // Mesmo motivo do repertório: o rascunho local acabou de virar null e é o
+      // render que o remonta. Sem ele, a próxima correção digitada não entra em
+      // lugar nenhum e "Salvar" responde "Nenhuma alteração para salvar".
+      render();
     } catch (err) { alert(friendlyFirestoreError(err)); }
   });
 
@@ -4442,14 +4665,16 @@ function wireEvents() {
   on("#btn-add-musica", "click", async () => {
     const nome = $("#new-musica-nome").value.trim();
     if (!nome) return;
-    const jaNoRepertorio = arr => (arr || []).some(m => (m.nome || "").toLowerCase() === nome.toLowerCase());
+    const jaNoRepertorio = arr => (arr || []).some(m => chaveMusica(m.nome) === chaveMusica(nome));
     if (jaNoRepertorio(musicasCache) || jaNoRepertorio(session.musicasDraft)) { alert("Essa música já está cadastrada."); return; }
     const tom = $("#new-musica-tom").value.trim();
     const cantor = $("#new-musica-cantor").value.trim();
     try {
-      const ref = await addDoc(P.musicas(edicaoCtxId()), { nome, tom, cantor });
+      // Entra como rascunho: assim dá para montar o repertório inteiro com calma
+      // e só depois anunciar. Publicar é um clique, individual ou de uma vez.
+      const ref = await addDoc(P.musicas(edicaoCtxId()), { nome, tom, cantor, rascunho: true });
       if (session.musicasDraft) {
-        session.musicasDraft = ordenarMusicasAlfabetica([...session.musicasDraft, { id: ref.id, nome, tom, cantor }]);
+        session.musicasDraft = ordenarMusicasAlfabetica([...session.musicasDraft, { id: ref.id, nome, tom, cantor, rascunho: true }]);
       }
       render();
     } catch (err) { alert(friendlyFirestoreError(err)); }
@@ -4475,13 +4700,58 @@ function wireEvents() {
         const mudou = row.nome !== original.nome || tom !== (original.tom || "") || cantor !== (original.cantor || "");
         if (!mudou) return;
         algumaMudanca = true;
+        // Só nome/tom/cantor: publicar e despublicar têm botão próprio e gravam
+        // na hora, então o "Salvar todas" não pode carregar um `rascunho` velho
+        // do rascunho local por cima do que já foi publicado.
         batch.update(P.musica(eid, row.id), { nome: row.nome, tom, cantor });
       });
       if (!algumaMudanca) { showToast("Nenhuma alteração para salvar."); return; }
       await batch.commit();
       session.musicasDraft = null;
       showToast("Músicas salvas!");
+      // Precisa redesenhar aqui: o rascunho local acabou de virar null e é o
+      // render que o remonta a partir do que foi gravado. Sem isto, a tela
+      // continua com os campos antigos ligados a um rascunho que não existe
+      // mais, e a PRÓXIMA alteração digitada é perdida em silêncio ao salvar.
+      render();
     } catch (err) { alert(friendlyFirestoreError(err)); }
+  });
+
+  // Publicar / voltar para rascunho. Grava na hora, sem depender do "Salvar
+  // todas as músicas": é uma decisão de visibilidade, não uma edição de texto —
+  // sair da tela sem salvar não pode deixar a música publicada por engano nem o
+  // contrário.
+  const mudarRascunho = async (id, rascunho) => {
+    try {
+      await updateDoc(P.musica(edicaoCtxId(), id), { rascunho });
+      const row = (session.musicasDraft || []).find(m => m.id === id);
+      if (row) row.rascunho = rascunho;
+      const nome = row ? row.nome : "A música";
+      showToast(rascunho ? `"${nome}" voltou para rascunho.` : `"${nome}" foi publicada.`);
+    } catch (err) { alert(friendlyFirestoreError(err)); }
+    render();
+  };
+  onAll("[data-publicar-musica]", "click", el => mudarRascunho(el.dataset.publicarMusica, false));
+  onAll("[data-despublicar-musica]", "click", async el => {
+    const id = el.dataset.despublicarMusica;
+    const emUso = ensaiosCache.filter(e => (e.musicaIds || []).includes(id)).length;
+    if (emUso > 0 && !confirm(`Essa música está marcada em ${emUso} ensaio(s). Voltando para rascunho ela some da lista do ensaio para os batuqueiros, mas a marcação continua guardada e volta quando você publicar de novo. Continuar?`)) return;
+    mudarRascunho(id, true);
+  });
+
+  on("#btn-publicar-todas-musicas", "click", async () => {
+    const pendentes = (session.musicasDraft || []).filter(m => m.rascunho);
+    if (!pendentes.length) return;
+    if (!confirm(`Publicar ${pendentes.length} música${pendentes.length === 1 ? "" : "s"}? A partir daí ${pendentes.length === 1 ? "ela aparece" : "elas aparecem"} para todos os batuqueiros.`)) return;
+    const eid = edicaoCtxId();
+    try {
+      const batch = writeBatch(db);
+      pendentes.forEach(m => batch.update(P.musica(eid, m.id), { rascunho: false }));
+      await batch.commit();
+      pendentes.forEach(m => { m.rascunho = false; });
+      showToast(`${pendentes.length} música${pendentes.length === 1 ? "" : "s"} publicada${pendentes.length === 1 ? "" : "s"}.`);
+    } catch (err) { alert(friendlyFirestoreError(err)); }
+    render();
   });
 
   onAll("[data-remove-musica]", "click", async el => {

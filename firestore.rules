@@ -72,14 +72,25 @@ service cloud.firestore {
       );
     }
 
+    // O exists() antes do get() não é zelo excedido: quando o documento da
+    // edição não existe, o get() devolve null, o .status quebra a avaliação e
+    // TODA escrita nas subcoleções daquele id é negada — inclusive para o
+    // admin. Isso acontece de verdade: se a importação falhar no meio, o
+    // tratamento de erro apaga o documento da edição, mas o Firestore não apaga
+    // as subcoleções junto. Sem esta guarda, aquelas inscrições ficavam
+    // legíveis e impossíveis de apagar ou corrigir pelo site, para sempre.
+    // Sem documento, trata-se como "não encerrada": o admin consegue limpar.
+    function edicaoExiste(eid) {
+      return exists(/databases/$(database)/documents/edicoes/$(eid));
+    }
     function statusDaEdicao(eid) {
       return get(/databases/$(database)/documents/edicoes/$(eid)).data.status;
     }
     function edicaoNaoEncerrada(eid) {
-      return statusDaEdicao(eid) != 'encerrada';
+      return !edicaoExiste(eid) || statusDaEdicao(eid) != 'encerrada';
     }
     function edicaoAberta(eid) {
-      return statusDaEdicao(eid) == 'aberta';
+      return edicaoExiste(eid) && statusDaEdicao(eid) == 'aberta';
     }
 
     // ---------- cadastro permanente de cada pessoa ----------
