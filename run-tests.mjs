@@ -487,11 +487,18 @@ async function main() {
   await page.click('#btn-add-musica');
   await page.waitForTimeout(250);
   const nomesMusicasNaTela = await page.$$eval('.musica-name-input', els => els.map(e => e.value));
-  ok('Músicas em ordem alfabética (Aquarela antes de Ventania)', nomesMusicasNaTela.indexOf('Aquarela') < nomesMusicasNaTela.indexOf('Ventania'));
+  // O repertório não é alfabético: é a ordem em que a bateria vai tocar. Música
+  // nova entra no FIM do set escolhido, então Ventania (cadastrada antes) vem
+  // antes de Aquarela.
+  ok('A música nova entra no fim do set, não em ordem alfabética',
+     nomesMusicasNaTela.indexOf('Ventania') < nomesMusicasNaTela.indexOf('Aquarela'));
   const tonsNaTela = await page.$$eval('.musica-tom-input', els => els.map(e => e.value));
   ok('Aquarela fica com tom em branco, sem herdar o de Ventania', tonsNaTela[nomesMusicasNaTela.indexOf('Aquarela')] === '');
 
-  await page.locator('input.musica-name-input').nth(0).fill('Aquarela (Editada)');
+  // A partir daqui as músicas são alcançadas pelo nome, não pela posição: a
+  // ordem agora é escolhida pelo admin e muda durante o próprio teste.
+  const campoDaMusica = (valor) => page.locator(`input.musica-name-input[value="${valor}"]`);
+  await campoDaMusica('Aquarela').fill('Aquarela (Editada)');
   await page.evaluate(async () => {
     const fb = await import('./firebase-init.mock.js');
     const ref = await fb.addDoc(fb.collection(fb.db, 'edicoes', '2027-1', 'ensaios'), { data: '2030-02-02' });
@@ -505,6 +512,199 @@ async function main() {
   await page.waitForTimeout(300);
   html = await appHtml(page);
   ok('Edição da música foi salva', html.includes('value="Aquarela (Editada)"'));
+  console.log('\n== 12a2. Sets e ordem de execução do repertório ==');
+  // O repertório do carnaval é a ordem em que a bateria toca, em dois sets.
+  const lerSets = () => page.evaluate(() => {
+    const out = {};
+    document.querySelectorAll('[data-set-bloco]').forEach(bloco => {
+      out[bloco.dataset.setBloco] = [...bloco.querySelectorAll('.musica-name-input')].map(i => i.value);
+    });
+    return out;
+  });
+  let sets = await lerSets();
+  ok('A tela separa o repertório em dois sets', Object.keys(sets).sort().join(',') === '1,2');
+  ok('Cada set é uma tabela, com uma linha por música',
+     await page.evaluate(() => document.querySelectorAll('[data-set-bloco] table.tabela-repertorio').length >= 1));
+  // Já aconteceu de a coluna de ação ficar fora da tela e obrigar a rolar a
+  // tabela para o lado só para clicar em Remover.
+  const cabeNaTela = await page.evaluate(() => {
+    const c = document.querySelector('.tabela-repertorio').closest('.table-scroll');
+    return c.scrollWidth <= c.clientWidth + 1;
+  });
+  ok('A tabela cabe na tela, sem rolagem lateral para alcançar os botões', cabeNaTela);
+  ok('Tudo começa no set 1', sets['1'].length === 2 && sets['2'].length === 0);
+
+  // acrescentar direto no set 2
+  await page.selectOption('#novo-musica-set', '2');
+  await page.fill('#new-musica-nome', 'Abertura do Set 2');
+  await page.click('#btn-add-musica');
+  await page.waitForTimeout(600);
+  sets = await lerSets();
+  ok('Dá para cadastrar música já no set 2', sets['2'].includes('Abertura do Set 2'));
+  ok('E ela não aparece no set 1', !sets['1'].includes('Abertura do Set 2'));
+  await page.selectOption('#novo-musica-set', '1');
+  await page.waitForTimeout(200);
+
+  // ------------------------------------------------------------------
+  // Música cadastrada ANTES de existirem os campos de set e ordem.
+  // É exatamente o formato do que já está no banco em produção: só nome, tom e
+  // cantor, sem `set`, sem `ordem` e sem `rascunho`. Nada pode sumir da tela
+  // nem virar rascunho por causa da atualização.
+  // ------------------------------------------------------------------
+  await page.evaluate(async () => {
+    const fb = await import('./firebase-init.mock.js');
+    const col = fb.collection(fb.db, 'edicoes', '2027-1', 'musicas');
+    await fb.addDoc(col, { nome: 'Zabumba Velha', tom: 'Lá menor', cantor: 'Zé' });
+    await fb.addDoc(col, { nome: 'Antiga Sem Ordem', tom: '', cantor: '' });
+    await fb.addDoc(col, { nome: 'Minha Antiga', tom: 'Dó', cantor: '' });
+  });
+  await page.waitForTimeout(900);
+  sets = await lerSets();
+  ok('Música antiga, sem set nem ordem, continua aparecendo',
+     sets['1'].includes('Zabumba Velha') && sets['1'].includes('Antiga Sem Ordem') && sets['1'].includes('Minha Antiga'));
+  ok('Nenhuma música antiga se perde no caminho', sets['1'].length === 5);
+  // O set 2 já tinha a música cadastrada mais acima nesta mesma seção; o que
+  // importa é que nenhuma das antigas foi parar nele.
+  ok('Todas caem no Set 1, nenhuma no Set 2',
+     !sets['2'].some(n => ['Zabumba Velha', 'Antiga Sem Ordem', 'Minha Antiga'].includes(n)));
+  // Quem já tinha número fica na frente; as antigas vão para o fim, em ordem
+  // alfabética entre elas — não embaralhadas.
+  const antigas = sets['1'].slice(2);
+  ok('As antigas ficam no fim, em ordem alfabética entre elas',
+     JSON.stringify(antigas) === JSON.stringify(['Antiga Sem Ordem', 'Minha Antiga', 'Zabumba Velha']));
+  const antigasNoBanco = await page.evaluate(() => Object.values(window.__mock.dumpStore()['edicoes/2027-1/musicas'] || {})
+    .filter(m => ['Zabumba Velha', 'Antiga Sem Ordem', 'Minha Antiga'].includes(m.nome)));
+  ok('E continuam publicadas, sem virar rascunho sozinhas',
+     antigasNoBanco.length === 3 && antigasNoBanco.every(m => m.rascunho !== true));
+  ok('O tom e o cantor(a) que já estavam lá seguem intactos',
+     antigasNoBanco.find(m => m.nome === 'Zabumba Velha').tom === 'Lá menor' &&
+     antigasNoBanco.find(m => m.nome === 'Zabumba Velha').cantor === 'Zé');
+
+  // Mexer na ordem do set é o que dá número de verdade a todas elas.
+  const idZabumba = await page.evaluate(() => {
+    const inp = [...document.querySelectorAll('.musica-name-input')].find(i => i.value === 'Zabumba Velha');
+    return inp ? inp.dataset.musicaId : null;
+  });
+  await page.click(`[data-mover-musica="${idZabumba}"][data-delta="-1"]`);
+  await page.waitForTimeout(800);
+  const numeradas = await page.evaluate(() => Object.values(window.__mock.dumpStore()['edicoes/2027-1/musicas'] || {})
+    .filter(m => (m.set || 1) === 1).sort((a, b) => (a.ordem || 0) - (b.ordem || 0)).map(m => ({ nome: m.nome, ordem: m.ordem })));
+  ok('Ao mexer na ordem, o set inteiro ganha numeração de 1 a n',
+     numeradas.length === 5 && numeradas.every((m, i) => m.ordem === i + 1));
+  ok('E nenhuma música foi perdida nesse primeiro movimento', numeradas.length === 5);
+
+  // devolve a edição ao estado que as seções seguintes esperam
+  for (const nome of ['Zabumba Velha', 'Antiga Sem Ordem', 'Minha Antiga']) {
+    const id = await page.evaluate(n => {
+      const inp = [...document.querySelectorAll('.musica-name-input')].find(i => i.value === n);
+      return inp ? inp.dataset.musicaId : null;
+    }, nome);
+    await page.click(`[data-remove-musica="${id}"]`);
+    await page.waitForTimeout(500);
+  }
+  sets = await lerSets();
+  ok('Removidas as de teste, sobram as duas originais', sets['1'].length === 2);
+
+  // editar tom e cantor na própria linha da tabela
+  const idVentaniaTabela = await page.evaluate(() => {
+    const inp = [...document.querySelectorAll('.musica-name-input')].find(i => i.value === 'Ventania');
+    return inp ? inp.dataset.musicaId : null;
+  });
+  await page.fill(`.musica-tom-input[data-musica-id="${idVentaniaTabela}"]`, 'Ré maior');
+  await page.fill(`.musica-cantor-input[data-musica-id="${idVentaniaTabela}"]`, 'Dudinha');
+  await page.waitForTimeout(200);
+  await page.click('#btn-save-all-musicas');
+  await page.waitForTimeout(800);
+  const editadoNaLinha = await page.evaluate(() => {
+    const m = Object.values(window.__mock.dumpStore()['edicoes/2027-1/musicas'] || {});
+    return m.find(x => x.nome === 'Ventania');
+  });
+  ok('Dá para editar o tom na própria linha da tabela', editadoNaLinha.tom === 'Ré maior');
+  ok('E o cantor(a) também', editadoNaLinha.cantor === 'Dudinha');
+  // devolve como estava: as seções seguintes esperam Sol maior / Carla
+  await page.waitForTimeout(600);
+  await page.fill(`.musica-tom-input[data-musica-id="${idVentaniaTabela}"]`, 'Sol maior');
+  await page.fill(`.musica-cantor-input[data-musica-id="${idVentaniaTabela}"]`, 'Carla');
+  await page.waitForTimeout(200);
+  await page.click('#btn-save-all-musicas');
+  await page.waitForTimeout(800);
+  const voltouTom = await page.evaluate(() => {
+    const m = Object.values(window.__mock.dumpStore()['edicoes/2027-1/musicas'] || {});
+    return m.find(x => x.nome === 'Ventania');
+  });
+  ok('E a edição em lote continua valendo para a tabela inteira',
+     voltouTom.tom === 'Sol maior' && voltouTom.cantor === 'Carla');
+
+  // subir uma música dentro do set
+  const idDe = async (valor) => page.evaluate(v => {
+    const inp = [...document.querySelectorAll('.musica-name-input')].find(i => i.value === v);
+    return inp ? inp.dataset.musicaId : null;
+  }, valor);
+  const idAquarela = await idDe('Aquarela (Editada)');
+  await page.click(`[data-mover-musica="${idAquarela}"][data-delta="-1"]`);
+  await page.waitForTimeout(700);
+  sets = await lerSets();
+  ok('A seta para cima troca a música de lugar no set', sets['1'][0] === 'Aquarela (Editada)');
+  const ordemGravada = await page.evaluate(() => {
+    const m = Object.values(window.__mock.dumpStore()['edicoes/2027-1/musicas'] || {});
+    return m.map(x => ({ nome: x.nome, set: x.set, ordem: x.ordem })).sort((a, b) => (a.set - b.set) || (a.ordem - b.ordem));
+  });
+  ok('E a ordem grava na hora, sem depender do "Salvar todas"',
+     ordemGravada[0].nome === 'Aquarela (Editada)' && ordemGravada[0].set === 1 && ordemGravada[0].ordem === 1);
+  ok('O set 1 fica numerado de 1 em diante, sem buraco',
+     ordemGravada.filter(m => m.set === 1).every((m, i) => m.ordem === i + 1));
+
+  // a primeira música não pode subir mais
+  const primeiraNaoSobe = await page.evaluate(id => {
+    const b = document.querySelector(`[data-mover-musica="${id}"][data-delta="-1"]`);
+    return b ? b.disabled : null;
+  }, idAquarela);
+  ok('A primeira do set não tem para onde subir', primeiraNaoSobe === true);
+
+  // digitar a posição
+  await page.fill(`.musica-posicao-input[data-musica-id="${idAquarela}"]`, '2');
+  await page.locator(`.musica-posicao-input[data-musica-id="${idAquarela}"]`).blur();
+  await page.waitForTimeout(700);
+  sets = await lerSets();
+  ok('Digitar a posição move a música para lá', sets['1'][1] === 'Aquarela (Editada)');
+
+  // Volta para a primeira posição: tirar do MEIO (ou do começo) é o caso que
+  // prova a renumeração — tirar do fim deixaria a numeração certa por acaso.
+  await page.fill(`.musica-posicao-input[data-musica-id="${idAquarela}"]`, '1');
+  await page.locator(`.musica-posicao-input[data-musica-id="${idAquarela}"]`).blur();
+  await page.waitForTimeout(700);
+  sets = await lerSets();
+  ok('E volta para a primeira quando se digita 1', sets['1'][0] === 'Aquarela (Editada)');
+  const ordemAntesDaTroca = await page.evaluate(() => {
+    const m = Object.values(window.__mock.dumpStore()['edicoes/2027-1/musicas'] || {});
+    return m.filter(x => (x.set || 1) === 1).sort((a, b) => a.ordem - b.ordem).map(x => x.nome);
+  });
+  ok('Com a música de teste na frente, o set 1 tem duas músicas', ordemAntesDaTroca.length === 2);
+
+  // passar de set pelo seletor da linha
+  await page.selectOption(`.musica-set-input[data-musica-id="${idAquarela}"]`, '2');
+  await page.waitForTimeout(700);
+  sets = await lerSets();
+  ok('Trocar o set na linha move a música de set', sets['2'].includes('Aquarela (Editada)') && !sets['1'].includes('Aquarela (Editada)'));
+  ok('E ela entra no fim do set de destino', sets['2'][sets['2'].length - 1] === 'Aquarela (Editada)');
+  const aposTroca = await page.evaluate(() => {
+    const m = Object.values(window.__mock.dumpStore()['edicoes/2027-1/musicas'] || {});
+    return m.map(x => ({ nome: x.nome, set: x.set, ordem: x.ordem }));
+  });
+  const sobraramNoSet1 = aposTroca.filter(m => (m.set || 1) === 1).sort((a, b) => a.ordem - b.ordem);
+  ok('A música sai mesmo do set de origem', sobraramNoSet1.length === ordemAntesDaTroca.length - 1);
+  ok('E o set que ela deixou volta a ser numerado de 1 em diante, sem buraco',
+     sobraramNoSet1.every((m, i) => m.ordem === i + 1));
+
+  // desfaz: as seções seguintes esperam as duas músicas originais no set 1
+  await page.selectOption(`.musica-set-input[data-musica-id="${idAquarela}"]`, '1');
+  await page.waitForTimeout(700);
+  const idAbertura = await idDe('Abertura do Set 2');
+  await page.click(`[data-remove-musica="${idAbertura}"]`);
+  await page.waitForTimeout(700);
+  sets = await lerSets();
+  ok('Removendo a música de teste, sobram as duas do set 1', sets['1'].length === 2 && sets['2'].length === 0);
+
   console.log('\n== 12b. Rascunho: a música só aparece para os outros quando é publicada ==');
   // Música nova entra como rascunho de propósito: dá para montar o repertório
   // inteiro com calma e só depois anunciar.
@@ -589,7 +789,7 @@ async function main() {
   // é escrito, espera o redesenho e é reescrito antes de salvar.
   const renomearPrimeira = async (nome) => {
     await page.waitForTimeout(900);
-    await page.locator('input.musica-name-input').nth(0).fill(nome);
+    await page.locator('input.musica-name-input[value^="Aquarela"]').fill(nome);
     await page.waitForTimeout(200);
     await page.click('#btn-save-all-musicas');
     await page.waitForTimeout(900);
@@ -1324,6 +1524,12 @@ async function main() {
   const colunasCsv = linhasCsv[1].split(';');
   ok('O cabeçalho traz os dados permanentes e os do carnaval', colunasCsv.includes('Nome') && colunasCsv.includes('Celular') && colunasCsv.includes('Posição') && colunasCsv.includes('Situação'));
   ok('E também presença e acessos', colunasCsv.includes('Presenças') && colunasCsv.includes('Acesso admin'));
+  // No CSV a data sai escrita em dd/mm/aaaa: ali não existe célula de data, é
+  // texto puro, e o formato tem que ser o que o Excel brasileiro entende.
+  const colDataInsc = colunasCsv.indexOf('Data da inscrição');
+  ok('O CSV traz a coluna de data da inscrição', colDataInsc > -1);
+  const datasCsv = linhasCsv.slice(2).filter(l => l.trim()).map(l => l.split(';')[colDataInsc]);
+  ok('E escreve a data em dd/mm/aaaa', datasCsv.length > 0 && datasCsv.every(d => /^\d{2}\/\d{2}\/\d{4}$/.test(d)));
   const linhaAnaCsv = linhasCsv.find(l => l.startsWith('Ana;'));
   ok('Ana aparece na planilha', !!linhaAnaCsv);
   const celulasAna = linhaAnaCsv.split(';');
@@ -1374,7 +1580,14 @@ async function main() {
     window.__matrizXlsx = null;
     window.XLSX = {
       utils: {
-        aoa_to_sheet: m => { window.__matrizXlsx = m; return {}; },
+        aoa_to_sheet: (m, opcoes) => {
+          window.__matrizXlsx = m;
+          window.__opcoesXlsx = opcoes || null;
+          // Date não sobrevive à volta para o Node (vira string), então o tipo
+          // de cada célula é registrado aqui dentro da página.
+          window.__tiposXlsx = m.map(l => l.map(c => (c instanceof Date ? 'Date' : typeof c)));
+          return {};
+        },
         book_new: () => ({ abas: [] }),
         book_append_sheet: (livro, aba, nome) => { window.__nomeAba = nome; },
       },
@@ -1406,6 +1619,23 @@ async function main() {
   ok('Quem não escolheu plano sai em branco, não como saldo zero',
      semPlano.length > 0 && semPlano.every(l => l[colDevido] === '' && l[colSaldo] === ''));
   ok('E existe uma coluna para quem pagou a mais do que o plano cobra', matriz[1].includes('Pago a mais'));
+
+  // Data em que a pessoa respondeu o questionário daquele carnaval.
+  const colInscricao = matriz[1].indexOf('Data da inscrição');
+  ok('A planilha tem a coluna de data da inscrição', colInscricao > -1);
+  const tipos = await page.evaluate(() => window.__tiposXlsx);
+  const opcoesAba = await page.evaluate(() => window.__opcoesXlsx);
+  // Como data de verdade, não texto: senão o Excel ordena "01/12" antes de
+  // "02/01", como se fosse palavra, e não dá para filtrar por período.
+  ok('A data da inscrição vai como data de verdade, não como texto',
+     tipos.slice(2).every(l => l[colInscricao] === 'Date' || l[colInscricao] === 'string'));
+  ok('E pelo menos uma pessoa tem a data preenchida',
+     tipos.slice(2).some(l => l[colInscricao] === 'Date'));
+  ok('A planilha é gerada pedindo célula de data em formato brasileiro',
+     !!opcoesAba && opcoesAba.cellDates === true && opcoesAba.dateNF === 'dd/mm/yyyy');
+  const datasNaPlanilha = matriz.slice(2).map(l => l[colInscricao]).filter(Boolean);
+  ok('E a data gravada é o momento real da inscrição',
+     datasNaPlanilha.length > 0 && datasNaPlanilha.every(d => Math.abs(Date.now() - new Date(d).getTime()) < 24 * 60 * 60 * 1000));
 
   await page.evaluate(() => { delete window.XLSX; });
   await page.route('**/xlsx.full.min.js', r => r.abort());
@@ -1589,6 +1819,23 @@ async function main() {
   html = await appHtml(page);
   ok('Batuqueiro vê a tabela de repertório da edição', html.includes('<h2>Repertório</h2>'));
   ok('Repertório mostra a música com tom e cantor(a)', html.includes('Ventania') && html.includes('Sol maior'));
+  // O batuqueiro vê a mesma ordem de execução que o admin montou: é a ordem em
+  // que ele vai tocar, não uma lista alfabética.
+  const repertorioDoBatuqueiro = await page.evaluate(() => {
+    const h = [...document.querySelectorAll('h2')].find(x => x.textContent.trim() === 'Repertório');
+    const tabela = h ? h.closest('.card').querySelector('table') : null;
+    if (!tabela) return null;
+    return {
+      cabecalho: [...tabela.querySelectorAll('thead th')].map(t => t.textContent.trim()),
+      linhas: [...tabela.querySelectorAll('tbody tr')].map(tr => [...tr.querySelectorAll('td')].map(td => td.textContent.trim())),
+    };
+  });
+  ok('A tabela do batuqueiro mostra o set e a posição',
+     !!repertorioDoBatuqueiro && repertorioDoBatuqueiro.cabecalho[0] === 'Set' && repertorioDoBatuqueiro.cabecalho[1] === '#');
+  ok('Na mesma ordem que o admin montou, não em ordem alfabética',
+     repertorioDoBatuqueiro.linhas[0][2] === 'Ventania');
+  ok('E a numeração do set começa em 1',
+     repertorioDoBatuqueiro.linhas[0][0] === '1' && repertorioDoBatuqueiro.linhas[0][1] === '1');
   await logout(page);
 
   console.log('\n== 20b. Backup do banco pelo painel ==');
@@ -1834,13 +2081,18 @@ async function main() {
     const s = window.__mock.dumpStore().repertorioHistorico || {};
     const musicas = Object.values(s);
     return {
-      quantas: musicas.length,
+      quantas: musicas.filter(m => (m.anos || []).length > 0).length,
+      soCatalogo: musicas.filter(m => (m.anos || []).length === 0).map(m => m.nome),
       quatroSemanas: musicas.find(m => m.nome === '4 SEMANAS'),
       temEspacoSobrando: musicas.some(m => m.nome !== m.nome.trim()),
       duplicadas: musicas.filter(m => m.nome === 'MEL NA SUA BOCA').length,
     };
   });
   ok('As 171 músicas do arquivo entraram', importado.quantas === 171);
+  // A mesma coleção guarda o catálogo de tom e cantor(a) das músicas do site.
+  // A importação não pode atropelar nem duplicar essas entradas.
+  ok('As músicas do site que já estavam no catálogo continuam lá',
+     importado.soCatalogo.includes('Ventania'));
   ok('Uma clássica traz todos os anos em que tocou', importado.quatroSemanas && importado.quatroSemanas.anos.length === 14);
   ok('Nomes com espaço sobrando foram limpos', importado.temEspacoSobrando === false);
   ok('As linhas repetidas da planilha viraram uma música só', importado.duplicadas === 1);
@@ -2121,17 +2373,22 @@ async function main() {
   ok('Adicionar traz a clássica para o repertório do carnaval', depoisDeAdicionar === antesDeAdicionar + 1);
   html = await appHtml(page);
   ok('E ela some da lista de sugestões', !html.includes('data-add-classica="4 SEMANAS"'));
-  const selo = await page.evaluate(() => {
+  // Na tabela, a contagem de anos é uma coluna e a vez mais recente fica no
+  // title da célula — não cabia texto corrido numa linha de tabela.
+  const lerSelo = () => page.evaluate(() => {
     const inp = [...document.querySelectorAll('.musica-name-input')].find(i => i.value === '4 SEMANAS');
-    if (!inp) return 'NAO-ACHOU-INPUT';
-    const linha = inp.closest('div[style*="border-bottom"]');
-    return linha ? linha.textContent : 'NAO-ACHOU-LINHA';
+    if (!inp) return { texto: 'NAO-ACHOU-INPUT', recente: '' };
+    const linha = inp.closest('.musica-linha');
+    if (!linha) return { texto: 'NAO-ACHOU-LINHA', recente: '' };
+    const celulaAnos = [...linha.querySelectorAll('td')].find(td => td.title);
+    return { texto: linha.textContent, recente: celulaAnos ? celulaAnos.title : '' };
   });
+  const selo = await lerSelo();
   // Ela entra como rascunho, então ainda NÃO conta como tocada em 2028: são os
   // 14 anos do arquivo. Rascunho não é repertório.
-  ok('A clássica trazida da lista entra como rascunho', selo.includes('Rascunho'));
-  ok('E enquanto é rascunho não conta como tocada neste carnaval', selo.includes('Já tocou em 14 anos'));
-  ok('A vez mais recente segue sendo a do arquivo', selo.includes('mais recente: 2026'));
+  ok('A clássica trazida da lista entra como rascunho', selo.texto.includes('Rascunho'));
+  ok('E enquanto é rascunho não conta como tocada neste carnaval', selo.recente.includes('14 anos'));
+  ok('A vez mais recente segue sendo a do arquivo', selo.recente.includes('2026'));
 
   // publicada, passa a contar
   const id4Semanas = await page.evaluate(() => {
@@ -2140,21 +2397,70 @@ async function main() {
   });
   await page.click(`[data-publicar-musica="${id4Semanas}"]`);
   await page.waitForTimeout(700);
-  const seloPublicado = await page.evaluate(() => {
-    const inp = [...document.querySelectorAll('.musica-name-input')].find(i => i.value === '4 SEMANAS');
-    const linha = inp.closest('div[style*="border-bottom"]');
-    return linha ? linha.textContent : '';
-  });
+  const seloPublicado = await lerSelo();
   // 14 anos de arquivo mais o carnaval de 2028, onde ela acabou de entrar.
-  ok('Publicada, passa a contar como tocada em 2028 (15 anos)', seloPublicado.includes('Já tocou em 15 anos'));
-  ok('E qual foi a vez mais recente', seloPublicado.includes('mais recente: 2028'));
-  // tom e cantor em branco: a planilha antiga não tinha esses campos
-  const tomVazio = await page.evaluate(() => {
-    const inp = [...document.querySelectorAll('.musica-name-input')].find(i => i.value === '4 SEMANAS');
-    const linha = inp.closest('div[style*="border-bottom"]');
-    return linha.querySelector('.musica-tom-input').value;
+  ok('Publicada, passa a contar como tocada em 2028 (15 anos)', seloPublicado.recente.includes('15 anos'));
+  ok('E qual foi a vez mais recente', seloPublicado.recente.includes('2028'));
+  // A planilha antiga não tinha tom nem cantor(a), e ninguém escolheu ainda —
+  // então entra em branco, sem inventar dado.
+  const lerTomCantor = (nome) => page.evaluate(n => {
+    const inp = [...document.querySelectorAll('.musica-name-input')].find(i => i.value === n);
+    if (!inp) return null;
+    const linha = inp.closest('.musica-linha');
+    return {
+      tom: linha.querySelector('.musica-tom-input').value,
+      cantor: linha.querySelector('.musica-cantor-input').value,
+      id: inp.dataset.musicaId,
+    };
+  }, nome);
+  let classica = await lerTomCantor('4 SEMANAS');
+  ok('Tom e cantor entram em branco, sem inventar dado', classica.tom === '' && classica.cantor === '');
+
+  // ------------------------------------------------------------------
+  // O tom e o cantor(a) são da MÚSICA, não do ano: escolhidos aqui, voltam
+  // preenchidos quando a mesma música entrar no repertório de outro carnaval.
+  // ------------------------------------------------------------------
+  await page.fill(`.musica-tom-input[data-musica-id="${classica.id}"]`, 'Mi menor');
+  await page.fill(`.musica-cantor-input[data-musica-id="${classica.id}"]`, 'Dudinha');
+  await page.waitForTimeout(200);
+  await page.click('#btn-save-all-musicas');
+  await page.waitForTimeout(1200);
+  const noCatalogo = await page.evaluate(() => Object.values(window.__mock.dumpStore().repertorioHistorico || {})
+    .find(m => m.nome === '4 SEMANAS'));
+  ok('Salvar o tom guarda ele no catálogo do site', noCatalogo.tom === 'Mi menor');
+  ok('E o cantor(a) junto', noCatalogo.cantor === 'Dudinha');
+  ok('Marcando de que carnaval veio essa escolha', Number(noCatalogo.anoTomCantor) === 2028);
+  ok('Sem mexer nos anos em que a música tocou', (noCatalogo.anos || []).length === 14);
+
+  // tirar do repertório e trazer de volta: tem que voltar preenchida
+  await page.click(`[data-remove-musica="${classica.id}"]`);
+  await page.waitForTimeout(800);
+  await page.click('[data-add-classica="4 SEMANAS"]');
+  await page.waitForTimeout(900);
+  classica = await lerTomCantor('4 SEMANAS');
+  ok('Trazendo a música de volta, o tom já vem preenchido', classica.tom === 'Mi menor');
+  ok('E o cantor(a) também', classica.cantor === 'Dudinha');
+
+  // corrigir num carnaval ANTIGO não pode desfazer a escolha do mais novo
+  await page.evaluate(async () => {
+    const fb = await import('./firebase-init.mock.js');
+    const col = fb.collection(fb.db, 'repertorioHistorico');
+    const snap = await fb.getDocs(col);
+    const alvo = snap.docs.find(d => d.data().nome === '4 SEMANAS');
+    await fb.updateDoc(fb.doc(fb.db, 'repertorioHistorico', alvo.id), { anoTomCantor: 2030 });
   });
-  ok('Tom e cantor entram em branco, sem inventar dado', tomVazio === '');
+  await page.waitForTimeout(400);
+  await page.fill(`.musica-tom-input[data-musica-id="${classica.id}"]`, 'Sol menor');
+  await page.waitForTimeout(200);
+  await page.click('#btn-save-all-musicas');
+  await page.waitForTimeout(1200);
+  const naoSobrescreveu = await page.evaluate(() => Object.values(window.__mock.dumpStore().repertorioHistorico || {})
+    .find(m => m.nome === '4 SEMANAS'));
+  ok('Carnaval mais antigo não sobrescreve a escolha de um mais novo', naoSobrescreveu.tom === 'Mi menor');
+  const noAnoDaEdicao = await page.evaluate(() => Object.values(window.__mock.dumpStore()['edicoes/2028-1/musicas'] || {})
+    .find(m => m.nome === '4 SEMANAS'));
+  ok('Mas o repertório daquele carnaval guarda o que foi digitado nele', noAnoDaEdicao.tom === 'Sol menor');
+
   await page.click('#btn-back-admin6');
   await page.waitForTimeout(300);
   await page.click('#btn-goto-historico-geral');

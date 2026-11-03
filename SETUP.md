@@ -290,7 +290,23 @@ No Windows, **Agendador de Tarefas** → Criar Tarefa Básica → semanal → In
 
 **Como adiciono mais um organizador?** Painel admin → Cadastros → editar a pessoa → marcar "Acesso ao painel admin". Ela continua aparecendo normalmente nas listas de presença e pagamento, só ganha também a visão de admin.
 
-**Como registro quais músicas foram ensaiadas?** Painel admin → "Repertório / músicas" cadastra o repertório (nome, tom e cantor(a) de cada música, em ordem alfabética). Depois, em Painel admin → Ensaios, cada data tem um botão "Editar músicas" onde você marca quais músicas dessa lista foram tocadas naquele ensaio. Tanto o repertório quanto as marcações valem só para a edição em que foram feitos.
+**Como registro quais músicas foram ensaiadas?** Painel admin → "Repertório / músicas" cadastra o repertório (nome, tom e cantor(a) de cada música). Depois, em Painel admin → Ensaios, cada data tem um botão "Editar músicas" onde você marca quais músicas dessa lista foram tocadas naquele ensaio. Tanto o repertório quanto as marcações valem só para a edição em que foram feitos.
+
+**Como monto a ordem em que a bateria vai tocar?** O repertório é dividido em **Set 1** e **Set 2**, cada um numa tabela própria: uma linha por música, na ordem de execução, numeradas 1, 2, 3. Nome, tom e cantor(a) são editados direto na linha — não é preciso abrir nada. Três jeitos de mexer na ordem, todos na mesma linha:
+
+- As **setas** ao lado do número sobem e descem a música uma posição dentro do set. A seta some (fica apagada) na primeira e na última.
+- O campo **Posição** aceita o número direto: digitar 1 leva a música para a abertura do set, sem precisar clicar seta vinte vezes.
+- O seletor **Set** passa a música para o outro set, na mesma linha. Ela entra no fim dele, e o set de onde saiu é renumerado sozinho — a música desaparece de uma tabela e aparece na outra.
+
+Passando o mouse sobre o nome da música, aparece em quantos anos a bateria já tocou ela e qual foi a vez mais recente.
+
+> **Ordem e set gravam na hora**, igual a publicar. O botão "Salvar todas as músicas" cuida só de nome, tom e cantor(a) — ele nunca mexe na ordem nem no set, então não há como perder a montagem por sair da tela sem salvar.
+
+Ao cadastrar uma música nova, o seletor **"no fim do Set"**, ao lado do botão Adicionar, diz em qual set ela entra. Ele vale também para o botão "Adicionar ao repertório" da lista de músicas já tocadas, logo abaixo — então para montar o set 2 inteiro, deixe o seletor em 2 e vá acrescentando.
+
+A ordem e os sets aparecem para todo mundo: na área do batuqueiro o repertório vem com as colunas **Set** e **#**, e na tela de marcar músicas do ensaio as músicas aparecem agrupadas e numeradas por set. Música em rascunho continua invisível para os outros até ser publicada.
+
+> Músicas cadastradas antes desta atualização não tinham set nem posição. Elas entram no fim do Set 1, em ordem alfabética, e ganham número de verdade assim que você mexer na ordem do set pela primeira vez. Nada precisa ser migrado à mão.
 
 **Dá para montar o repertório sem anunciar antes da hora?** Dá. **Toda música nova entra como rascunho**, com um selo "Rascunho" na linha. Enquanto está assim, ela não aparece na área do batuqueiro, não pode ser marcada num ensaio e não conta no histórico — é como se ainda não existisse para o resto do bloco. Quando estiver do jeito que você quer, publique: o botão **"Publicar"** na linha da música solta uma de cada vez, e o aviso amarelo no topo da tela tem um botão para **publicar todas de uma vez**. Publicar e despublicar gravam na hora, sem depender do "Salvar todas as músicas" — e o "Salvar todas" mexe só em nome, tom e cantor(a), nunca devolve uma música publicada para rascunho.
 
@@ -346,7 +362,11 @@ Vale entender por que o contato precisou ficar separado, porque a mesma armadilh
 
 **O site tem aviso de privacidade?** Sim, no rodapé de todas as telas: o que é guardado, para que serve, quem enxerga o quê e como pedir correção ou exclusão. Sobre a LGPD, vale a ressalva honesta: um bloco de carnaval fica numa zona cinzenta da lei (o art. 4º, I exclui tratamento feito por pessoa natural para fins particulares e não econômicos, mas há cobrança de anuidade aqui). O aviso e a restrição do contato não são um parecer jurídico — são o mínimo razoável, e existem principalmente porque as pessoas estão entregando telefone e data de nascimento para um site.
 
-**Como faço para exportar a lista para uma planilha?** No painel admin, em **Cadastros**, há dois botões: **"Baixar Excel (.xlsx)"** e **"Baixar CSV"**. Os dois trazem exatamente o mesmo conteúdo — uma linha por pessoa inscrita no carnaval que estiver selecionado, com nome, apelido, e-mail, celular, nascimento, idade, se vai tocar, posição, camisa, isenção e o motivo dela, forma de pagamento, valor devido, valor pago, saldo, quanto pagou a mais, situação, presenças e os acessos de organização. O filtro de posição da tela não muda o arquivo: a planilha sai sempre completa.
+**Como faço para exportar a lista para uma planilha?** No painel admin, em **Cadastros**, há dois botões: **"Baixar Excel (.xlsx)"** e **"Baixar CSV"**. Os dois trazem exatamente o mesmo conteúdo — uma linha por pessoa inscrita no carnaval que estiver selecionado, com nome, apelido, e-mail, celular, nascimento, idade, se vai tocar, posição, camisa, isenção e o motivo dela, data da inscrição, forma de pagamento, valor devido, valor pago, saldo, quanto pagou a mais, situação, presenças e os acessos de organização. O filtro de posição da tela não muda o arquivo: a planilha sai sempre completa.
+
+> **A "Data da inscrição" é o dia em que aquela pessoa respondeu o questionário daquele carnaval** — não a data em que ela criou a conta no site. Quem se inscreve em dois carnavais tem uma data em cada um. No .xlsx ela vai como data de verdade, então dá para ordenar e filtrar por período no Excel; no CSV sai escrita em dd/mm/aaaa.
+>
+> Duas situações em que a célula sai **vazia**, e vazio aqui quer dizer "não se sabe": quem foi trazido pela importação do formato antigo (aquele formato não guardava quando a pessoa respondeu, e carimbar a hora da importação faria a planilha afirmar que a bateria inteira se inscreveu no mesmo minuto), e um punhado de inscrições feitas nos primeiros dias do site, antes de o campo existir.
 
 > **Valor devido e Saldo saem em branco para quem ainda não escolheu a forma de pagamento** — em branco, não zero. Não dá para dizer quanto essa pessoa deve, e sair zero fazia a soma da coluna Saldo no Excel responder que não falta entrar nada, com a bateria inteira ainda sem plano escolhido. A coluna **Pago a mais** só é preenchida quando alguém pagou acima do plano, o que normalmente acontece quando o plano é trocado depois do pagamento.
 
@@ -362,7 +382,9 @@ O rodapé da tabela soma o que está na tela, acompanhando os filtros: quantas p
 
 **Posso ver os dados de um carnaval antigo?** Sim. No painel admin, o seletor **"Estou vendo os dados de"** troca a edição que está sendo exibida — todas as telas (ensaios, posições, músicas, relatório, cadastros) passam a mostrar aquele carnaval. Se a edição estiver encerrada, tudo fica só leitura, com um aviso no topo. Cada batuqueiro também tem o próprio "Meu histórico de carnavais".
 
-**Como entra o repertório de antes do site?** O bloco tinha uma planilha com as músicas de cada ano desde 2011. Ela vem convertida no arquivo `repertorio-historico.json`, que fica junto do site, e entra com um clique: **Painel admin → "Repertório histórico" → "Importar repertório histórico"**. É passo único — se a coleção já tiver músicas, o site recusa, para não duplicar.
+**Como entra o repertório de antes do site?** O bloco tinha uma planilha com as músicas de cada ano desde 2011. Ela vem convertida no arquivo `repertorio-historico.json`, que fica junto do site, e entra com um clique: **Painel admin → "Repertório histórico" → "Importar repertório histórico"**. É passo único — se a planilha já tiver sido importada, o site recusa, para não duplicar.
+
+> A trava olha só para músicas **com ano marcado**. A mesma coleção guarda também o catálogo de tom e cantor(a) das músicas do site (abaixo), cujas entradas não têm ano nenhum — se a trava contasse essas, bastaria cadastrar uma música no repertório do ano para bloquear a importação da planilha para sempre. Quando a planilha traz uma música que já estava no catálogo, as duas viram uma só: o tom e o cantor(a) são preservados e ela só ganha os anos.
 
 Depois de importar, esses anos aparecem **na mesma tabela** "Músicas por carnaval" do Histórico geral, como colunas à direita dos carnavais do site. Uma música que tocou em 2014 e voltou em 2027 é uma linha só. A diferença entre as duas partes: nos carnavais do site a célula diz em quantos ensaios a música foi tocada; nos anos de arquivo diz só que tocou, porque a planilha antiga não registrava ensaio.
 
@@ -380,7 +402,13 @@ Mudar o nome aqui muda só o arquivo — o repertório de cada carnaval no site 
 
 > Antes essa lista só mostrava as "clássicas", com um corte em metade dos anos registrados. O corte saiu: o que é tradição e o que foi experiência de um ano só é decisão da bateria, não do site — e a ordem por quantidade de anos mais a busca já resolvem achar qualquer uma das duas.
 
-Tom e cantor(a) entram em branco ao trazer uma música da lista: a planilha antiga não tinha esses campos, e preencher com o de outro ano seria inventar informação.
+**O tom e quem canta ficam guardados de um carnaval para o outro.** São da música, não do ano: ao salvar o repertório, o tom e o cantor(a) de cada música vão para o catálogo do site. Quando a mesma música entrar no repertório de um carnaval seguinte, ela já chega preenchida — é só corrigir na linha se mudou, e a correção volta para o catálogo.
+
+Três regras que valem a pena saber:
+
+- **Quem manda é o carnaval mais recente.** Cada música guarda de que ano veio o tom. Corrigir o repertório de 2027 depois de já ter escolhido o tom em 2028 não desfaz a escolha de 2028 — o repertório de 2027 guarda o que você digitou nele, mas o catálogo fica com o mais novo.
+- **Música nova entra no catálogo sozinha**, no momento em que você a cadastra no repertório de um carnaval. Não há passo separado.
+- Música que veio da planilha antiga chega sem tom e sem cantor(a), porque aquela planilha não tinha esses campos. Da primeira vez você preenche; daí em diante ela volta preenchida.
 
 > Duas coisas que a planilha trazia e eu resolvi na conversão: "MEL NA SUA BOCA" e "AMOR DE CHOCOLATE" apareciam em duas linhas cada, com anos diferentes, e viraram uma música só; e vários nomes tinham espaço sobrando no fim, o que impediria a música de casar entre os anos. Ficou uma pendência para você decidir: a música "SÓ PRO MEU PRAZER - FESTIVAL 2029" está marcada em 2026 e o 2029 parece erro de digitação. Não mexi no nome — corrija na tela de edição descrita abaixo.
 

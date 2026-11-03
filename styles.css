@@ -179,6 +179,34 @@
   .stat-tile .value small { font-size: 14px; font-weight: 600; color: var(--text-secondary); }
   .stat-tile .sub { font-size: 11.5px; color: var(--text-secondary); margin-top: 4px; white-space: normal; }
 
+  /* ---------- repertório: sets e ordem de execução ---------- */
+  .set-bloco { border: 1px solid var(--gridline); border-radius: 12px; padding: 4px 14px 14px; margin-top: 14px; }
+  .set-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; padding: 10px 0 4px; border-bottom: 1px solid var(--gridline); }
+  .set-head h3 { margin: 0; font-size: 15px; }
+  /* A linha é uma grade de duas colunas: o controle de ordem fica fixo à
+     esquerda, do lado do número, e os campos ocupam o resto. Em tela estreita
+     vira uma coluna só, com os controles em cima. */
+  /* Cada set é uma tabela: uma linha por música, campos editáveis na própria
+     linha. Os campos dentro da tabela perdem a margem e o tamanho de formulário
+     para a linha não virar um bloco alto. */
+  .tabela-repertorio td { padding: 6px 8px; }
+  .tabela-repertorio input[type=text], .tabela-repertorio input[type=number], .tabela-repertorio select {
+    padding: 6px 8px; font-size: 13.5px; border-radius: 7px;
+  }
+  /* O selo de rascunho fica na célula de ações, junto do botão Publicar: no
+     campo do nome ele empurrava as colunas seguintes para fora da tela. */
+  .tabela-repertorio .col-musica { width: 34%; min-width: 210px; }
+  .tabela-repertorio .col-musica input { width: 100%; min-width: 150px; }
+  .tabela-repertorio .musica-tom-input, .tabela-repertorio .musica-cantor-input { min-width: 110px; }
+  .tabela-repertorio .badge { font-size: 11px; padding: 3px 7px; }
+  .tabela-repertorio td input[type=number].musica-posicao-input { width: 52px; text-align: center; font-variant-numeric: tabular-nums; }
+  .tabela-repertorio td select.musica-set-input { width: 58px; }
+  .tabela-repertorio .mover { padding: 2px 8px; line-height: 1.2; font-size: 14px; font-weight: 700; min-width: 30px; }
+  .tabela-repertorio .mover:disabled { opacity: 0.3; }
+  .tabela-repertorio .badge { margin-left: 6px; vertical-align: middle; }
+  td.nowrap { white-space: nowrap; }
+  .musica-linha.e-rascunho td { background: color-mix(in srgb, var(--warning) 7%, transparent); }
+
   /* ---------- tables ---------- */
   .table-scroll { overflow-x: auto; border-radius: 12px; border: 1px solid var(--gridline); }
   table { border-collapse: collapse; width: 100%; font-size: 13.5px; }
