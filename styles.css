@@ -218,6 +218,10 @@
   td.row-actions > *:not(:last-child) { margin-right: 6px; }
   thead th { background: var(--surface-2); color: var(--text-secondary); font-size: 12px; text-transform: uppercase; letter-spacing: 0.03em; position: sticky; top: 0; }
   th.center, td.center { text-align: center; }
+  /* Cabeçalho que ordena: o cursor e o realce dizem que dá para clicar, sem
+     precisar de um ícone em toda coluna. */
+  th.ord { cursor: pointer; user-select: none; }
+  th.ord:hover { color: var(--text-primary); background: color-mix(in srgb, var(--brand-fire) 10%, var(--surface-2)); }
   /* Nome comprido não pode empurrar as outras colunas para fora do cartão: sem
      isto, uma música de nome longo tira o botão de ação da tela e obriga a rolar
      a tabela para o lado. Quebra em duas linhas em vez de alargar. */

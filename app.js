@@ -106,6 +106,7 @@ let contatosCache = {};
    demanda, junto do histórico geral — não é dado do dia a dia. */
 let repertorioHistorico = null;
 let repertorioHistoricoCarregando = false;
+let repertorioHistoricoFalhou = false;
 let edicoesCache = [];      // todas as edições do carnaval
 let inscricoesCache = [];   // inscrições da edição em contexto
 let posicoesCache = [];
@@ -117,6 +118,9 @@ let myPagamentos = [];      // só os pagamentos do próprio usuário logado, na
 /* Células de presença com gravação em andamento, para o segundo clique não
    recalcular o novo valor em cima de um cache que ainda não voltou. */
 const presencasEmVoo = new Set();
+/* Comprovantes sendo gravados agora, por id. Mesmo motivo de presencasEmVoo:
+   o botão não desabilita e o retorno só vem no toast, segundos depois. */
+const pagsEmVoo = new Set();
 
 const unsub = { myPessoa: null, pessoas: null, edicoes: null, meuContato: null, contatos: null };
 const unsubEd = { inscricoes: null, posicoes: null, ensaios: null, musicas: null, precos: null, presencas: null, myPagamentos: null };
@@ -164,6 +168,13 @@ const session = {
   repHistOrdem: "alfabetica",
   repSugestaoFiltro: "",
   setDestino: 1,
+  repBusca: "",
+  repFiltroSet: "todas",
+  repFiltroTom: "todas",
+  repFiltroCantor: "todas",
+  repFiltroEnsaio: "todas",
+  repOrdemCol: "",
+  repOrdemDir: "asc",
   relatorioFiltroPago: "todos",
   relatorioFiltroSaldo: "todos",
   // Comprovantes da pessoa que o admin está editando. Carregados sob demanda —
@@ -213,6 +224,16 @@ function ordenarRepertorio(lista) {
 function musicasDoSet(lista, set) {
   return ordenarRepertorio((lista || []).filter(m => setDaMusica(m) === set));
 }
+/* Próxima posição livre do set. Contar quantas músicas existem não serve: música
+   antiga não tem `ordem` (vale Infinito e fica no fim), e remover uma do meio
+   deixa buraco na numeração. Nos dois casos "quantidade + 1" devolvia um número
+   JÁ USADO, e a música nova aparecia no meio do set — ou empatada com outra,
+   com o desempate caindo na ordem alfabética. */
+function proximaOrdemDoSet(lista, set) {
+  const ordens = (lista || []).filter(m => setDaMusica(m) === set)
+    .map(m => ordemDaMusica(m)).filter(n => isFinite(n));
+  return (ordens.length ? Math.max(...ordens) : 0) + 1;
+}
 /* Renumera cada set de 1 a n e devolve só o que mudou de lugar — é o que vai
    para o banco. Renumerar tudo (em vez de trocar duas posições) conserta de
    quebra a lista antiga, que não tinha número nenhum. */
@@ -230,9 +251,19 @@ function diffDeOrdenacao(listaFinalPorSet, original) {
   return mudancas;
 }
 /* Nomes de posição únicos (para droplists de filtro), em ordem alfabética. */
+const SEM_POSICAO = "__sem__";
+/* Quem ainda não escolheu posição tem o campo vazio. Devolver "" aqui criava uma
+   <option> de rótulo vazio que, ao ser escolhida, caía em "todas" — ou seja,
+   não dava para isolar justamente quem está faltando escolher, e a tabela de
+   naipes mostrava uma linha sem nome. A marca explícita resolve os dois. */
 function posicoesUnicasOrdenadas(pessoas) {
-  return [...new Set(pessoas.map(p => p.posicao))].sort((a, b) => (a || "").localeCompare(b || "", "pt-BR", { sensitivity: "base" }));
+  const nomes = [...new Set(pessoas.map(p => (p.posicao || "").trim()).filter(Boolean))]
+    .sort((a, b) => a.localeCompare(b, "pt-BR", { sensitivity: "base" }));
+  return pessoas.some(p => !(p.posicao || "").trim()) ? [...nomes, SEM_POSICAO] : nomes;
 }
+const rotuloDaPosicao = p => (p === SEM_POSICAO ? "Sem posição definida" : p);
+const pessoaNaPosicao = (p, filtro) =>
+  filtro === SEM_POSICAO ? !(p.posicao || "").trim() : p.posicao === filtro;
 /* ------------------------------------------------------------
    Rascunho de repertório
    ------------------------------------------------------------
@@ -322,7 +353,7 @@ onAuthStateChanged(auth, (user) => {
   if (!user) {
     myPessoa = null; pessoaLoaded = false; myLegado = null; legadoConsultado = false;
     pessoasCache = []; edicoesCache = []; contatosCache = {}; edicoesLoaded = false;
-    repertorioHistorico = null; repertorioHistoricoCarregando = false; musicasDaEdicaoCache = {};
+    repertorioHistorico = null; repertorioHistoricoCarregando = false; repertorioHistoricoFalhou = false; musicasDaEdicaoCache = {};
     musicasDeOutrasEdicoesCarregando = false; musicasDeOutrasEdicoesFalhou = false;
     limparCachesDaEdicao();
     if (session.view && !["landing", "login", "register1"].includes(session.view)) session.view = "landing";
@@ -438,6 +469,13 @@ function limparEstadoDeSessao() {
   repHistOrdem: "alfabetica",
   repSugestaoFiltro: "",
   setDestino: 1,
+  repBusca: "",
+  repFiltroSet: "todas",
+  repFiltroTom: "todas",
+  repFiltroCantor: "todas",
+  repFiltroEnsaio: "todas",
+  repOrdemCol: "",
+  repOrdemDir: "asc",
   relatorioFiltroPago: "todos",
   relatorioFiltroSaldo: "todos",
   // Comprovantes da pessoa que o admin está editando. Carregados sob demanda —
@@ -599,6 +637,18 @@ function limparEstadoDaEdicao() {
   session.relatorioFiltroPosicao = "todas";
   session.relatorioFiltroPago = "todos";
   session.relatorioFiltroSaldo = "todos";
+  // O filtro de ensaio guarda um id que não existe na outra edição, e tom e
+  // cantor(a) mudam de um carnaval para o outro.
+  session.repBusca = ""; session.repFiltroSet = "todas"; session.repFiltroTom = "todas";
+  session.repFiltroCantor = "todas"; session.repFiltroEnsaio = "todas";
+  session.repOrdemCol = ""; session.repOrdemDir = "asc";
+  // O pré-preenchimento da inscrição é de UM carnaval. Sem zerar aqui, a troca
+  // automática de edição levava as escolhas feitas para o carnaval anterior
+  // (inclusive "não vou tocar", que decide a isenção da anuidade) para a tela
+  // do carnaval novo, já marcadas.
+  session.draftInscricao = null;
+  session.draftInscricaoDeEdicao = null;
+  session.draftInscricaoCarregadaPara = null;
 }
 
 function trocarEdicaoCtx(eid) {
@@ -682,7 +732,21 @@ const currency = v => numero(v).toLocaleString("pt-BR", { style: "currency", cur
 /* Escapa na origem: esta função é interpolada crua em dezenas de pontos, e as
    datas vêm do banco (inclusive de importação de dados antigos, que ninguém
    validou). Escapar aqui é mais seguro que lembrar de escapar em cada uso. */
-const dateBR = iso => { if (!iso) return "—"; const [y, m, d] = String(iso).split("-"); return esc(`${d}/${m}/${y}`); };
+/* Aceita o formato antigo ("10/05/1990") além do aaaa-mm-dd: ele existe em
+   cadastros anteriores à separação de contatos, e a divisão crua imprimia
+   "undefined/undefined/10/05/1990" na tela e na planilha exportada. */
+const dateBR = iso => {
+  if (!iso) return "—";
+  const texto = String(iso).trim();
+  if (!/^\d{4}-\d{2}-\d{2}/.test(texto)) {
+    const normal = dataNascimentoNormalizada(texto);
+    if (!normal) return esc(texto);
+    const [y2, m2, d2] = normal.split("-");
+    return esc(`${d2}/${m2}/${y2}`);
+  }
+  const [y, m, d] = texto.slice(0, 10).split("-");
+  return esc(`${d}/${m}/${y}`);
+};
 const fullName = u => `${u.nome || ""} ${u.sobrenome || ""}`.trim();
 /* Como a pessoa prefere ser chamada. Numa bateria quase todo mundo se conhece
    pelo apelido, então é ele que aparece na saudação; o nome completo continua
@@ -889,7 +953,10 @@ function parcelasInfo(u) {
   const out = [];
   for (let i = 0; i < parcelas; i++) {
     // A última parcela fecha no total devido, não no múltiplo do valor exibido.
-    const alvo = i === parcelas - 1 ? meta - folgaDeCentavos(parcelas) : valorParcela * (i + 1);
+    // A folga cresce com o número de parcelas já vencidas: quem pagou duas de
+    // R$ 83,33 depositou R$ 166,66 contra um alvo de R$ 166,666..., e com a
+    // tolerância fixa a 2ª parcela aparecia "Atrasada" por menos de um centavo.
+    const alvo = i === parcelas - 1 ? meta - folgaDeCentavos(parcelas) : valorParcela * (i + 1) - folgaDeCentavos(i + 1);
     const prazo = prazos[i];
     let status;
     if (pago >= alvo - 0.005) status = { label: "Paga", cls: "badge-good" };
@@ -995,7 +1062,12 @@ function selectDeFaixa(id, rotulo, valorAtual, valores, rotuloZero) {
 
 function contagemPorPosicao(pessoas) {
   const map = {};
-  pessoas.forEach(p => { map[p.posicao] = (map[p.posicao] || 0) + 1; });
+  // Sem o rótulo, quem não escolheu posição virava uma linha sem nome na tabela
+  // de naipes, com a contagem solta ao lado.
+  pessoas.forEach(p => {
+    const chave = (p.posicao || "").trim() || rotuloDaPosicao(SEM_POSICAO);
+    map[chave] = (map[chave] || 0) + 1;
+  });
   return Object.entries(map).sort((a, b) => b[1] - a[1]);
 }
 
@@ -1106,6 +1178,13 @@ function fotografarFormularios() {
   if (!app) return null;
   const valores = [];
   app.querySelectorAll("input, select, textarea").forEach(el => {
+    // Campo marcado como derivado fica fora da foto. São os campos cujo valor
+    // já é preservado por outro caminho — o rascunho local, que guarda cada
+    // tecla digitada — ou que são calculados no render. Repor a foto neles
+    // fazia a tela mentir: o número da posição voltava com buraco depois de uma
+    // remoção, e o tom corrigido por outro organizador era apagado da tela pelo
+    // valor velho, voltando ao banco no próximo "Salvar todas as músicas".
+    if (el.dataset && el.dataset.derivado) return;
     const sel = seletorDoCampo(el);
     if (!sel) return;
     valores.push({ sel, valor: el.type === "checkbox" || el.type === "radio" ? el.checked : el.value });
@@ -1539,7 +1618,7 @@ function viewBatuqueiro() {
         <div><label>Filtrar por posição</label>
           <select id="presenca-filtro-posicao">
             <option value="todas" ${posicaoFiltro === "todas" ? "selected" : ""}>Todas as posições</option>
-            ${posicoesUnicasOrdenadas(todos).map(pos => `<option value="${esc(pos)}" ${posicaoFiltro === pos ? "selected" : ""}>${esc(pos)}</option>`).join("")}
+            ${posicoesUnicasOrdenadas(todos).map(pos => `<option value="${esc(pos)}" ${posicaoFiltro === pos ? "selected" : ""}>${esc(rotuloDaPosicao(pos))}</option>`).join("")}
           </select>
         </div>
         <div><label>Filtrar por ensaio</label>
@@ -1550,7 +1629,7 @@ function viewBatuqueiro() {
         </div>
       </div>
       ${ensaiosCache.length === 0 ? `<div class="hint">Nenhum ensaio cadastrado ainda.</div>` : (() => {
-        const pessoasFiltradas = todos.filter(p => posicaoFiltro === "todas" || p.posicao === posicaoFiltro);
+        const pessoasFiltradas = todos.filter(p => posicaoFiltro === "todas" || pessoaNaPosicao(p, posicaoFiltro));
         return `
       <div class="table-scroll">
         <table>
@@ -1588,31 +1667,172 @@ function viewBatuqueiro() {
     </div>
 
     <!-- BOX 4: REPERTÓRIO ENSAIADO -->
-    ${musicasPublicadas().length > 0 ? `
+    ${(() => {
+      const todasLinhas = linhasDoRepertorio(musicasPublicadas());
+      if (!todasLinhas.length) return "";
+
+      const tonsDisponiveis = [...new Set(todasLinhas.map(l => l.tom).filter(Boolean))].sort((a, b) => a.localeCompare(b, "pt-BR", { sensitivity: "base" }));
+      const cantoresDisponiveis = [...new Set(todasLinhas.map(l => l.cantor).filter(Boolean))].sort((a, b) => a.localeCompare(b, "pt-BR", { sensitivity: "base" }));
+      const ensaiosDisponiveis = ensaiosCache.filter(e => todasLinhas.some(l => l.ensaios.includes(e.id)));
+
+      const fSet = filtroValido("repFiltroSet", SETS_DO_CARNAVAL.map(String));
+      const fTom = filtroValido("repFiltroTom", [...tonsDisponiveis, "sem"]);
+      const fCantor = filtroValido("repFiltroCantor", [...cantoresDisponiveis, "sem"]);
+      const fEnsaio = filtroValido("repFiltroEnsaio", [...ensaiosDisponiveis.map(e => e.id), "nenhum"]);
+      const busca = (session.repBusca || "").trim().toLowerCase();
+      const ordCol = COLUNAS_REPERTORIO[session.repOrdemCol] ? session.repOrdemCol : "";
+      const ordDir = session.repOrdemDir === "desc" ? "desc" : "asc";
+
+      const linhas = ordenarLinhasRepertorio(todasLinhas.filter(l =>
+        (fSet === "todas" || String(l.set) === fSet) &&
+        (fTom === "todas" || (fTom === "sem" ? !l.tom : l.tom === fTom)) &&
+        (fCantor === "todas" || (fCantor === "sem" ? !l.cantor : l.cantor === fCantor)) &&
+        (fEnsaio === "todas" || (fEnsaio === "nenhum" ? !l.ensaios.length : l.ensaios.includes(fEnsaio))) &&
+        (!busca || l.nome.toLowerCase().includes(busca))
+      ), ordCol, ordDir);
+
+      const filtrando = fSet !== "todas" || fTom !== "todas" || fCantor !== "todas" || fEnsaio !== "todas" || !!busca;
+      const seta = col => ordCol === col ? (ordDir === "asc" ? " \u2191" : " \u2193") : "";
+      const th = (col, rotulo, classe) =>
+        `<th class="${classe || ""} ord" data-ord-rep="${col}" title="Clique para ordenar por ${rotulo.toLowerCase()}" aria-sort="${ordCol === col ? (ordDir === "asc" ? "ascending" : "descending") : "none"}">${rotulo}${seta(col)}</th>`;
+
+      return `
     <div class="card">
       <div class="card-head">
-        <div><h2>Repertório</h2><p class="card-sub" style="margin-bottom:0">Músicas do ${esc(edicaoLabel(ed))} na ordem dos dois sets, e em quais ensaios cada uma foi tocada</p></div>
+        <div><h2>Repertório</h2><p class="card-sub" style="margin-bottom:0">Músicas do ${esc(edicaoLabel(ed))} na ordem dos dois sets, e em quais ensaios cada uma foi tocada. Clique no título de uma coluna para ordenar por ela.</p></div>
       </div>
+
+      <div class="filter-row">
+        <div style="flex:1; min-width:200px;">
+          <label>Buscar música</label>
+          <input type="text" id="rep-busca" value="${esc(session.repBusca || "")}" placeholder="Digite parte do nome">
+        </div>
+        <div><label>Set</label>
+          <select id="rep-filtro-set">
+            <option value="todas">Os dois</option>
+            ${SETS_DO_CARNAVAL.map(st => `<option value="${st}" ${fSet === String(st) ? "selected" : ""}>Set ${st}</option>`).join("")}
+          </select>
+        </div>
+        <div><label>Tom</label>
+          <select id="rep-filtro-tom">
+            <option value="todas">Todos</option>
+            ${tonsDisponiveis.map(t => `<option value="${esc(t)}" ${fTom === t ? "selected" : ""}>${esc(t)}</option>`).join("")}
+            <option value="sem" ${fTom === "sem" ? "selected" : ""}>Sem tom definido</option>
+          </select>
+        </div>
+        <div><label>Cantor(a)</label>
+          <select id="rep-filtro-cantor">
+            <option value="todas">Todos</option>
+            ${cantoresDisponiveis.map(c => `<option value="${esc(c)}" ${fCantor === c ? "selected" : ""}>${esc(c)}</option>`).join("")}
+            <option value="sem" ${fCantor === "sem" ? "selected" : ""}>Sem cantor(a) definido</option>
+          </select>
+        </div>
+        <div><label>Ensaiada em</label>
+          <select id="rep-filtro-ensaio">
+            <option value="todas">Qualquer ensaio</option>
+            ${ensaiosDisponiveis.map(e => `<option value="${esc(e.id)}" ${fEnsaio === e.id ? "selected" : ""}>${ensaioLabel(e)}</option>`).join("")}
+            <option value="nenhum" ${fEnsaio === "nenhum" ? "selected" : ""}>Ainda não ensaiada</option>
+          </select>
+        </div>
+        ${(filtrando || ordCol) ? `<div><label>&nbsp;</label><button class="btn-ghost btn-sm" id="rep-limpar">Limpar e voltar à ordem dos sets</button></div>` : ""}
+      </div>
+
       <div class="table-scroll">
-        <table>
-          <thead><tr><th class="center">Set</th><th class="center">#</th><th>Música</th><th>Tom</th><th>Cantor(a)</th><th>Ensaiada em</th></tr></thead>
+        <table id="tabela-repertorio-batuqueiro">
+          <thead><tr>
+            ${th("set", "Set", "center")}
+            ${th("pos", "#", "center")}
+            ${th("nome", "Música")}
+            ${th("tom", "Tom")}
+            ${th("cantor", "Cantor(a)")}
+            ${th("ensaios", "Ensaiada em")}
+          </tr></thead>
           <tbody>
-            ${SETS_DO_CARNAVAL.map(st => musicasDoSet(musicasPublicadas(), st).map((m, i) => {
-              const datas = ensaiosCache.filter(e => (e.musicaIds || []).includes(m.id)).map(ensaioLabel);
-              return `<tr>
-                <td class="center">${i === 0 ? `<b>${st}</b>` : ""}</td>
-                <td class="center">${i + 1}</td>
-                <td class="name-cell">${esc(m.nome)}</td>
-                <td>${esc(m.tom) || "—"}</td>
-                <td>${esc(m.cantor) || "—"}</td>
-                <td>${datas.length ? datas.join(", ") : '<span class="hint">Ainda não</span>'}</td>
-              </tr>`;
-            }).join("")).join("")}
+            ${linhas.map((l, i) => `<tr data-musica-rep="${l.id}">
+                <td class="center">${(!ordCol && (i === 0 || linhas[i - 1].set !== l.set)) ? `<b>${l.set}</b>` : (ordCol ? l.set : "")}</td>
+                <td class="center">${l.pos}</td>
+                <td class="name-cell">${esc(l.nome)}</td>
+                <td>${esc(l.tom) || "—"}</td>
+                <td>${esc(l.cantor) || "—"}</td>
+                <td>${l.datas.length ? esc(l.datas.join(", ")) : '<span class="hint">Ainda não</span>'}</td>
+              </tr>`).join("") || `<tr><td colspan="6" class="hint">Nenhuma música com esses filtros.</td></tr>`}
           </tbody>
         </table>
       </div>
-    </div>` : ""}
+      <p class="hint" style="margin-top:10px;">${linhas.length} de ${todasLinhas.length} música${todasLinhas.length === 1 ? "" : "s"}${ordCol ? " · ordenado por coluna, não pela ordem de tocar" : ""}</p>
+    </div>`;
+    })()}
   </div>`;
+}
+
+/* ------------------------------------------------------------
+   Repertório do batuqueiro: ordenar e filtrar
+   ------------------------------------------------------------
+   A tabela nasce na ordem dos sets, que é a ordem de tocar. Mas com repertório
+   grande, quem procura uma música específica (ou quer ver o que ainda não foi
+   ensaiado, ou tudo que uma pessoa canta) precisa de outro caminho — por isso
+   cada coluna ordena, e as colunas de valor repetido filtram.
+
+   Toda opção escolhida é conferida contra as opções que existem AGORA: uma
+   música removida levava embora o tom que estava selecionado, o seletor voltava
+   a exibir "Todos" e a tabela continuava filtrada por um valor invisível, sem
+   jeito de desfazer.
+   ------------------------------------------------------------ */
+function opcaoValida(valor, opcoes) {
+  return valor && opcoes.includes(valor) ? valor : "todas";
+}
+/* Além de devolver o valor bom para desenhar, apaga da sessão a escolha que não
+   existe mais. Sem isso o filtro morto ficava guardado e RESSUSCITAVA: a opção
+   voltava a existir (o admin remarcou aquela música naquele ensaio) e a tabela
+   encolhia sozinha, com o seletor saltando de "Qualquer ensaio" para uma data
+   que ninguém escolheu de novo. */
+function filtroValido(chave, opcoes) {
+  const bom = opcaoValida(session[chave], opcoes);
+  if (session[chave] !== bom) session[chave] = bom;
+  return bom;
+}
+/* Uma linha da tabela já com tudo que ordena e filtra resolvido. A posição no
+   set é calculada aqui, na ordem de execução, e segue com a linha quando a
+   tabela é reordenada por outra coluna — senão o número viraria o índice da
+   linha e mentiria sobre a ordem de tocar. */
+function linhasDoRepertorio(lista) {
+  const linhas = [];
+  SETS_DO_CARNAVAL.forEach(st => {
+    musicasDoSet(lista, st).forEach((m, i) => {
+      const datas = ensaiosCache.filter(e => (e.musicaIds || []).includes(m.id));
+      linhas.push({
+        id: m.id, set: st, pos: i + 1, nome: m.nome || "",
+        tom: (m.tom || "").trim(), cantor: (m.cantor || "").trim(),
+        ensaios: datas.map(e => e.id), datas: datas.map(ensaioLabel),
+      });
+    });
+  });
+  return linhas;
+}
+const COLUNAS_REPERTORIO = {
+  set:     l => l.set * 1000 + l.pos,          // ordenar por set mantém a ordem de tocar dentro dele
+  pos:     l => l.pos,
+  nome:    l => l.nome,
+  tom:     l => l.tom,
+  cantor:  l => l.cantor,
+  ensaios: l => l.datas.length,
+};
+function ordenarLinhasRepertorio(linhas, col, dir) {
+  const campo = COLUNAS_REPERTORIO[col];
+  if (!campo) return linhas;                   // sem coluna escolhida: ordem dos sets
+  const sinal = dir === "desc" ? -1 : 1;
+  return [...linhas].sort((a, b) => {
+    const va = campo(a), vb = campo(b);
+    // Vazio vai para o fim nos dois sentidos: "—" no meio da lista não ajuda
+    // ninguém a achar nada.
+    if (typeof va === "string") {
+      if (!va && vb) return 1;
+      if (va && !vb) return -1;
+      const c = va.localeCompare(vb, "pt-BR", { sensitivity: "base" });
+      return c !== 0 ? sinal * c : a.set - b.set || a.pos - b.pos;
+    }
+    return sinal * (va - vb) || a.set - b.set || a.pos - b.pos;
+  });
 }
 
 /* Faixa no topo avisando quando a edição em contexto não é a que está aberta. */
@@ -2516,9 +2736,13 @@ async function carregarRepertorioHistorico() {
   try {
     const snap = await getDocs(P.repertorioHistorico());
     repertorioHistorico = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    repertorioHistoricoFalhou = false;
   } catch (err) {
     console.warn("repertório histórico não pôde ser carregado:", err);
     repertorioHistorico = [];
+    // Marca que o vazio é falha, não ausência de dados: quem escreve no
+    // catálogo precisa saber a diferença para não criar entrada duplicada.
+    repertorioHistoricoFalhou = true;
   }
   repertorioHistoricoCarregando = false;
   return repertorioHistorico;
@@ -2564,13 +2788,22 @@ function tomCantorDoCatalogo(nome) {
    propósito: é efeito colateral de salvar o repertório, não uma ação do admin —
    se falhar, o repertório do ano já está salvo e o catálogo tenta de novo na
    próxima edição. */
-async function registrarNoCatalogo(nome, tom, cantor, ano) {
+async function registrarNoCatalogo(nome, tom, cantor, ano, nomeAnterior) {
   const limpo = (nome || "").trim();
   if (!limpo) return;
   try {
     if (repertorioHistorico === null) await carregarRepertorioHistorico();
-    const reg = doCatalogo(limpo);
+    // Se a leitura do catálogo falhou, o cache fica vazio e TODA música parece
+    // inédita: gravar aqui criaria uma segunda entrada ao lado da verdadeira,
+    // com `anos` zerado, e a música mais tocada do bloco passaria a dizer
+    // "não aparece no histórico". Melhor não tocar no catálogo desta vez.
+    if (repertorioHistoricoFalhou) return;
     const novoTom = (tom || "").trim(), novoCantor = (cantor || "").trim();
+    // Renomear a música no repertório renomeia a entrada do catálogo, em vez de
+    // criar uma segunda com o nome novo e abandonar a primeira com o tom certo.
+    const anterior = (nomeAnterior || "").trim();
+    const reg = doCatalogo(limpo)
+      || (anterior && chaveMusica(anterior) !== chaveMusica(limpo) ? doCatalogo(anterior) : null);
     if (reg) {
       // Relê do banco antes de decidir: o cache local foi carregado quando a
       // tela abriu e pode estar velho — outro organizador pode ter escolhido o
@@ -2581,9 +2814,21 @@ async function registrarNoCatalogo(nome, tom, cantor, ano) {
       const anoGravado = Number(dados.anoTomCantor) || 0;
       // Carnaval mais antigo não desfaz decisão de carnaval mais novo.
       if (ano < anoGravado) return;
-      if ((dados.tom || "") === novoTom && (dados.cantor || "") === novoCantor && anoGravado === ano) return;
-      await updateDoc(P.musicaHistorica(reg.id), { tom: novoTom, cantor: novoCantor, anoTomCantor: ano });
-      reg.tom = novoTom; reg.cantor = novoCantor; reg.anoTomCantor = ano;
+      // Campo em branco NÃO é decisão. O caminho normal de cadastrar uma música
+      // deixa Tom e Cantor(a) vazios; tratar isso como escolha apagava do
+      // catálogo o tom de anos de bloco e, como o selo de ano subia junto, a
+      // trava de recência impedia o valor certo de voltar. Em branco, o que já
+      // estava guardado é preservado.
+      const tomFinal = novoTom || (dados.tom || "");
+      const cantorFinal = novoCantor || (dados.cantor || "");
+      const mudouNome = (dados.nome || "") !== limpo;
+      if (!mudouNome && tomFinal === (dados.tom || "") && cantorFinal === (dados.cantor || "")) return;
+      // O ano só é carimbado quando houve escolha de verdade: senão uma música
+      // salva em branco em 2028 bloquearia a correção vinda de 2027.
+      const carimbo = (novoTom || novoCantor) ? { anoTomCantor: ano } : {};
+      await updateDoc(P.musicaHistorica(reg.id), { nome: limpo, tom: tomFinal, cantor: cantorFinal, ...carimbo });
+      reg.nome = limpo; reg.tom = tomFinal; reg.cantor = cantorFinal;
+      if (carimbo.anoTomCantor) reg.anoTomCantor = ano;
     } else {
       // Música que o bloco nunca tocou antes: entra no catálogo sem nenhum ano
       // marcado. `anos` vazio porque ela não tocou em nenhum carnaval ANTERIOR
@@ -2704,11 +2949,6 @@ async function importarRepertorioHistorico() {
     // essas, bastaria cadastrar uma música antes da importação para bloquear a
     // importação da planilha de 2011 a 2026 para sempre.
     const comAnos = jaTem.docs.filter(d => ((d.data().anos || []).length > 0));
-    if (comAnos.length) {
-      alert(`O repertório histórico já foi importado (${comAnos.length} músicas com anos marcados). Importar de novo duplicaria tudo, então está bloqueado.\n\nPara refazer, apague a coleção repertorioHistorico no Firebase Console antes.`);
-      render();
-      return;
-    }
     // As que já existem só como catálogo (tom e cantor, sem ano) são
     // atualizadas pelo nome, em vez de viverem duas vezes na coleção.
     const existentesPorNome = new Map(jaTem.docs.map(d => [chaveMusica(d.data().nome), d.id]));
@@ -2718,7 +2958,27 @@ async function importarRepertorioHistorico() {
     const musicas = (dados.musicas || []).filter(m => (m.nome || "").trim());
     if (!musicas.length) throw new Error("o arquivo não tem nenhuma música");
 
-    const escritas = musicas.map(m => {
+    // A trava antiga recusava assim que achasse UMA música com ano marcado, e
+    // mandava apagar a coleção no Console para refazer. Duas coisas pioraram
+    // isso: a gravação em blocos pode parar no meio (rede caindo), deixando a
+    // importação pela metade e sem saída pelo site; e a mesma coleção passou a
+    // guardar o catálogo de tom e cantor(a) do site, então apagá-la joga fora
+    // dado que não está em mais lugar nenhum.
+    // Como a gravação agora MESCLA por nome, repetir é seguro: o que falta
+    // entra, o que já está é reescrito igual. Só recusa quando não falta nada.
+    const jaTemPorNome = new Set(comAnos.map(d => chaveMusica(d.data().nome)));
+    const faltando = musicas.filter(m => !jaTemPorNome.has(chaveMusica(m.nome)));
+    if (!faltando.length) {
+      alert(`O repertório histórico já está completo: as ${musicas.length} músicas da planilha estão no site.\n\nNão há o que importar.`);
+      render();
+      return;
+    }
+    if (comAnos.length && !confirm(`A planilha tem ${musicas.length} músicas e ${comAnos.length} já estão no site. Importar agora acrescenta as ${faltando.length} que faltam.\n\nAs que já existem são atualizadas pelo nome, sem duplicar e sem perder o tom e o cantor(a) guardados. Continuar?`)) {
+      render();
+      return;
+    }
+
+    const escritas = faltando.map(m => {
       const existente = existentesPorNome.get(chaveMusica(m.nome));
       return [
         existente ? P.musicaHistorica(existente) : doc(P.repertorioHistorico()),
@@ -2731,7 +2991,7 @@ async function importarRepertorioHistorico() {
     repertorioHistorico = null;           // força reler na próxima consulta
     repertorioHistoricoCarregando = false;
     session.histGeral = null;             // o histórico geral precisa ser refeito
-    showToast(`Repertório histórico importado: ${musicas.length} músicas.`);
+    showToast(`Repertório histórico importado: ${faltando.length} música${faltando.length === 1 ? "" : "s"}.`);
   } catch (err) {
     alert("Não foi possível importar o repertório histórico: " + (err && err.message ? err.message : err));
   }
@@ -2849,6 +3109,9 @@ function viewAdminHistorico() {
   const pessoasFiltradas = termo ? pessoas.filter(p => textoBusca(p).includes(termo)) : pessoas;
   const musicasFiltradas = termo ? dados.musicas.filter(m => m.nome.toLowerCase().includes(termo)) : dados.musicas;
 
+  // Três estados, não dois: "Sim", "Não" e quem nunca respondeu. Tratar o
+  // silêncio como "Não tocou" afirmava, no histórico, algo que ninguém disse —
+  // e nas telas da edição essa mesma pessoa conta como quem vai desfilar.
   const tocou = (uid, edId) => {
     const reg = dados.porPessoa[uid] && dados.porPessoa[uid][edId];
     return !!(reg && respostaVaiTocar(reg) === "Sim");
@@ -2895,7 +3158,8 @@ function viewAdminHistorico() {
                 ${eds.map(e => {
                   const reg = dados.porPessoa[p.id] && dados.porPessoa[p.id][e.id];
                   if (!reg) return `<td><span class="hint">—</span></td>`;
-                  if (respostaVaiTocar(reg) === "Sim") return `<td><span class="badge badge-good">${esc(reg.posicao) || "Tocou"}</span></td>`;
+                  if (respostaVaiTocar(reg) === "") return `<td><span class="badge badge-warning" title="Essa pessoa estava inscrita, mas nunca respondeu se ia tocar">Não respondeu</span></td>`;
+    if (respostaVaiTocar(reg) === "Sim") return `<td><span class="badge badge-good">${esc(reg.posicao) || "Tocou"}</span></td>`;
                   return `<td><span class="badge badge-warning">Não tocou</span></td>`;
                 }).join("")}
                 <td class="hist-total-pessoa">${total}</td>
@@ -3070,7 +3334,7 @@ function viewAdminRelatorio() {
   const filtrados = todos.filter(p => {
     const st = paymentStatus(p).label;
     const okStatus = !session.relatorioFiltroStatus || session.relatorioFiltroStatus === "todos" || st === session.relatorioFiltroStatus;
-    const okPos = posicaoFiltro === "todas" || p.posicao === posicaoFiltro;
+    const okPos = posicaoFiltro === "todas" || pessoaNaPosicao(p, posicaoFiltro);
     const okPago = valorNaFaixa(totalPago(p), filtroPago);
     const okSaldo = valorNaFaixa(saldoEmAberto(p), filtroSaldo);
     return okStatus && okPos && okPago && okSaldo;
@@ -3094,7 +3358,7 @@ function viewAdminRelatorio() {
         <div><label>Posição</label>
           <select id="relatorio-filtro-posicao">
             <option value="todas" ${posicaoFiltro === "todas" ? "selected" : ""}>Todas as posições</option>
-            ${posicoesUnicasOrdenadas(todos).map(pos => `<option value="${esc(pos)}" ${posicaoFiltro === pos ? "selected" : ""}>${esc(pos)}</option>`).join("")}
+            ${posicoesUnicasOrdenadas(todos).map(pos => `<option value="${esc(pos)}" ${posicaoFiltro === pos ? "selected" : ""}>${esc(rotuloDaPosicao(pos))}</option>`).join("")}
           </select>
         </div>
         ${selectDeFaixa("relatorio-filtro-pago", "Pago", filtroPago, todos.map(totalPago), "Não pagou nada")}
@@ -3182,9 +3446,22 @@ function viewAdminPrecos() {
         <p class="hint">Aparece na área de pagamento de cada batuqueiro, com um botão de copiar. Deixe em branco para não mostrar nada.</p>
       </div>
       ${Object.keys(PLANOS).map(k => pricingPlanFieldset(k, precos, editavel)).join("")}
-      ${editavel ? `<button class="btn-primary btn-sm" id="btn-save-precos">Salvar valores e prazos</button>` : `<p class="hint">Edição encerrada — os valores ficam como registro histórico.</p>`}
+      ${editavel ? `<button class="btn-primary btn-sm" id="btn-save-precos" data-precos-vistos="${esc(assinaturaDosPrecos(precosCache))}">Salvar valores e prazos</button>` : `<p class="hint">Edição encerrada — os valores ficam como registro histórico.</p>`}
     </div>
   </div>`;
+}
+
+/* Assinatura do que a tela de valores está mostrando. Comparada no momento de
+   salvar: a foto dos formulários repõe nos campos o valor com que a tela foi
+   desenhada, então uma alteração feita por outro organizador fica invisível
+   aqui — e "Salvar valores e prazos" gravaria o valor velho por cima do novo,
+   mudando a anuidade da bateria inteira sem ninguém pedir. */
+function assinaturaDosPrecos(p) {
+  const base = p || {};
+  return JSON.stringify([
+    (base.chavePix || ""),
+    ...Object.keys(PLANOS).map(k => [numero(base[k] && base[k].valor), ((base[k] && base[k].prazos) || []).join("|")]),
+  ]);
 }
 
 function pricingPlanFieldset(planoKey, precos, editavel = true) {
@@ -3271,24 +3548,52 @@ function viewAdminMusicas() {
   // Mesmo padrão de rascunho local usado nas posições: evita perder edições
   // digitadas se a tela for redesenhada por outro motivo antes de salvar.
   // Mesmo cuidado das posições: só monta o rascunho depois que o cache respondeu.
+  /* `base` guarda os valores com que a linha foi desenhada. É o que permite
+     saber, campo a campo, se o texto que está na tela foi digitado por quem
+     está aqui ou se é só o espelho do banco. */
   const linhaDeMusica = m => ({
     id: m.id, nome: m.nome, tom: m.tom || "", cantor: m.cantor || "",
     rascunho: ehRascunho(m), set: setDaMusica(m), ordem: m.ordem,
+    base: { nome: m.nome, tom: m.tom || "", cantor: m.cantor || "" },
   });
   if (!session.musicasDraft && edicaoCarregou.musicas) {
     session.musicasDraft = ordenarRepertorio(musicasCache.map(linhaDeMusica));
   } else if (session.musicasDraft && edicaoCarregou.musicas) {
-    // O rascunho é montado uma vez e preservado para não apagar o que está sendo
-    // digitado. Só que ele ficava cego para o que chegasse depois: música
-    // cadastrada por outro organizador (ou numa segunda aba) não aparecia até
-    // sair da tela e voltar, e música removida continuava na lista.
-    // A conciliação acrescenta as que faltam e tira as que sumiram, sem tocar
-    // nas linhas já existentes — o texto não salvo continua onde está.
+    // O rascunho é montado uma vez e preservado para não apagar o que está
+    // sendo digitado, mas não pode ficar cego para o que chega depois.
+    //
+    // Acrescenta as músicas que chegaram, tira as que sumiram e, nas que
+    // continuam, atualiza:
+    //   - set, ordem e rascunho SEMPRE, porque esses três nunca são digitados:
+    //     mudam por botão que grava na hora. Mantê-los velhos fazia a tela
+    //     mostrar uma ordem e o banco ter outra, e o próximo arrastar gravava
+    //     numeração com buraco por cima do que o outro organizador tinha feito.
+    //   - nome, tom e cantor(a) só quando o campo NÃO foi editado aqui. Sem
+    //     isso, salvar devolvia ao banco o texto velho da minha tela, desfazendo
+    //     em silêncio a correção que outra pessoa tinha acabado de fazer.
     const noDraft = new Set(session.musicasDraft.map(m => m.id));
-    const noCache = new Set(musicasCache.map(m => m.id));
+    const noCache = new Map(musicasCache.map(m => [m.id, m]));
     const chegaram = musicasCache.filter(m => !noDraft.has(m.id)).map(linhaDeMusica);
     const sumiram = session.musicasDraft.some(m => !noCache.has(m.id));
-    if (chegaram.length || sumiram) {
+    let mudouAlgumaLinha = false;
+    session.musicasDraft.forEach(row => {
+      const atual = noCache.get(row.id);
+      if (!atual) return;
+      const novoSet = setDaMusica(atual), novoRascunho = ehRascunho(atual);
+      if (row.set !== novoSet || row.ordem !== atual.ordem || row.rascunho !== novoRascunho) {
+        row.set = novoSet; row.ordem = atual.ordem; row.rascunho = novoRascunho;
+        mudouAlgumaLinha = true;
+      }
+      const base = row.base || (row.base = { nome: row.nome, tom: row.tom, cantor: row.cantor });
+      [["nome", atual.nome || ""], ["tom", atual.tom || ""], ["cantor", atual.cantor || ""]].forEach(([campo, valorNoBanco]) => {
+        if (row[campo] !== base[campo]) return;      // editado aqui: a digitação manda
+        if (row[campo] === valorNoBanco) return;
+        row[campo] = valorNoBanco;
+        mudouAlgumaLinha = true;
+      });
+      base.nome = atual.nome || ""; base.tom = atual.tom || ""; base.cantor = atual.cantor || "";
+    });
+    if (chegaram.length || sumiram || mudouAlgumaLinha) {
       session.musicasDraft = ordenarRepertorio([
         ...session.musicasDraft.filter(m => noCache.has(m.id)),
         ...chegaram,
@@ -3365,7 +3670,7 @@ function viewAdminMusicas() {
                 <tr class="musica-linha${m.rascunho ? " e-rascunho" : ""}" data-musica-linha="${m.id}">
                   <td class="center">
                     ${editavel
-                      ? `<input type="number" class="musica-posicao-input" data-musica-id="${m.id}" value="${i + 1}" min="1" max="${doSet.length}" step="1" title="Digite a posição para mover a música para lá" aria-label="Posição no set ${set}">`
+                      ? `<input type="number" class="musica-posicao-input" data-derivado="1" data-musica-id="${m.id}" value="${i + 1}" min="1" max="${doSet.length}" step="1" title="Digite a posição para mover a música para lá" aria-label="Posição no set ${set}">`
                       : `<b>${i + 1}</b>`}
                   </td>
                   ${editavel ? `<td class="center nowrap">
@@ -3373,10 +3678,10 @@ function viewAdminMusicas() {
                     <button class="btn-secondary btn-sm mover" data-mover-musica="${m.id}" data-delta="1" ${i === doSet.length - 1 ? "disabled" : ""} title="Descer no set ${set}" aria-label="Descer">↓</button>
                   </td>` : ""}
                   <td class="col-musica" title="${h.total ? `Já tocou em ${h.total} ano${h.total === 1 ? "" : "s"} · mais recente: ${esc(h.ultimo)}` : "Música nova — não aparece no histórico"}">
-                    <input type="text" class="musica-name-input" data-musica-id="${m.id}" value="${esc(m.nome)}" ${editavel ? "" : "disabled"} aria-label="Nome da música">
+                    <input type="text" class="musica-name-input" data-derivado="1" data-musica-id="${m.id}" value="${esc(m.nome)}" ${editavel ? "" : "disabled"} aria-label="Nome da música">
                   </td>
-                  <td><input type="text" class="musica-tom-input" data-musica-id="${m.id}" value="${esc(m.tom)}" list="lista-tons" placeholder="Ex: Sol maior" ${editavel ? "" : "disabled"} aria-label="Tom"></td>
-                  <td><input type="text" class="musica-cantor-input" data-musica-id="${m.id}" value="${esc(m.cantor)}" list="lista-cantores" placeholder="Nome" ${editavel ? "" : "disabled"} aria-label="Cantor(a)"></td>
+                  <td><input type="text" class="musica-tom-input" data-derivado="1" data-musica-id="${m.id}" value="${esc(m.tom)}" list="lista-tons" placeholder="Ex: Sol maior" ${editavel ? "" : "disabled"} aria-label="Tom"></td>
+                  <td><input type="text" class="musica-cantor-input" data-derivado="1" data-musica-id="${m.id}" value="${esc(m.cantor)}" list="lista-cantores" placeholder="Nome" ${editavel ? "" : "disabled"} aria-label="Cantor(a)"></td>
                   ${editavel ? `
                   <td class="center">
                     <select class="musica-set-input" data-musica-id="${m.id}" aria-label="Set da música">
@@ -3548,7 +3853,7 @@ function viewAdminRepertorioHistorico() {
           </tbody>
         </table>
       </div>
-      <p class="hint" style="margin-top:10px;">${repertorioHistorico.length} músicas no arquivo${termo ? `, ${lista.length} com o filtro atual` : ""}. Mudar o nome aqui muda só o arquivo — o repertório de cada carnaval no site é independente, mas as duas listas se juntam pelo nome no Histórico geral, então vale manter a grafia igual.</p>
+      <p class="hint" style="margin-top:10px;">${repertorioHistorico.filter(m => (m.anos || []).length).length} músicas no arquivo${(() => { const soCat = repertorioHistorico.length - repertorioHistorico.filter(m => (m.anos || []).length).length; return soCat ? ` · ${soCat} do catálogo do site, sem ano marcado (guardam o tom e o cantor(a) de músicas dos carnavais daqui)` : ""; })()}${termo ? `, ${lista.length} com o filtro atual` : ""}. Mudar o nome aqui muda só o arquivo — o repertório de cada carnaval no site é independente, mas as duas listas se juntam pelo nome no Histórico geral, então vale manter a grafia igual.</p>
     </div>
   </div>`;
 }
@@ -3564,7 +3869,7 @@ function viewAdminPessoas() {
   const todos = vaoTocarNaEdicao();
   const foraDesteCarnaval = naoVaoTocarNaEdicao();
   const posicoesPresentes = posicoesUnicasOrdenadas(todos);
-  const lista = filtro === "todas" ? todos : todos.filter(p => p.posicao === filtro);
+  const lista = filtro === "todas" ? todos : todos.filter(p => pessoaNaPosicao(p, filtro));
   const naoInscritos = pessoasCache.filter(p => !inscricoesCache.some(i => i.id === p.id));
   return `
   ${headerBar(u)}
@@ -3580,7 +3885,7 @@ function viewAdminPessoas() {
         </div>
         <select id="admin-pessoas-filtro" style="width:auto;">
           <option value="todas" ${filtro === "todas" ? "selected" : ""}>Todas as posições</option>
-          ${posicoesPresentes.map(p => `<option value="${esc(p)}" ${filtro === p ? "selected" : ""}>${esc(p)}</option>`).join("")}
+          ${posicoesPresentes.map(p => `<option value="${esc(p)}" ${filtro === p ? "selected" : ""}>${esc(rotuloDaPosicao(p))}</option>`).join("")}
         </select>
       </div>
       ${lista.length === 0 ? '<div class="hint">Nenhuma pessoa encontrada com esse filtro.</div>' : lista.map(p => `
@@ -3706,7 +4011,7 @@ function renderAdminEditUserForm(p, editavel = true) {
 function renderAdminPagamentos(p, editavel) {
   const carregados = session.pagsDoEditadoDe === p.id;
   const pags = carregados ? (session.pagsDoEditado || []) : null;
-  const somaComprovantes = (pags || []).reduce((s, x) => s + (x.valor || 0), 0);
+  const somaComprovantes = (pags || []).reduce((s, x) => s + numero(x.valor), 0);
   const total = totalPago(p);
   const divergencia = carregados && Math.abs(somaComprovantes - total) > 0.005;
 
@@ -4114,7 +4419,7 @@ function wireEvents() {
       // senão ela é cobrada de novo com os próprios comprovantes na tela.
       // A inscrição nasce com 0 porque as regras exigem isso; a soma entra numa
       // segunda escrita, que as regras aceitam por só aumentar o total.
-      const jaPago = jaEstavaInscrito ? 0 : myPagamentos.reduce((soma, p) => soma + (p.valor || 0), 0);
+      const jaPago = jaEstavaInscrito ? 0 : myPagamentos.reduce((soma, p) => soma + numero(p.valor), 0);
       if (jaPago > 0) {
         try { await updateDoc(P.inscricao(ed.id, fbUser.uid), { totalPago: jaPago }); }
         catch (err) { console.warn("total já pago não pôde ser recomposto:", err); }
@@ -4366,13 +4671,14 @@ function wireEvents() {
      comprovantes: parte do total pode ter vindo da importação do formato antigo,
      sem comprovante atrás, e refazer a soma apagaria esse valor em silêncio.
      Quem decide acertar os dois é o admin, no botão de recalcular. */
-  /* Trava de duplo clique, do mesmo tipo que a da presença e a de #btn-save-pay.
+  /* (A trava pagsEmVoo é declarada no escopo do módulo, junto de presencasEmVoo:
+     aqui dentro ela seria recriada vazia a cada render — e um render acontece
+     entre os dois cliques, justamente por causa da gravação do primeiro.)
+     Trava de duplo clique, do mesmo tipo que a da presença e a de #btn-save-pay.
      O botão não desabilita e o retorno só aparece no toast, segundos depois —
      no celular é fácil tocar duas vezes. Cada clique somava a mesma diferença:
      corrigir um comprovante de R$ 100 para R$ 250 subia o total R$ 300 em vez de
      R$ 150, e o admin só via a divergência depois, sem saber de onde veio. */
-  const pagsEmVoo = new Set();
-
   const ajustarTotal = async (uid, delta) => {
     const pessoa = batuqueirosDaEdicao().find(x => x.id === uid);
     const novo = Math.max(0, totalPago(pessoa || {}) + delta);
@@ -4423,6 +4729,13 @@ function wireEvents() {
     const valor = parseFloat($(`#novo-pag-valor-${uid}`).value);
     const pagador = $(`#novo-pag-pagador-${uid}`).value.trim() || fullName(pessoa || {});
     if (!data || !(valor > 0)) { alert("Preencha a data e um valor maior que zero."); return; }
+    // Sem trava, dois toques lançavam DOIS comprovantes iguais e dobravam o
+    // total: o botão não desabilita, o retorno só vem no toast segundos depois,
+    // e o formulário volta preenchido depois do redesenho, como se nada tivesse
+    // sido enviado. A chave é o dono, porque o lançamento ainda não tem id.
+    const chaveLancamento = "novo_" + uid;
+    if (pagsEmVoo.has(chaveLancamento)) return;
+    pagsEmVoo.add(chaveLancamento);
     try {
       await setDoc(doc(P.pagamentos(edicaoCtxId())), {
         uid, data, valor, pix: pagador, createdAt: serverTimestamp(), lancadoPelaOrganizacao: true,
@@ -4431,12 +4744,13 @@ function wireEvents() {
       await recarregarPagsDoEditado(uid);
       showToast("Pagamento lançado.");
     } catch (err) { alert(friendlyFirestoreError(err)); }
+    finally { pagsEmVoo.delete(chaveLancamento); }
     render();
   });
 
   onAll("[data-recalcular-total]", "click", async el => {
     const uid = el.dataset.recalcularTotal;
-    const soma = (session.pagsDoEditado || []).reduce((s, x) => s + (x.valor || 0), 0);
+    const soma = (session.pagsDoEditado || []).reduce((s, x) => s + numero(x.valor), 0);
     const pessoa = batuqueirosDaEdicao().find(x => x.id === uid);
     if (!confirm(`Acertar o total de ${fullName(pessoa || {})} de ${currency(totalPago(pessoa || {}))} para ${currency(soma)}?\n\nIsso descarta qualquer valor que esteja no total sem comprovante lançado aqui — normalmente resíduo da importação do site antigo. Não dá para desfazer pelo site.`)) return;
     try {
@@ -4602,6 +4916,28 @@ function wireEvents() {
   on("#rep-hist-ordem", "change", e => { session.repHistOrdem = e.target.value; render(); });
   on("#rep-sugestao-filtro", "input", e => { session.repSugestaoFiltro = e.target.value; renderExterno(); });
 
+  // Repertório do batuqueiro: ordenar por coluna e filtrar por valor.
+  on("#rep-busca", "input", e => { session.repBusca = e.target.value; renderExterno(); });
+  on("#rep-filtro-set", "change", e => { session.repFiltroSet = e.target.value; render(); });
+  on("#rep-filtro-tom", "change", e => { session.repFiltroTom = e.target.value; render(); });
+  on("#rep-filtro-cantor", "change", e => { session.repFiltroCantor = e.target.value; render(); });
+  on("#rep-filtro-ensaio", "change", e => { session.repFiltroEnsaio = e.target.value; render(); });
+  onAll("[data-ord-rep]", "click", el => {
+    const col = el.dataset.ordRep;
+    // Terceiro clique na mesma coluna devolve a ordem dos sets: sem isso, só
+    // dava para sair da ordenação pelo botão de limpar.
+    if (session.repOrdemCol !== col) { session.repOrdemCol = col; session.repOrdemDir = "asc"; }
+    else if (session.repOrdemDir === "asc") { session.repOrdemDir = "desc"; }
+    else { session.repOrdemCol = ""; session.repOrdemDir = "asc"; }
+    render();
+  });
+  on("#rep-limpar", "click", () => {
+    session.repBusca = ""; session.repFiltroSet = "todas"; session.repFiltroTom = "todas";
+    session.repFiltroCantor = "todas"; session.repFiltroEnsaio = "todas";
+    session.repOrdemCol = ""; session.repOrdemDir = "asc";
+    render();
+  });
+
   /* Atualiza o arquivo em memória junto com o banco, para a tela responder na
      hora — não há listener aberto nesta coleção (é dado que quase nunca muda). */
   const atualizarMusicaHistorica = (id, mudanca) => {
@@ -4643,7 +4979,11 @@ function wireEvents() {
     const id = el.dataset.removeHist;
     const musica = (repertorioHistorico || []).find(m => m.id === id);
     if (!musica) return;
-    if (!confirm(`Remover "${musica.nome}" do repertório histórico?\n\nIsso apaga o registro de que ela tocou nos anos marcados. O repertório dos carnavais do site não é afetado.`)) return;
+    const soCatalogo = !((musica.anos || []).length);
+    const aviso = soCatalogo
+      ? `Remover "${musica.nome}" do catálogo?\n\nEla não tem nenhum ano do arquivo marcado: o que existe aqui é o TOM e o CANTOR(A) guardados para os próximos carnavais${(musica.tom || musica.cantor) ? ` (${[musica.tom, musica.cantor].filter(Boolean).join(" · ")})` : ""}. Isso se perde e não dá para desfazer pelo site. O repertório dos carnavais não é afetado.`
+      : `Remover "${musica.nome}" do repertório histórico?\n\nIsso apaga o registro de que ela tocou nos anos marcados${(musica.tom || musica.cantor) ? `, e também o tom e o cantor(a) guardados para os próximos carnavais` : ""}. O repertório dos carnavais do site não é afetado.`;
+    if (!confirm(aviso)) return;
     try {
       await deleteDoc(P.musicaHistorica(id));
       repertorioHistorico = (repertorioHistorico || []).filter(m => m.id !== id);
@@ -4672,11 +5012,12 @@ function wireEvents() {
   // preencher com o de outro ano seria inventar informação.
   onAll("[data-add-classica]", "click", async el => {
     const nome = el.dataset.addClassica;
+    if (!edicaoCarregou.musicas) { alert("O repertório ainda está carregando. Tente de novo em um instante."); return; }
     const jaExiste = arr => (arr || []).some(m => chaveMusica(m.nome) === chaveMusica(nome));
     if (jaExiste(musicasCache) || jaExiste(session.musicasDraft)) { alert("Essa música já está no repertório deste carnaval."); return; }
     try {
       const destino = Number(session.setDestino) === 2 ? 2 : 1;
-      const ordem = musicasDoSet(session.musicasDraft || musicasCache, destino).length + 1;
+      const ordem = proximaOrdemDoSet(session.musicasDraft || musicasCache, destino);
       // Tom e cantor(a) vêm do catálogo: é o que o bloco decidiu da última vez
       // que tocou essa música. Fica editável aqui, e a edição volta para lá.
       const { tom, cantor } = tomCantorDoCatalogo(nome);
@@ -4776,7 +5117,13 @@ function wireEvents() {
   });
 
   // ADMIN — valores/prazos
-  on("#btn-save-precos", "click", async () => {
+  on("#btn-save-precos", "click", async (e) => {
+    const vistos = e.currentTarget && e.currentTarget.dataset.precosVistos;
+    if (vistos !== undefined && vistos !== assinaturaDosPrecos(precosCache)) {
+      alert("Os valores deste carnaval mudaram enquanto esta tela estava aberta — provavelmente outra pessoa da organização salvou algo.\n\nA tela vai recarregar com os valores atuais para você conferir antes de salvar.");
+      render();
+      return;
+    }
     const novo = { avista: {}, duasVezes: {}, tresVezes: {} };
     novo.chavePix = ($("#admin-chave-pix")?.value || "").trim();
     // Valor zerado não pode ser salvo: com ele, "0 pago de 0" aparecia como
@@ -4817,6 +5164,7 @@ function wireEvents() {
   });
 
   on("#btn-add-posicao", "click", async () => {
+    if (!edicaoCarregou.posicoes) { alert("As posições ainda estão carregando. Tente de novo em um instante."); return; }
     const nome = $("#new-posicao-nome").value.trim();
     if (!nome) return;
     // O rascunho também entra na checagem: ele é atualizado na hora, enquanto o
@@ -4906,6 +5254,11 @@ function wireEvents() {
   on("#btn-add-musica", "click", async () => {
     const nome = $("#new-musica-nome").value.trim();
     if (!nome) return;
+    // Enquanto o cache da edição não respondeu, a lista está vazia e a checagem
+    // de duplicidade passa em vácuo — dava para cadastrar de novo uma música que
+    // já existe, com a numeração recomeçando do 1. A tela fica assim por um
+    // instante sempre que o carnaval em contexto troca.
+    if (!edicaoCarregou.musicas) { alert("O repertório ainda está carregando. Tente de novo em um instante."); return; }
     const jaNoRepertorio = arr => (arr || []).some(m => chaveMusica(m.nome) === chaveMusica(nome));
     if (jaNoRepertorio(musicasCache) || jaNoRepertorio(session.musicasDraft)) { alert("Essa música já está cadastrada."); return; }
     const tom = $("#new-musica-tom").value.trim();
@@ -4914,7 +5267,7 @@ function wireEvents() {
       // Entra como rascunho: assim dá para montar o repertório inteiro com calma
       // e só depois anunciar. Publicar é um clique, individual ou de uma vez.
       const destino = Number(session.setDestino) === 2 ? 2 : 1;
-      const ordem = musicasDoSet(session.musicasDraft || musicasCache, destino).length + 1;
+      const ordem = proximaOrdemDoSet(session.musicasDraft || musicasCache, destino);
       const ref = await addDoc(P.musicas(edicaoCtxId()), { nome, tom, cantor, rascunho: true, set: destino, ordem });
       acrescentarAoDraft({ id: ref.id, nome, tom, cantor, rascunho: true, set: destino, ordem });
       await registrarNoCatalogo(nome, tom, cantor, anoDaEdicao(edicaoCtx()));
@@ -4935,6 +5288,7 @@ function wireEvents() {
     try {
       const batch = writeBatch(db);
       let algumaMudanca = false;
+      const alteradas = [];
       draft.forEach(row => {
         const original = musicasCache.find(m => m.id === row.id);
         if (!original) return;
@@ -4942,6 +5296,7 @@ function wireEvents() {
         const mudou = row.nome !== original.nome || tom !== (original.tom || "") || cantor !== (original.cantor || "");
         if (!mudou) return;
         algumaMudanca = true;
+        alteradas.push({ row: { ...row, tom, cantor }, nomeAnterior: original.nome });
         // Só nome/tom/cantor: publicar e despublicar têm botão próprio e gravam
         // na hora, então o "Salvar todas" não pode carregar um `rascunho` velho
         // do rascunho local por cima do que já foi publicado.
@@ -4951,9 +5306,13 @@ function wireEvents() {
       await batch.commit();
       // O tom e o cantor(a) são da música, não do ano: vão para o catálogo do
       // site, para voltarem preenchidos no próximo carnaval.
+      // Só as linhas que mudaram. Antes o laço percorria o rascunho inteiro:
+      // num repertório de 40 músicas eram 40 leituras e 40 gravações a cada
+      // clique em Salvar, e o selo de ano era carimbado em músicas que ninguém
+      // tocou — o que depois impedia um carnaval anterior de corrigi-las.
       const ano = anoDaEdicao(edicaoCtx());
-      for (const row of draft) {
-        await registrarNoCatalogo(row.nome, row.tom, row.cantor, ano);
+      for (const { row, nomeAnterior } of alteradas) {
+        await registrarNoCatalogo(row.nome, row.tom, row.cantor, ano, nomeAnterior);
       }
       session.musicasDraft = null;
       showToast("Músicas salvas!");

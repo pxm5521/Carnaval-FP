@@ -306,6 +306,17 @@ Ao cadastrar uma música nova, o seletor **"no fim do Set"**, ao lado do botão 
 
 A ordem e os sets aparecem para todo mundo: na área do batuqueiro o repertório vem com as colunas **Set** e **#**, e na tela de marcar músicas do ensaio as músicas aparecem agrupadas e numeradas por set. Música em rascunho continua invisível para os outros até ser publicada.
 
+**Dá para ordenar e filtrar o repertório na área do batuqueiro?** Dá, e vale para qualquer pessoa da bateria, não só para a organização.
+
+- **Clicar no título de uma coluna** ordena por ela: Música e Cantor(a) em ordem alfabética, Tom idem, "Ensaiada em" pela quantidade de ensaios. Um segundo clique inverte; o terceiro devolve a ordem dos sets.
+- **Os seletores acima da tabela** filtram por Set, Tom, Cantor(a) e por ensaio — inclusive duas opções que resolvem perguntas frequentes: "Ainda não ensaiada" e "Sem tom definido".
+- O campo **Buscar música** acha pelo nome, sem precisar percorrer a lista.
+- Um botão **"Limpar e voltar à ordem dos sets"** aparece assim que algo está filtrado ou reordenado.
+
+> Reordenado por outra coluna, o número da música **continua sendo a posição dela no set**, não o número da linha — ordenar por nome não inventa uma ordem de tocar nova. O rodapé avisa quando a tabela não está na ordem de tocar.
+>
+> Ordenação e filtros são só de visualização: cada pessoa mexe nos seus, nada é gravado e nada muda para os outros. Trocar de carnaval zera os filtros, porque tom, cantor(a) e datas de ensaio são de cada ano.
+
 > Músicas cadastradas antes desta atualização não tinham set nem posição. Elas entram no fim do Set 1, em ordem alfabética, e ganham número de verdade assim que você mexer na ordem do set pela primeira vez. Nada precisa ser migrado à mão.
 
 **Dá para montar o repertório sem anunciar antes da hora?** Dá. **Toda música nova entra como rascunho**, com um selo "Rascunho" na linha. Enquanto está assim, ela não aparece na área do batuqueiro, não pode ser marcada num ensaio e não conta no histórico — é como se ainda não existisse para o resto do bloco. Quando estiver do jeito que você quer, publique: o botão **"Publicar"** na linha da música solta uma de cada vez, e o aviso amarelo no topo da tela tem um botão para **publicar todas de uma vez**. Publicar e despublicar gravam na hora, sem depender do "Salvar todas as músicas" — e o "Salvar todas" mexe só em nome, tom e cantor(a), nunca devolve uma música publicada para rascunho.
@@ -384,6 +395,8 @@ O rodapé da tabela soma o que está na tela, acompanhando os filtros: quantas p
 
 **Como entra o repertório de antes do site?** O bloco tinha uma planilha com as músicas de cada ano desde 2011. Ela vem convertida no arquivo `repertorio-historico.json`, que fica junto do site, e entra com um clique: **Painel admin → "Repertório histórico" → "Importar repertório histórico"**. É passo único — se a planilha já tiver sido importada, o site recusa, para não duplicar.
 
+> Se a importação parar no meio (rede caindo), basta clicar de novo: o site conta quantas músicas da planilha já estão lá e acrescenta só as que faltam, atualizando pelo nome as que já existem. Ele só recusa quando não falta nenhuma.
+>
 > A trava olha só para músicas **com ano marcado**. A mesma coleção guarda também o catálogo de tom e cantor(a) das músicas do site (abaixo), cujas entradas não têm ano nenhum — se a trava contasse essas, bastaria cadastrar uma música no repertório do ano para bloquear a importação da planilha para sempre. Quando a planilha traz uma música que já estava no catálogo, as duas viram uma só: o tom e o cantor(a) são preservados e ela só ganha os anos.
 
 Depois de importar, esses anos aparecem **na mesma tabela** "Músicas por carnaval" do Histórico geral, como colunas à direita dos carnavais do site. Uma música que tocou em 2014 e voltou em 2027 é uma linha só. A diferença entre as duas partes: nos carnavais do site a célula diz em quantos ensaios a música foi tocada; nos anos de arquivo diz só que tocou, porque a planilha antiga não registrava ensaio.
@@ -407,6 +420,8 @@ Mudar o nome aqui muda só o arquivo — o repertório de cada carnaval no site 
 Três regras que valem a pena saber:
 
 - **Quem manda é o carnaval mais recente.** Cada música guarda de que ano veio o tom. Corrigir o repertório de 2027 depois de já ter escolhido o tom em 2028 não desfaz a escolha de 2028 — o repertório de 2027 guarda o que você digitou nele, mas o catálogo fica com o mais novo.
+- **Campo em branco não apaga nada.** Cadastrar a música sem preencher Tom e Cantor(a) é o caminho normal, e deixar em branco não é uma decisão: o que já estava guardado continua lá. Para tirar um tom do catálogo, é preciso escrever outro por cima.
+- **Corrigir o nome renomeia a entrada do catálogo**, em vez de criar uma segunda e abandonar a primeira com o tom certo.
 - **Música nova entra no catálogo sozinha**, no momento em que você a cadastra no repertório de um carnaval. Não há passo separado.
 - Música que veio da planilha antiga chega sem tom e sem cantor(a), porque aquela planilha não tinha esses campos. Da primeira vez você preenche; daí em diante ela volta preenchida.
 

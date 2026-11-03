@@ -605,6 +605,73 @@ async function main() {
   sets = await lerSets();
   ok('Removidas as de teste, sobram as duas originais', sets['1'].length === 2);
 
+  // Posição da música nova: tem que ser a maior ordem do set + 1, não a
+  // quantidade. Com buraco na numeração (remover do meio não renumera) ou com
+  // música antiga sem ordem, "quantidade + 1" devolvia um número JÁ USADO e a
+  // nova aparecia no meio do set, empatada com outra.
+  await page.evaluate(async () => {
+    const fb = await import('./firebase-init.mock.js');
+    const col = fb.collection(fb.db, 'edicoes', '2027-1', 'musicas');
+    await fb.addDoc(col, { nome: 'Buraco A', tom: '', cantor: '', set: 1, ordem: 7, rascunho: false });
+    await fb.addDoc(col, { nome: 'Buraco B', tom: '', cantor: '', set: 1, ordem: 9, rascunho: false });
+  });
+  await page.waitForTimeout(900);
+  await page.fill('#new-musica-nome', 'Depois do Buraco');
+  await page.click('#btn-add-musica');
+  await page.waitForTimeout(900);
+  const ordemDaNova = await page.evaluate(() => Object.values(window.__mock.dumpStore()['edicoes/2027-1/musicas'] || {})
+    .find(m => m.nome === 'Depois do Buraco'));
+  ok('Música nova pega a posição seguinte à maior do set, não a contagem', ordemDaNova.ordem === 10);
+  const semEmpate = await page.evaluate(() => {
+    const m = Object.values(window.__mock.dumpStore()['edicoes/2027-1/musicas'] || {}).filter(x => (x.set || 1) === 1);
+    const ordens = m.map(x => x.ordem);
+    return new Set(ordens).size === ordens.length;
+  });
+  ok('E nenhuma música fica empatada na mesma posição', semEmpate);
+  sets = await lerSets();
+  ok('A música nova aparece mesmo no fim do set', sets['1'][sets['1'].length - 1] === 'Depois do Buraco');
+  for (const nome of ['Buraco A', 'Buraco B', 'Depois do Buraco']) {
+    const id = await page.evaluate(n => {
+      const inp = [...document.querySelectorAll('.musica-name-input')].find(i => i.value === n);
+      return inp ? inp.dataset.musicaId : null;
+    }, nome);
+    await page.click(`[data-remove-musica="${id}"]`);
+    await page.waitForTimeout(500);
+  }
+
+  // Conciliação com o banco: o que outro organizador mudou aparece aqui, mas o
+  // que está sendo digitado nesta tela não é atropelado.
+  const idVentaniaConc = await page.evaluate(() => {
+    const inp = [...document.querySelectorAll('.musica-name-input')].find(i => i.value === 'Ventania');
+    return inp ? inp.dataset.musicaId : null;
+  });
+  await page.fill(`.musica-cantor-input[data-musica-id="${idVentaniaConc}"]`, 'Digitado Aqui');
+  await page.waitForTimeout(200);
+  await page.evaluate(async (id) => {
+    const fb = await import('./firebase-init.mock.js');
+    await fb.updateDoc(fb.doc(fb.db, 'edicoes', '2027-1', 'musicas', id), { tom: 'Tom de Fora', cantor: 'Cantor de Fora' });
+  }, idVentaniaConc);
+  await page.waitForTimeout(900);
+  const aposConciliar = await page.evaluate(id => ({
+    tom: document.querySelector(`.musica-tom-input[data-musica-id="${id}"]`).value,
+    cantor: document.querySelector(`.musica-cantor-input[data-musica-id="${id}"]`).value,
+  }), idVentaniaConc);
+  ok('Campo não editado aqui recebe o que outro organizador gravou', aposConciliar.tom === 'Tom de Fora');
+  ok('E o campo que está sendo digitado aqui não é atropelado', aposConciliar.cantor === 'Digitado Aqui');
+  await page.click('#btn-save-all-musicas');
+  await page.waitForTimeout(1000);
+  const aposSalvarConc = await page.evaluate(() => Object.values(window.__mock.dumpStore()['edicoes/2027-1/musicas'] || {})
+    .find(m => m.nome === 'Ventania'));
+  ok('Salvar não devolve ao banco o valor velho da minha tela', aposSalvarConc.tom === 'Tom de Fora');
+  ok('E grava o que foi digitado aqui', aposSalvarConc.cantor === 'Digitado Aqui');
+  // devolve como estava
+  await page.waitForTimeout(600);
+  await page.fill(`.musica-tom-input[data-musica-id="${idVentaniaConc}"]`, 'Sol maior');
+  await page.fill(`.musica-cantor-input[data-musica-id="${idVentaniaConc}"]`, 'Carla');
+  await page.waitForTimeout(200);
+  await page.click('#btn-save-all-musicas');
+  await page.waitForTimeout(1000);
+
   // editar tom e cantor na própria linha da tabela
   const idVentaniaTabela = await page.evaluate(() => {
     const inp = [...document.querySelectorAll('.musica-name-input')].find(i => i.value === 'Ventania');
@@ -1121,6 +1188,43 @@ async function main() {
   });
   ok('A organização consegue lançar um pagamento pela pessoa', comLancamento.temPag);
   ok('E o total sobe junto', comLancamento.total === totalAntes + 40);
+  ok('Um clique lança UM comprovante, não dois', await page.evaluate(() =>
+    Object.values(window.__mock.dumpStore()['edicoes/2027-1/pagamentos'])
+      .filter(p => p.pix === 'pagou em dinheiro no ensaio').length === 1));
+
+  // Dois toques seguidos (fácil no celular: o botão não desabilita e o retorno
+  // só vem no toast, segundos depois) não podem lançar o comprovante duas vezes
+  // nem dobrar o total.
+  const totalAntesDoDuplo = await page.evaluate(() => {
+    const uid = window.__mock.uidPorEmail('ana@example.com');
+    return window.__mock.dumpStore()['edicoes/2027-1/inscricoes'][uid].totalPago;
+  });
+  await page.fill(`#novo-pag-valor-${uids.ana}`, '30');
+  await page.fill(`#novo-pag-pagador-${uids.ana}`, 'toque duplo');
+  // Os dois cliques no MESMO tique: é assim que o toque duplo chega de verdade.
+  // Dois page.click() seguidos são serializados pelo Playwright e o segundo só
+  // acontece depois de o primeiro handler ter terminado — não testa nada.
+  await page.evaluate(uid => {
+    const b = document.querySelector(`[data-add-pag="${uid}"]`);
+    b.click(); b.click();
+  }, uids.ana);
+  await page.waitForTimeout(1500);
+  const aposDuploClique = await page.evaluate(() => {
+    const uid = window.__mock.uidPorEmail('ana@example.com');
+    const s = window.__mock.dumpStore();
+    return {
+      quantos: Object.values(s['edicoes/2027-1/pagamentos']).filter(p => p.pix === 'toque duplo').length,
+      total: s['edicoes/2027-1/inscricoes'][uid].totalPago,
+    };
+  });
+  ok('Dois toques em "Lançar pagamento" não criam dois comprovantes', aposDuploClique.quantos === 1);
+  ok('E não dobram o total da pessoa', aposDuploClique.total === totalAntesDoDuplo + 30);
+  const idDuplo = await page.evaluate(() => {
+    const l = [...document.querySelectorAll('.pg-pagador')].find(i => i.value.includes('toque duplo'));
+    return l ? l.dataset.pagId : null;
+  });
+  await page.click(`[data-remover-pag="${idDuplo}"]`);
+  await page.waitForTimeout(700);
   const idNovo = await page.evaluate(() => {
     const l = [...document.querySelectorAll('.pg-pagador')].find(i => i.value.includes('dinheiro'));
     return l ? l.dataset.pagId : null;
@@ -1265,6 +1369,72 @@ async function main() {
   });
   ok('O total arrecadado soma o valor em texto em vez de concatenar', /^R\$\s*\d{1,3}(\.\d{3})*,\d{2}$/.test(arrecadado));
   ok('E o valor em texto entra na soma', arrecadado.includes('150,00') || arrecadado.includes('275,00') || Number(arrecadado.replace(/[^\d,]/g, '').replace(',', '.')) >= 150);
+
+  // Parcela do MEIO: quem pagou duas parcelas exibidas de R$ 83,33 depositou
+  // R$ 166,66 contra um alvo de R$ 166,666... A folga de centavo valia só para
+  // a última parcela, então a 2ª aparecia "Atrasada" por menos de um centavo e
+  // a pessoa inteira virava "Atrasado" no relatório.
+  await page.evaluate(async () => {
+    const fb = await import('./firebase-init.mock.js');
+    const uid = window.__mock.uidPorEmail('ana@example.com');
+    await fb.updateDoc(fb.doc(fb.db, 'edicoes', '2027-1', 'inscricoes', uid), { formaPagamento: 'tresVezes', totalPago: 83.33 * 2 });
+    // prazos das duas primeiras parcelas já vencidos, a terceira no futuro
+    await fb.setDoc(fb.doc(fb.db, 'edicoes', '2027-1', 'config', 'precos'), {
+      avista: { valor: 210, prazos: ['2026-12-01'] },
+      duasVezes: { valor: 230, prazos: ['2026-10-01', '2026-11-01'] },
+      tresVezes: { valor: 250, prazos: ['2020-01-01', '2020-02-01', '2099-12-30'] },
+    }, { merge: true });
+  });
+  await page.waitForTimeout(900);
+  await page.click('#btn-goto-relatorio');
+  await page.waitForTimeout(500);
+  const linhaDuasParcelas = await page.evaluate(() => {
+    const tr = [...document.querySelectorAll('table tr')].find(t => t.textContent.includes('Ana Silva'));
+    return tr ? tr.textContent : '';
+  });
+  ok('Pagando as duas parcelas exibidas, a pessoa não fica Atrasada por um centavo',
+     !linhaDuasParcelas.includes('Atrasado'));
+  ok('E o status é o de quem está em dia', linhaDuasParcelas.includes('No prazo'));
+  await page.click('#btn-back-admin5');
+  await page.waitForTimeout(300);
+
+  // Comprovante gravado como texto: a soma precisa ser número, senão a
+  // divergência entre total e comprovantes nunca é detectada.
+  await page.evaluate(async () => {
+    const fb = await import('./firebase-init.mock.js');
+    const uid = window.__mock.uidPorEmail('ana@example.com');
+    await fb.updateDoc(fb.doc(fb.db, 'edicoes', '2027-1', 'inscricoes', uid), { formaPagamento: 'duasVezes', totalPago: 500 });
+    const col = fb.collection(fb.db, 'edicoes', '2027-1', 'pagamentos');
+    await fb.addDoc(col, { uid, data: '2026-09-10', valor: '150,00', pix: 'legado' });
+  });
+  await page.waitForTimeout(900);
+  await page.click('#btn-goto-pessoas');
+  await page.waitForTimeout(400);
+  const uidAnaDiv = await page.evaluate(() => window.__mock.uidPorEmail('ana@example.com'));
+  await page.click(`[data-edit-user="${uidAnaDiv}"]`);
+  await page.waitForTimeout(400);
+  await page.click(`[data-ver-pagamentos="${uidAnaDiv}"]`);
+  await page.waitForTimeout(900);
+  html = await appHtml(page);
+  ok('Comprovante gravado como texto é somado como número', !html.includes('R$ 0150') && !html.includes('NaN'));
+  ok('E a divergência entre total e comprovantes é detectada', html.includes('não bate com os comprovantes'));
+  await page.click(`[data-cancel-admin-edit="${uidAnaDiv}"]`);
+  await page.waitForTimeout(300);
+  await page.click('#btn-back-admin2');
+  await page.waitForTimeout(300);
+  await page.evaluate(async () => {
+    const fb = await import('./firebase-init.mock.js');
+    const uid = window.__mock.uidPorEmail('ana@example.com');
+    const snap = await fb.getDocs(fb.collection(fb.db, 'edicoes', '2027-1', 'pagamentos'));
+    for (const d of snap.docs) {
+      if (d.data().pix === 'legado') await fb.deleteDoc(fb.doc(fb.db, 'edicoes', '2027-1', 'pagamentos', d.id));
+    }
+    await fb.updateDoc(fb.doc(fb.db, 'edicoes', '2027-1', 'inscricoes', uid), { formaPagamento: 'duasVezes', totalPago: 115 });
+    await fb.setDoc(fb.doc(fb.db, 'edicoes', '2027-1', 'config', 'precos'), {
+      tresVezes: { valor: 250, prazos: ['', '', ''] },
+    }, { merge: true });
+  });
+  await page.waitForTimeout(900);
   await page.click('#btn-goto-relatorio');
   await page.waitForTimeout(400);
   await page.evaluate(async () => {
@@ -1836,6 +2006,163 @@ async function main() {
      repertorioDoBatuqueiro.linhas[0][2] === 'Ventania');
   ok('E a numeração do set começa em 1',
      repertorioDoBatuqueiro.linhas[0][0] === '1' && repertorioDoBatuqueiro.linhas[0][1] === '1');
+
+  console.log('\n== 20a. Repertório do batuqueiro: ordenar por coluna e filtrar ==');
+  // Repertório de verdade tem dezenas de músicas: quem procura uma específica,
+  // ou quer ver o que ainda não foi ensaiado, precisa de outro caminho além da
+  // ordem de tocar.
+  const lerRep = () => page.evaluate(() => {
+    const t = document.querySelector('#tabela-repertorio-batuqueiro');
+    if (!t) return null;
+    return [...t.querySelectorAll('tbody tr')].map(tr => [...tr.querySelectorAll('td')].map(td => td.textContent.trim()));
+  });
+  // mais músicas, para a ordenação ter o que provar
+  await page.evaluate(async () => {
+    const fb = await import('./firebase-init.mock.js');
+    const col = fb.collection(fb.db, 'edicoes', '2027-1', 'musicas');
+    await fb.addDoc(col, { nome: 'Zabumba', tom: 'Dó maior', cantor: 'Ana', set: 1, ordem: 3, rascunho: false });
+    await fb.addDoc(col, { nome: 'Abertura', tom: 'Lá menor', cantor: 'Zeca', set: 2, ordem: 1, rascunho: false });
+    await fb.addDoc(col, { nome: 'Meio do Set', tom: 'Dó maior', cantor: 'Ana', set: 2, ordem: 2, rascunho: false });
+  });
+  await page.waitForTimeout(900);
+  let linhasRep = await lerRep();
+  ok('A tabela do repertório tem as músicas dos dois sets', linhasRep.length === 5);
+
+  // ordenar por nome
+  await page.click('[data-ord-rep="nome"]');
+  await page.waitForTimeout(400);
+  linhasRep = await lerRep();
+  ok('Clicar no título Música ordena por ordem alfabética',
+     linhasRep.map(l => l[2]).every((n, i, arr) => i === 0 || arr[i - 1].localeCompare(n, 'pt-BR', { sensitivity: 'base' }) <= 0));
+  ok('E o número da música continua sendo a posição no set, não a da linha',
+     linhasRep.find(l => l[2] === 'Abertura')[1] === '1' && linhasRep.find(l => l[2] === 'Zabumba')[1] === '3');
+  ok('Com o set de cada música visível em toda linha quando está reordenado',
+     linhasRep.every(l => l[0] === '1' || l[0] === '2'));
+
+  // inverter
+  await page.click('[data-ord-rep="nome"]');
+  await page.waitForTimeout(400);
+  linhasRep = await lerRep();
+  ok('Clicar de novo inverte a ordem',
+     linhasRep.map(l => l[2]).every((n, i, arr) => i === 0 || arr[i - 1].localeCompare(n, 'pt-BR', { sensitivity: 'base' }) >= 0));
+
+  // terceiro clique volta à ordem de tocar
+  await page.click('[data-ord-rep="nome"]');
+  await page.waitForTimeout(400);
+  linhasRep = await lerRep();
+  ok('O terceiro clique devolve a ordem dos sets', linhasRep[0][2] === 'Ventania');
+
+  // filtrar por cantor(a)
+  await page.selectOption('#rep-filtro-cantor', 'Ana');
+  await page.waitForTimeout(400);
+  linhasRep = await lerRep();
+  ok('O filtro de cantor(a) mostra só o que aquela pessoa canta',
+     linhasRep.length === 2 && linhasRep.every(l => l[4] === 'Ana'));
+  await page.selectOption('#rep-filtro-cantor', 'todas');
+  await page.waitForTimeout(400);
+
+  // filtrar por tom
+  await page.selectOption('#rep-filtro-tom', 'Dó maior');
+  await page.waitForTimeout(400);
+  linhasRep = await lerRep();
+  ok('O filtro de tom mostra só as músicas naquele tom',
+     linhasRep.length === 2 && linhasRep.every(l => l[3] === 'Dó maior'));
+  await page.selectOption('#rep-filtro-tom', 'sem');
+  await page.waitForTimeout(400);
+  linhasRep = await lerRep();
+  ok('E dá para achar as que estão sem tom definido',
+     linhasRep.length > 0 && linhasRep.every(l => l[3] === '—'));
+  await page.selectOption('#rep-filtro-tom', 'todas');
+  await page.waitForTimeout(400);
+
+  // filtrar por set
+  await page.selectOption('#rep-filtro-set', '2');
+  await page.waitForTimeout(400);
+  linhasRep = await lerRep();
+  // Na ordem dos sets, o número do set aparece só na primeira linha do bloco,
+  // como divisor — por isso o teste olha a primeira linha e a ausência do outro.
+  ok('O filtro de set mostra só um dos dois',
+     linhasRep.length === 2 && linhasRep[0][0] === '2' && !linhasRep.some(l => l[0] === '1'));
+  await page.selectOption('#rep-filtro-set', 'todas');
+  await page.waitForTimeout(400);
+
+  // filtrar pelas que ainda não foram ensaiadas
+  await page.selectOption('#rep-filtro-ensaio', 'nenhum');
+  await page.waitForTimeout(400);
+  linhasRep = await lerRep();
+  ok('Dá para ver só o que ainda não foi ensaiado',
+     linhasRep.length > 0 && linhasRep.every(l => l[5] === 'Ainda não'));
+
+  // busca por nome
+  await page.selectOption('#rep-filtro-ensaio', 'todas');
+  await page.waitForTimeout(300);
+  await page.fill('#rep-busca', 'zabum');
+  await page.waitForTimeout(500);
+  linhasRep = await lerRep();
+  ok('A busca por nome encontra a música', linhasRep.length === 1 && linhasRep[0][2] === 'Zabumba');
+  await page.fill('#rep-busca', 'nao existe');
+  await page.waitForTimeout(500);
+  html = await appHtml(page);
+  ok('E avisa quando nada bate, em vez de mostrar tabela vazia', html.includes('Nenhuma música com esses filtros'));
+
+  // limpar devolve tudo
+  await page.click('#rep-limpar');
+  await page.waitForTimeout(500);
+  linhasRep = await lerRep();
+  ok('Limpar devolve a tabela inteira na ordem dos sets',
+     linhasRep.length === 5 && linhasRep[0][2] === 'Ventania');
+
+  // uma opção que some não pode continuar filtrando escondido
+  await page.selectOption('#rep-filtro-cantor', 'Zeca');
+  await page.waitForTimeout(400);
+  await page.evaluate(async () => {
+    const fb = await import('./firebase-init.mock.js');
+    const snap = await fb.getDocs(fb.collection(fb.db, 'edicoes', '2027-1', 'musicas'));
+    const alvo = snap.docs.find(d => d.data().nome === 'Abertura');
+    await fb.deleteDoc(fb.doc(fb.db, 'edicoes', '2027-1', 'musicas', alvo.id));
+  });
+  await page.waitForTimeout(900);
+  const estadoFiltroRep = await page.evaluate(() => document.querySelector('#rep-filtro-cantor').value);
+  linhasRep = await lerRep();
+  ok('Sumindo o cantor(a) escolhido, o filtro volta sozinho para Todos', estadoFiltroRep === 'todas');
+  // E a escolha morta precisa sair da sessão, não só da tela: guardada, ela
+  // RESSUSCITAVA quando a opção voltasse a existir — a tabela encolhia sozinha
+  // e o seletor saltava para um valor que ninguém escolheu de novo.
+  await page.evaluate(async () => {
+    const fb = await import('./firebase-init.mock.js');
+    const col = fb.collection(fb.db, 'edicoes', '2027-1', 'musicas');
+    await fb.addDoc(col, { nome: 'Volta do Zeca', tom: 'Lá menor', cantor: 'Zeca', set: 2, ordem: 9, rascunho: false });
+  });
+  await page.waitForTimeout(1000);
+  const aposVoltar = await page.evaluate(() => ({
+    selecionado: document.querySelector('#rep-filtro-cantor').value,
+    linhas: document.querySelectorAll('#tabela-repertorio-batuqueiro tbody tr').length,
+  }));
+  ok('A opção que volta a existir não ressuscita o filtro antigo', aposVoltar.selecionado === 'todas');
+  ok('E a tabela continua mostrando todo mundo', aposVoltar.linhas === 5);
+  await page.evaluate(async () => {
+    const fb = await import('./firebase-init.mock.js');
+    const snap = await fb.getDocs(fb.collection(fb.db, 'edicoes', '2027-1', 'musicas'));
+    const alvo = snap.docs.find(d => d.data().nome === 'Volta do Zeca');
+    if (alvo) await fb.deleteDoc(fb.doc(fb.db, 'edicoes', '2027-1', 'musicas', alvo.id));
+  });
+  await page.waitForTimeout(900);
+  ok('E a tabela não fica vazia filtrando por um valor invisível', linhasRep.length === 4);
+
+  // devolve a edição ao estado que as seções seguintes esperam
+  await page.evaluate(async () => {
+    const fb = await import('./firebase-init.mock.js');
+    const snap = await fb.getDocs(fb.collection(fb.db, 'edicoes', '2027-1', 'musicas'));
+    for (const d of snap.docs) {
+      if (['Zabumba', 'Meio do Set'].includes(d.data().nome)) {
+        await fb.deleteDoc(fb.doc(fb.db, 'edicoes', '2027-1', 'musicas', d.id));
+      }
+    }
+  });
+  await page.waitForTimeout(900);
+  linhasRep = await lerRep();
+  ok('Removidas as de teste, sobram as duas originais', linhasRep.length === 2);
+
   await logout(page);
 
   console.log('\n== 20b. Backup do banco pelo painel ==');
@@ -2440,6 +2767,69 @@ async function main() {
   classica = await lerTomCantor('4 SEMANAS');
   ok('Trazendo a música de volta, o tom já vem preenchido', classica.tom === 'Mi menor');
   ok('E o cantor(a) também', classica.cantor === 'Dudinha');
+
+  // ------------------------------------------------------------------
+  // Campo em branco NÃO é decisão. O caminho normal de cadastrar música deixa
+  // Tom e Cantor(a) vazios; tratar isso como escolha apagava do catálogo o tom
+  // guardado de anos de bloco, e o selo de ano subia junto, impedindo o valor
+  // certo de voltar.
+  // ------------------------------------------------------------------
+  await page.fill('#new-musica-nome', '4 SEMANAS BIS');
+  await page.click('#btn-add-musica');
+  await page.waitForTimeout(900);
+  const bisId = await page.evaluate(() => {
+    const inp = [...document.querySelectorAll('.musica-name-input')].find(i => i.value === '4 SEMANAS BIS');
+    return inp ? inp.dataset.musicaId : null;
+  });
+  await page.fill(`.musica-tom-input[data-musica-id="${bisId}"]`, 'Fá maior');
+  await page.waitForTimeout(200);
+  await page.click('#btn-save-all-musicas');
+  await page.waitForTimeout(1200);
+  let bisNoCatalogo = await page.evaluate(() => Object.values(window.__mock.dumpStore().repertorioHistorico || {})
+    .find(m => m.nome === '4 SEMANAS BIS'));
+  ok('Música cadastrada no carnaval entra no catálogo com o tom escolhido', bisNoCatalogo.tom === 'Fá maior');
+
+  // agora apaga o tom na tela e salva: o catálogo NÃO pode perder o valor
+  await page.fill(`.musica-tom-input[data-musica-id="${bisId}"]`, '');
+  await page.waitForTimeout(200);
+  await page.click('#btn-save-all-musicas');
+  await page.waitForTimeout(1200);
+  bisNoCatalogo = await page.evaluate(() => Object.values(window.__mock.dumpStore().repertorioHistorico || {})
+    .find(m => m.nome === '4 SEMANAS BIS'));
+  ok('Deixar o campo em branco não apaga o tom guardado no catálogo', bisNoCatalogo.tom === 'Fá maior');
+  const bisNaEdicao = await page.evaluate(() => Object.values(window.__mock.dumpStore()['edicoes/2028-1/musicas'] || {})
+    .find(m => m.nome === '4 SEMANAS BIS'));
+  ok('Mas o repertório daquele carnaval respeita o que foi digitado', bisNaEdicao.tom === '');
+
+  // corrigir o nome renomeia a entrada do catálogo, em vez de criar outra
+  await page.fill(`.musica-name-input[data-musica-id="${bisId}"]`, '4 SEMANAS BIS CORRIGIDA');
+  await page.waitForTimeout(200);
+  await page.click('#btn-save-all-musicas');
+  await page.waitForTimeout(1200);
+  const catalogoAposRenomear = await page.evaluate(() => Object.values(window.__mock.dumpStore().repertorioHistorico || {})
+    .filter(m => (m.nome || '').startsWith('4 SEMANAS BIS')));
+  ok('Corrigir o nome renomeia a entrada do catálogo, sem criar uma segunda',
+     catalogoAposRenomear.length === 1 && catalogoAposRenomear[0].nome === '4 SEMANAS BIS CORRIGIDA');
+  ok('E o tom guardado segue com ela', catalogoAposRenomear[0].tom === 'Fá maior');
+
+  // salvar sem mudar nada não pode carimbar o catálogo inteiro
+  const anoAntesDoSalvar = await page.evaluate(() => Object.values(window.__mock.dumpStore().repertorioHistorico || {})
+    .find(m => m.nome === '4 SEMANAS').anoTomCantor);
+  await page.fill(`.musica-cantor-input[data-musica-id="${bisId}"]`, 'Zé');
+  await page.waitForTimeout(200);
+  await page.click('#btn-save-all-musicas');
+  await page.waitForTimeout(1200);
+  const anoDepoisDoSalvar = await page.evaluate(() => Object.values(window.__mock.dumpStore().repertorioHistorico || {})
+    .find(m => m.nome === '4 SEMANAS').anoTomCantor);
+  ok('Salvar mexe no catálogo só das músicas alteradas', anoDepoisDoSalvar === anoAntesDoSalvar);
+
+  // limpa a música de teste
+  const bisIdAtual = await page.evaluate(() => {
+    const inp = [...document.querySelectorAll('.musica-name-input')].find(i => (i.value || '').startsWith('4 SEMANAS BIS'));
+    return inp ? inp.dataset.musicaId : null;
+  });
+  await page.click(`[data-remove-musica="${bisIdAtual}"]`);
+  await page.waitForTimeout(800);
 
   // corrigir num carnaval ANTIGO não pode desfazer a escolha do mais novo
   await page.evaluate(async () => {

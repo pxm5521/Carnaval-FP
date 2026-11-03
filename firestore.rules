@@ -211,10 +211,17 @@ service cloud.firestore {
         // cair, porque o dono pode remover um lançamento que fez errado; exigir
         // que só crescesse prendia a pessoa ao próprio erro sem proteger nada
         // (declarar que pagou MENOS nunca é vantagem para quem declara).
+        // inscritoEm é carimbo de chegada, não dado editável: o site só grava
+        // quando a inscrição nasce. Deixá-lo livre permitia ao próprio inscrito
+        // reescrever a data pelo console e aparecer como o primeiro da fila na
+        // planilha que a organização usa para distribuir camisa e vaga de naipe.
+        // Aqui ele fica preso ao que foi gravado no create (ou ausente, para
+        // inscrição anterior ao campo existir).
         allow update: if (isAdmin() && edicaoNaoEncerrada(eid))
           || (isOwner(uid) && edicaoAberta(eid)
               && camposPermitidosDoDono()
               && request.resource.data.isentoManual == resource.data.isentoManual
+              && request.resource.data.get('inscritoEm', null) == resource.data.get('inscritoEm', null)
               && request.resource.data.totalPago is number
               && request.resource.data.totalPago >= 0);
 
@@ -281,11 +288,18 @@ service cloud.firestore {
       // marcados por outras pessoas.
       match /presencas/{id} {
         allow read: if isSignedIn();
-        allow create, update: if (isAdmin() && edicaoNaoEncerrada(eid))
-          || (podeEditarPresenca()
-              && edicaoNaoEncerrada(eid)
-              && request.resource.data.updatedBy == request.auth.uid
-              && request.resource.data.presente is bool);
+        // edicaoExiste é exigido aqui porque edicaoNaoEncerrada() devolve true
+        // para edição inexistente (tolerância criada para o admin conseguir
+        // limpar restos de uma importação que falhou). Sem esta linha, quem só
+        // tem acesso de marcar presença podia gravar em /edicoes/<id inventado>
+        // /presencas, acumulando documentos que nenhuma tela lista e que nem o
+        // admin consegue apagar, já que delete é sempre false.
+        allow create, update: if edicaoExiste(eid)
+          && ((isAdmin() && edicaoNaoEncerrada(eid))
+              || (podeEditarPresenca()
+                  && edicaoNaoEncerrada(eid)
+                  && request.resource.data.updatedBy == request.auth.uid
+                  && request.resource.data.presente is bool));
         allow delete: if false;
       }
     }
