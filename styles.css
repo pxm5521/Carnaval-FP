@@ -207,6 +207,33 @@
   td.nowrap { white-space: nowrap; }
   .musica-linha.e-rascunho td { background: color-mix(in srgb, var(--warning) 7%, transparent); }
 
+  /* ---------- filtros de múltipla escolha ---------- */
+  .multi { position: relative; display: flex; flex-direction: column; gap: 4px; }
+  .multi-btn {
+    display: flex; align-items: center; justify-content: space-between; gap: 8px;
+    min-width: 150px; max-width: 260px; padding: 9px 11px; font-size: 14px; font-weight: 400;
+    border-radius: 9px; border: 1px solid var(--gridline); background: var(--surface-2); color: var(--text-primary);
+    text-align: left;
+  }
+  .multi-btn > span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .multi-btn.tem-escolha { border-color: var(--brand-fire); font-weight: 600; }
+  .multi-seta { color: var(--text-secondary); flex-shrink: 0; }
+  /* A caixa flutua sobre a tabela: empurrar o conteúdo faria a página pular a
+     cada abertura, e a lista costuma ser mais alta que a linha de filtros. */
+  .multi-pop {
+    position: absolute; z-index: 30; top: 100%; left: 0; margin-top: 4px;
+    min-width: 220px; max-width: 320px; max-height: 320px; overflow-y: auto;
+    background: var(--surface-1); border: 1px solid var(--border); border-radius: 10px;
+    box-shadow: var(--shadow); padding: 6px;
+  }
+  .multi-item { display: flex; align-items: center; gap: 8px; padding: 7px 8px; border-radius: 7px; font-weight: 400; font-size: 13.5px; color: var(--text-primary); margin: 0; cursor: pointer; }
+  .multi-item:hover { background: var(--surface-2); }
+  .multi-item input { width: auto; flex-shrink: 0; }
+  .multi-item > span:nth-child(2) { flex: 1; }
+  .multi-qtd { color: var(--text-secondary); font-size: 12px; font-variant-numeric: tabular-nums; }
+  .multi-rodape { display: flex; justify-content: space-between; gap: 8px; padding: 6px 4px 2px; border-top: 1px solid var(--gridline); margin-top: 4px; }
+  @media (max-width: 640px) { .multi-pop { max-width: 86vw; } }
+
   /* ---------- tables ---------- */
   .table-scroll { overflow-x: auto; border-radius: 12px; border: 1px solid var(--gridline); }
   table { border-collapse: collapse; width: 100%; font-size: 13.5px; }
@@ -294,6 +321,9 @@
     margin-top: 14px; padding: 12px 14px; border-radius: 10px;
     border: 1px dashed var(--brand-fire); background: color-mix(in srgb, var(--brand-fire) 6%, transparent);
   }
+  /* Sem chave cadastrada o bloco continua existindo, em tom de aviso: antes a
+     área inteira sumia e ninguém descobria que faltava cadastrar. */
+  .pix-box-vazio { border-style: dashed; background: var(--warning-bg); }
   .pix-box .pix-chave { font-weight: 700; font-size: 15px; word-break: break-all; }
 
   /* ---------- rodapé com o aviso de privacidade ---------- */

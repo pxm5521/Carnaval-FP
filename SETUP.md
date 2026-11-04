@@ -309,7 +309,7 @@ A ordem e os sets aparecem para todo mundo: na área do batuqueiro o repertório
 **Dá para ordenar e filtrar o repertório na área do batuqueiro?** Dá, e vale para qualquer pessoa da bateria, não só para a organização.
 
 - **Clicar no título de uma coluna** ordena por ela: Música e Cantor(a) em ordem alfabética, Tom idem, "Ensaiada em" pela quantidade de ensaios. Um segundo clique inverte; o terceiro devolve a ordem dos sets.
-- **Os seletores acima da tabela** filtram por Set, Tom, Cantor(a) e por ensaio — inclusive duas opções que resolvem perguntas frequentes: "Ainda não ensaiada" e "Sem tom definido".
+- **Os filtros acima da tabela** filtram por Set, Tom, Cantor(a) e por ensaio, cada um aceitando mais de uma opção — inclusive duas que resolvem perguntas frequentes: "Ainda não ensaiada" e "Sem tom definido".
 - O campo **Buscar música** acha pelo nome, sem precisar percorrer a lista.
 - Um botão **"Limpar e voltar à ordem dos sets"** aparece assim que algo está filtrado ou reordenado.
 
@@ -371,6 +371,12 @@ Vale entender por que o contato precisou ficar separado, porque a mesma armadilh
 
 **Já tenho gente cadastrada. Como restrinjo o contato de quem se cadastrou antes?** O painel admin avisa sozinho quando encontra cadastros nessa situação, com um botão **"Restringir esses dados agora"**. Ele move o celular e a data de nascimento de todos os cadastros de uma vez, sem apagar nada, e o aviso some quando termina. Pode clicar mais de uma vez sem risco: quem já foi separado não entra na conta.
 
+**Onde cadastro a chave Pix da bateria?** **Painel admin → "Editar valores e prazos" → campo "Chave Pix"**. Ela vale para o carnaval que estiver selecionado, e aparece na área de pagamento de todo batuqueiro que não é isento — antes e depois de ele escolher a forma de pagamento, com botão de copiar.
+
+> Enquanto a chave não estiver cadastrada, o batuqueiro vê, no lugar dela, um aviso de que a organização ainda não cadastrou — e o painel admin mostra um alerta em vermelho no cartão de valores. Antes a área simplesmente não aparecia, e ninguém descobria que faltava preencher.
+>
+> A chave fica guardada no banco de dados, não no código. Isso é de propósito: o código do site está num repositório público do GitHub, e uma chave Pix ali seria lida pela internet inteira e por robôs de varredura. No banco, só quem tem cadastro no site enxerga.
+
 **O site tem aviso de privacidade?** Sim, no rodapé de todas as telas: o que é guardado, para que serve, quem enxerga o quê e como pedir correção ou exclusão. Sobre a LGPD, vale a ressalva honesta: um bloco de carnaval fica numa zona cinzenta da lei (o art. 4º, I exclui tratamento feito por pessoa natural para fins particulares e não econômicos, mas há cobrança de anuidade aqui). O aviso e a restrição do contato não são um parecer jurídico — são o mínimo razoável, e existem principalmente porque as pessoas estão entregando telefone e data de nascimento para um site.
 
 **Como faço para exportar a lista para uma planilha?** No painel admin, em **Cadastros**, há dois botões: **"Baixar Excel (.xlsx)"** e **"Baixar CSV"**. Os dois trazem exatamente o mesmo conteúdo — uma linha por pessoa inscrita no carnaval que estiver selecionado, com nome, apelido, e-mail, celular, nascimento, idade, se vai tocar, posição, camisa, isenção e o motivo dela, data da inscrição, forma de pagamento, valor devido, valor pago, saldo, quanto pagou a mais, situação, presenças e os acessos de organização. O filtro de posição da tela não muda o arquivo: a planilha sai sempre completa.
@@ -384,6 +390,12 @@ Vale entender por que o contato precisou ficar separado, porque a mesma armadilh
 Sobre os dois formatos: o **.xlsx** é a planilha nativa do Excel, com cabeçalho e colunas dimensionadas, mas ele precisa buscar uma biblioteca na internet no momento do clique. Se essa busca falhar (internet ruim, rede corporativa bloqueando), o site avisa e baixa o **CSV** no lugar, sem perder o clique. O **CSV** não depende de nada e abre no Excel em português já separado em colunas — ele é gravado com ponto-e-vírgula e com a marca de codificação que faz os acentos aparecerem certos. Se você abrir o CSV no Google Sheets em vez do Excel, escolha ponto-e-vírgula como separador na importação.
 
 A primeira linha do arquivo é um aviso de que ali há dados pessoais. Ele não protege nada tecnicamente — o ponto é que a planilha sai do controle de acesso do site: quem receber o arquivo passa a ter o telefone e a data de nascimento da bateria inteira, sem as restrições descritas acima. Vale mandar para quem realmente precisa, e não para o grupo do WhatsApp.
+
+**Como funcionam os filtros do site?** Todos iguais, no admin e na área do batuqueiro: o filtro é um botão que abre uma lista de caixas de seleção.
+
+- **Dá para marcar mais de uma opção ao mesmo tempo.** Marcar Repique e Caixa mostra os dois naipes juntos; marcar duas faixas de valor mostra as duas. O botão passa a dizer quantas estão marcadas, e **Limpar** desmarca tudo daquele filtro.
+- **As opções de um filtro acompanham o que os outros deixaram na tela.** Escolhido um naipe, o filtro de Status passa a oferecer só os status que existem entre aquelas pessoas — em vez de oferecer combinações que não têm nenhuma linha. O mesmo vale para ensaio, tom, cantor(a) e faixa de valor.
+- Uma opção que deixa de existir é desmarcada sozinha, e não volta a valer se a opção reaparecer depois.
 
 **Como acho quem ainda não pagou?** No **relatório geral de pagamentos** há quatro filtros que funcionam juntos: Status, Posição, **Pago** e **Saldo**. Os dois de valor trabalham por faixa de R$ 100, geradas a partir dos valores daquele carnaval — então acompanham a anuidade de cada ano sozinhas. Cada um tem ainda a opção mais usada em destaque: "Não pagou nada" e "Não deve nada".
 

@@ -966,12 +966,50 @@ async function main() {
   await page.waitForTimeout(200);
   html = await appHtml(page);
   ok('Relatório lista todas as pessoas da edição', html.includes('Ana Silva') && html.includes('Duda Reis'));
-  await page.selectOption('#relatorio-filtro-posicao', 'Repique');
-  await page.waitForTimeout(200);
+  // Os filtros são de múltipla escolha: um botão que abre caixas de seleção.
+  const marcarMulti = async (chave, valor) => {
+    const aberto = await page.evaluate(k => {
+      const b = document.querySelector(`[data-abrir-multi="${k}"]`);
+      return b ? b.getAttribute('aria-expanded') === 'true' : false;
+    }, chave);
+    if (!aberto) { await page.click(`[data-abrir-multi="${chave}"]`); await page.waitForTimeout(350); }
+    await page.click(`.multi-opt[data-multi-chave="${chave}"][data-valor="${valor}"]`);
+    await page.waitForTimeout(400);
+  };
+  const fecharMulti = async () => { await page.click('[data-fechar-multi]'); await page.waitForTimeout(300); };
+  const opcoesMulti = async (chave) => {
+    const aberto = await page.evaluate(k => {
+      const b = document.querySelector(`[data-abrir-multi="${k}"]`);
+      return b ? b.getAttribute('aria-expanded') === 'true' : false;
+    }, chave);
+    if (!aberto) { await page.click(`[data-abrir-multi="${chave}"]`); await page.waitForTimeout(350); }
+    return page.evaluate(k => [...document.querySelectorAll(`.multi-opt[data-multi-chave="${k}"]`)].map(i => i.dataset.valor), chave);
+  };
+
+  await marcarMulti('relatorioFiltroPosicao', 'Repique');
+  await fecharMulti();
   html = await appHtml(page);
   ok('Filtro por posição (Repique) mostra só Duda', html.includes('Duda Reis') && !html.includes('Bruno Costa'));
-  await page.selectOption('#relatorio-filtro-posicao', 'todas');
-  await page.waitForTimeout(150);
+
+  // mais de uma posição ao mesmo tempo
+  await marcarMulti('relatorioFiltroPosicao', 'Outro');
+  await fecharMulti();
+  html = await appHtml(page);
+  ok('Dá para marcar duas posições ao mesmo tempo no relatório',
+     html.includes('Duda Reis') && html.includes('Bruno Costa') && !html.includes('Carla Dias'));
+
+  // encadeamento: o filtro de status só oferece status que ainda têm gente
+  const statusOferecidos = await opcoesMulti('relatorioFiltroStatus');
+  await fecharMulti();
+  const statusDasLinhas = await page.evaluate(() => [...document.querySelectorAll('table tbody tr')]
+    .map(tr => tr.querySelector('.badge') ? tr.querySelector('.badge').textContent.trim() : null).filter(Boolean));
+  ok('O filtro de status só oferece o que existe nas linhas filtradas',
+     statusOferecidos.length > 0 && statusOferecidos.every(s => statusDasLinhas.includes(s)));
+
+  await page.click('#relatorio-limpar-filtros');
+  await page.waitForTimeout(400);
+  html = await appHtml(page);
+  ok('Limpar filtros devolve o relatório inteiro', html.includes('Ana Silva') && html.includes('Duda Reis'));
   await logout(page);
 
   // ============================================================
@@ -1263,60 +1301,65 @@ async function main() {
   // acompanham a anuidade de cada carnaval sem nada fixo no código.
   await page.click('#btn-goto-relatorio');
   await page.waitForTimeout(300);
-  const opcoesPago = await page.$$eval('#relatorio-filtro-pago option', els => els.map(e => e.value));
-  ok('O filtro de Pago começa por "qualquer valor" e "não pagou nada"', opcoesPago[0] === 'todos' && opcoesPago[1] === 'zero');
+  const opcoesPago = await opcoesMulti('relatorioFiltroPago');
+  await fecharMulti();
+  ok('O filtro de Pago começa pela opção "não pagou nada"', opcoesPago[0] === 'zero');
   ok('E tem faixas de cem em cem', opcoesPago.includes('100-200'));
-  await page.selectOption('#relatorio-filtro-pago', 'zero');
-  await page.waitForTimeout(300);
+  await marcarMulti('relatorioFiltroPago', 'zero');
+  await fecharMulti();
   html = await appHtml(page);
   ok('Filtrando quem não pagou nada, quem pagou 115 sai da lista', !html.includes('Ana Silva'));
   ok('E quem está zerado continua', html.includes('Duda Reis'));
-  await page.selectOption('#relatorio-filtro-pago', '100-200');
-  await page.waitForTimeout(300);
+  await marcarMulti('relatorioFiltroPago', 'zero');   // desmarca
+  await marcarMulti('relatorioFiltroPago', '100-200');
+  await fecharMulti();
   html = await appHtml(page);
   ok('Na faixa de 100 a 200 aparece quem pagou 115', html.includes('Ana Silva'));
   ok('E some quem não pagou nada', !html.includes('Duda Reis'));
   ok('O rodapé soma só o que está na tela', html.includes('1 pessoa<'));
-  await page.selectOption('#relatorio-filtro-pago', 'todos');
-  await page.waitForTimeout(250);
+
+  // as duas faixas juntas trazem os dois grupos
+  await marcarMulti('relatorioFiltroPago', 'zero');
+  await fecharMulti();
+  html = await appHtml(page);
+  ok('Marcando duas faixas, as duas aparecem', html.includes('Ana Silva') && html.includes('Duda Reis'));
+  await page.click('#relatorio-limpar-filtros');
+  await page.waitForTimeout(400);
 
   // Saldo de Ana: 230 devidos menos 115 pagos = 115.
-  await page.selectOption('#relatorio-filtro-saldo', '100-200');
-  await page.waitForTimeout(300);
+  await marcarMulti('relatorioFiltroSaldo', '100-200');
+  await fecharMulti();
   html = await appHtml(page);
   ok('O filtro de saldo acha quem ainda deve 115', html.includes('Ana Silva'));
   // Duda ainda não escolheu forma de pagamento: saldo indefinido, fora das faixas.
   ok('Quem não escolheu plano fica fora das faixas de saldo', !html.includes('Duda Reis'));
-  await page.selectOption('#relatorio-filtro-saldo', 'todos');
-  await page.waitForTimeout(300);
+  await page.click('#relatorio-limpar-filtros');
+  await page.waitForTimeout(400);
   html = await appHtml(page);
   ok('Voltando para "qualquer valor", ela reaparece', html.includes('Duda Reis'));
 
-  // A faixa escolhida some do seletor quando o maior valor da lista cai. Sem
-  // validar, nenhuma opção ficava marcada, o seletor exibia "Qualquer valor" e o
-  // filtro antigo continuava valendo — a tabela ficava vazia sem saída, porque
-  // reselecionar o que já aparece não dispara change.
+  // A faixa escolhida some quando o maior valor da lista cai: não pode continuar
+  // filtrando escondida, nem deixar a tabela vazia sem saída.
   await page.evaluate(async () => {
     const fb = await import('./firebase-init.mock.js');
     const uid = window.__mock.uidPorEmail('ana@example.com');
     await fb.updateDoc(fb.doc(fb.db, 'edicoes', '2027-1', 'inscricoes', uid), { totalPago: 250 });
   });
-  await page.waitForTimeout(600);
-  await page.selectOption('#relatorio-filtro-pago', '200-300');
-  await page.waitForTimeout(300);
+  await page.waitForTimeout(700);
+  await marcarMulti('relatorioFiltroPago', '200-300');
+  await fecharMulti();
   await page.evaluate(async () => {
     const fb = await import('./firebase-init.mock.js');
     const uid = window.__mock.uidPorEmail('ana@example.com');
     await fb.updateDoc(fb.doc(fb.db, 'edicoes', '2027-1', 'inscricoes', uid), { totalPago: 0 });
   });
-  await page.waitForTimeout(600);
-  const estadoFiltro = await page.evaluate(() => {
-    const sel = document.querySelector('#relatorio-filtro-pago');
-    return { valor: sel.value, opcoes: [...sel.options].map(o => o.value) };
-  });
+  await page.waitForTimeout(900);
+  const resumoPago = await page.evaluate(() => document.querySelector('[data-abrir-multi="relatorioFiltroPago"] span').textContent.trim());
+  const opcoesPagoDepois = await opcoesMulti('relatorioFiltroPago');
+  await fecharMulti();
   html = await appHtml(page);
-  ok('Some a faixa selecionada, o filtro volta sozinho para "qualquer valor"', estadoFiltro.valor === 'todos');
-  ok('E a faixa que sumiu não é mais oferecida', !estadoFiltro.opcoes.includes('200-300'));
+  ok('Some a faixa selecionada, o filtro volta sozinho para "qualquer valor"', resumoPago === 'Qualquer valor');
+  ok('E a faixa que sumiu não é mais oferecida', !opcoesPagoDepois.includes('200-300'));
   ok('E a tabela não fica vazia com o seletor mentindo', !html.includes('Ninguém encontrado'));
   await page.evaluate(async () => {
     const fb = await import('./firebase-init.mock.js');
@@ -1469,6 +1512,62 @@ async function main() {
   ok('A chave Pix aparece na área de pagamento do batuqueiro', html.includes('bateria@pix.com'));
   ok('Com botão para copiar', html.includes('btn-copiar-pix'));
   ok('E a instrução de que o pix só conta depois de registrado', html.includes('só entra na sua conta o que for registrado'));
+
+  // A chave é a informação mais procurada da tela: tem que aparecer em TODOS os
+  // estados de quem paga, não só depois de escolher a forma de pagamento.
+  await logout(page);
+  await login(page, 'duda@example.com');
+  await page.waitForTimeout(800);
+  const pixAntesDeEscolher = await page.evaluate(() => {
+    const app = document.getElementById('app');
+    return {
+      temPicker: !!app.querySelector('#plan-picker'),
+      chave: app.querySelector('.pix-chave') ? app.querySelector('.pix-chave').textContent.trim() : null,
+    };
+  });
+  ok('Quem ainda não escolheu a forma de pagamento também vê a chave Pix',
+     pixAntesDeEscolher.temPicker && pixAntesDeEscolher.chave === 'bateria@pix.com');
+  await page.click('#plan-picker .plan-pill');
+  await page.waitForTimeout(1000);
+  const pixDepoisDeEscolher = await page.evaluate(() => {
+    const el = document.querySelector('.pix-chave');
+    return el ? el.textContent.trim() : null;
+  });
+  ok('E continua vendo depois de escolher', pixDepoisDeEscolher === 'bateria@pix.com');
+
+  // Chave não cadastrada não pode sumir em silêncio.
+  await logout(page);
+  await login(page, 'bruno@example.com');
+  await page.click('#btn-goto-admin');
+  await page.waitForTimeout(300);
+  await page.click('#btn-goto-precos');
+  await page.waitForTimeout(400);
+  await page.fill('#admin-chave-pix', '');
+  await page.click('#btn-save-precos');
+  await page.waitForTimeout(700);
+  await page.click('#btn-back-admin3');
+  await page.waitForTimeout(500);
+  html = await appHtml(page);
+  ok('O painel admin avisa quando a chave Pix não está cadastrada', html.includes('chave Pix deste carnaval não está cadastrada'));
+  await logout(page);
+  await login(page, 'duda@example.com');
+  await page.waitForTimeout(900);
+  html = await appHtml(page);
+  ok('E o batuqueiro vê que falta cadastrar, em vez de não ver nada', html.includes('ainda não cadastrou a chave deste carnaval'));
+
+  // devolve a chave para as seções seguintes
+  await logout(page);
+  await login(page, 'bruno@example.com');
+  await page.click('#btn-goto-admin');
+  await page.waitForTimeout(300);
+  await page.click('#btn-goto-precos');
+  await page.waitForTimeout(400);
+  await page.fill('#admin-chave-pix', 'bateria@pix.com');
+  await page.click('#btn-save-precos');
+  await page.waitForTimeout(700);
+  await logout(page);
+  await login(page, 'ana@example.com');
+  await page.waitForTimeout(500);
 
   console.log('\n== 16c. Quem não vai tocar fica isento da anuidade ==');
   // Regra da bateria: só paga quem desfila. A isenção por não tocar convive com
@@ -1731,16 +1830,16 @@ async function main() {
   await page.waitForTimeout(400);
   // O filtro de posição da tela não pode encolher o arquivo: quem exporta quer a
   // lista inteira, e o filtro é só uma lente para olhar a tela.
-  await page.selectOption('#admin-pessoas-filtro', 'Repique');
-  await page.waitForTimeout(250);
+  await marcarMulti('adminPessoasFiltro', 'Repique');
+  await fecharMulti();
   const [baixadoFiltrado] = await Promise.all([
     page.waitForEvent('download'),
     page.click('#btn-exportar-csv'),
   ]);
   const csvFiltrado = readFileSync(await baixadoFiltrado.path(), 'utf8').replace(/^\uFEFF/, '').split('\r\n');
   ok('O filtro de posição da tela não encolhe a planilha', csvFiltrado.length === linhasCsv.length);
-  await page.selectOption('#admin-pessoas-filtro', 'todas');
-  await page.waitForTimeout(200);
+  await marcarMulti('adminPessoasFiltro', 'Repique');   // desmarca
+  await fecharMulti();
 
   console.log('\n== 16h. Excel (.xlsx): geração e queda para CSV se a biblioteca não carregar ==');
   // A biblioteca que gera .xlsx vem de um CDN e não faz parte do site. Aqui ela
@@ -1975,15 +2074,39 @@ async function main() {
   ok('Total do ensaio marcado mostra 1 presente de 4 pessoas', html.includes('1/4'));
   ok('Mostra quantas pessoas estão no filtro atual (4, sem filtro)', html.includes('4 pessoas no filtro'));
 
-  console.log('\n== 19. Filtro de presença por posição ==');
-  await page.selectOption('#presenca-filtro-posicao', 'Repique');
-  await page.waitForTimeout(200);
+  console.log('\n== 19. Filtro de presença por posição e por ensaio ==');
+  await marcarMulti('presencaFiltro', 'Repique');
+  await fecharMulti();
   html = await appHtml(page);
   ok('Filtro por posição (Repique) mostra só Duda', html.includes('Duda Reis') && !html.includes('Bruno Costa'));
   ok('Total recalcula com o filtro: 1 de 1 pessoa', html.includes('1/1'));
   ok('Contagem de pessoas no filtro atualiza para 1', html.includes('1 pessoa no filtro'));
-  await page.selectOption('#presenca-filtro-posicao', 'todas');
-  await page.waitForTimeout(150);
+
+  // mais de um naipe ao mesmo tempo
+  await marcarMulti('presencaFiltro', 'Voz');
+  await fecharMulti();
+  html = await appHtml(page);
+  ok('Dá para ver dois naipes ao mesmo tempo na presença',
+     html.includes('Duda Reis') && html.includes('Carla Dias') && !html.includes('Bruno Costa'));
+  ok('E o total acompanha os dois', html.includes('2 pessoas no filtro'));
+
+  // o filtro de ensaio escolhe quais colunas aparecem
+  await page.click('#presenca-limpar-filtros');
+  await page.waitForTimeout(400);
+  const colunasAntes = await page.evaluate(() => {
+    const h = [...document.querySelectorAll('h2')].find(x => x.textContent.includes('Presença em ensaios'));
+    return h.closest('.card').querySelectorAll('thead th').length;
+  });
+  const idEnsaioParaColuna = await page.evaluate(() => Object.keys(window.__mock.dumpStore()['edicoes/2027-1/ensaios'])[0]);
+  await marcarMulti('presencaEnsaioFiltro', idEnsaioParaColuna);
+  await fecharMulti();
+  const colunasDepois = await page.evaluate(() => {
+    const h = [...document.querySelectorAll('h2')].find(x => x.textContent.includes('Presença em ensaios'));
+    return h.closest('.card').querySelectorAll('thead th').length;
+  });
+  ok('Escolher um ensaio deixa só a coluna dele', colunasDepois === 3 && colunasAntes > 3);
+  await page.click('#presenca-limpar-filtros');
+  await page.waitForTimeout(400);
 
   console.log('\n== 20. Repertório visível para o batuqueiro, com o ensaio em que foi tocada ==');
   html = await appHtml(page);
@@ -2052,50 +2175,93 @@ async function main() {
   linhasRep = await lerRep();
   ok('O terceiro clique devolve a ordem dos sets', linhasRep[0][2] === 'Ventania');
 
-  // filtrar por cantor(a)
-  await page.selectOption('#rep-filtro-cantor', 'Ana');
-  await page.waitForTimeout(400);
+  // ---- filtros de múltipla escolha, com opções encadeadas ----
+  const abrirFiltro = async (chave) => {
+    const aberto = await page.evaluate(k => {
+      const b = document.querySelector(`[data-abrir-multi="${k}"]`);
+      return b ? b.getAttribute('aria-expanded') === 'true' : false;
+    }, chave);
+    if (!aberto) { await page.click(`[data-abrir-multi="${chave}"]`); await page.waitForTimeout(350); }
+  };
+  const marcar = async (chave, valor) => {
+    await abrirFiltro(chave);
+    await page.click(`.multi-opt[data-multi-chave="${chave}"][data-valor="${valor}"]`);
+    await page.waitForTimeout(450);
+  };
+  const opcoesDoFiltro = async (chave) => {
+    await abrirFiltro(chave);
+    return page.evaluate(k => [...document.querySelectorAll(`.multi-opt[data-multi-chave="${k}"]`)].map(i => i.dataset.valor), chave);
+  };
+  const fecharFiltro = async () => { await page.click('[data-fechar-multi]'); await page.waitForTimeout(350); };
+  const limparFiltro = async (chave) => {
+    await abrirFiltro(chave);
+    await page.click(`[data-limpar-multi="${chave}"]`);
+    await page.waitForTimeout(450);
+    await fecharFiltro();
+  };
+
+  await marcar('repFiltroCantor', 'Ana');
+  await fecharFiltro();
   linhasRep = await lerRep();
   ok('O filtro de cantor(a) mostra só o que aquela pessoa canta',
      linhasRep.length === 2 && linhasRep.every(l => l[4] === 'Ana'));
-  await page.selectOption('#rep-filtro-cantor', 'todas');
-  await page.waitForTimeout(400);
 
-  // filtrar por tom
-  await page.selectOption('#rep-filtro-tom', 'Dó maior');
-  await page.waitForTimeout(400);
+  // MAIS DE UMA OPÇÃO ao mesmo tempo
+  await marcar('repFiltroCantor', 'Zeca');
+  await fecharFiltro();
+  linhasRep = await lerRep();
+  ok('Dá para marcar mais de um cantor(a) ao mesmo tempo',
+     linhasRep.length === 3 && linhasRep.every(l => l[4] === 'Ana' || l[4] === 'Zeca'));
+  const resumoDois = await page.evaluate(() => document.querySelector('[data-abrir-multi="repFiltroCantor"] span').textContent.trim());
+  ok('E o botão do filtro diz quantas opções estão marcadas', resumoDois === '2 selecionados');
+
+  // ENCADEAMENTO: com Ana e Zeca marcados, o filtro de tom só oferece os tons
+  // que existem nas linhas que sobraram.
+  const tonsOferecidos = await opcoesDoFiltro('repFiltroTom');
+  await fecharFiltro();
+  ok('O outro filtro só oferece opções que ainda têm linhas',
+     tonsOferecidos.includes('Dó maior') && tonsOferecidos.includes('Lá menor') && !tonsOferecidos.includes('Sol maior'));
+
+  // desmarcar devolve
+  await marcar('repFiltroCantor', 'Zeca');
+  await fecharFiltro();
+  linhasRep = await lerRep();
+  ok('Desmarcar uma das opções tira só aquela', linhasRep.length === 2);
+  await limparFiltro('repFiltroCantor');
+  linhasRep = await lerRep();
+  ok('Limpar devolve a lista inteira', linhasRep.length === 5);
+
+  // filtrar por tom, inclusive "sem tom definido"
+  await marcar('repFiltroTom', 'Dó maior');
+  await fecharFiltro();
   linhasRep = await lerRep();
   ok('O filtro de tom mostra só as músicas naquele tom',
      linhasRep.length === 2 && linhasRep.every(l => l[3] === 'Dó maior'));
-  await page.selectOption('#rep-filtro-tom', 'sem');
-  await page.waitForTimeout(400);
+  await limparFiltro('repFiltroTom');
+  await marcar('repFiltroTom', 'sem');
+  await fecharFiltro();
   linhasRep = await lerRep();
   ok('E dá para achar as que estão sem tom definido',
      linhasRep.length > 0 && linhasRep.every(l => l[3] === '—'));
-  await page.selectOption('#rep-filtro-tom', 'todas');
-  await page.waitForTimeout(400);
+  await limparFiltro('repFiltroTom');
 
   // filtrar por set
-  await page.selectOption('#rep-filtro-set', '2');
-  await page.waitForTimeout(400);
+  await marcar('repFiltroSet', '2');
+  await fecharFiltro();
   linhasRep = await lerRep();
-  // Na ordem dos sets, o número do set aparece só na primeira linha do bloco,
-  // como divisor — por isso o teste olha a primeira linha e a ausência do outro.
   ok('O filtro de set mostra só um dos dois',
      linhasRep.length === 2 && linhasRep[0][0] === '2' && !linhasRep.some(l => l[0] === '1'));
-  await page.selectOption('#rep-filtro-set', 'todas');
-  await page.waitForTimeout(400);
+  await limparFiltro('repFiltroSet');
 
   // filtrar pelas que ainda não foram ensaiadas
-  await page.selectOption('#rep-filtro-ensaio', 'nenhum');
-  await page.waitForTimeout(400);
+  await marcar('repFiltroEnsaio', 'nenhum');
+  await fecharFiltro();
   linhasRep = await lerRep();
   ok('Dá para ver só o que ainda não foi ensaiado',
      linhasRep.length > 0 && linhasRep.every(l => l[5] === 'Ainda não'));
+  await limparFiltro('repFiltroEnsaio');
 
   // busca por nome
-  await page.selectOption('#rep-filtro-ensaio', 'todas');
-  await page.waitForTimeout(300);
   await page.fill('#rep-busca', 'zabum');
   await page.waitForTimeout(500);
   linhasRep = await lerRep();
@@ -2105,7 +2271,6 @@ async function main() {
   html = await appHtml(page);
   ok('E avisa quando nada bate, em vez de mostrar tabela vazia', html.includes('Nenhuma música com esses filtros'));
 
-  // limpar devolve tudo
   await page.click('#rep-limpar');
   await page.waitForTimeout(500);
   linhasRep = await lerRep();
@@ -2113,21 +2278,21 @@ async function main() {
      linhasRep.length === 5 && linhasRep[0][2] === 'Ventania');
 
   // uma opção que some não pode continuar filtrando escondido
-  await page.selectOption('#rep-filtro-cantor', 'Zeca');
-  await page.waitForTimeout(400);
+  await marcar('repFiltroCantor', 'Zeca');
+  await fecharFiltro();
   await page.evaluate(async () => {
     const fb = await import('./firebase-init.mock.js');
     const snap = await fb.getDocs(fb.collection(fb.db, 'edicoes', '2027-1', 'musicas'));
     const alvo = snap.docs.find(d => d.data().nome === 'Abertura');
     await fb.deleteDoc(fb.doc(fb.db, 'edicoes', '2027-1', 'musicas', alvo.id));
   });
-  await page.waitForTimeout(900);
-  const estadoFiltroRep = await page.evaluate(() => document.querySelector('#rep-filtro-cantor').value);
+  await page.waitForTimeout(1000);
   linhasRep = await lerRep();
-  ok('Sumindo o cantor(a) escolhido, o filtro volta sozinho para Todos', estadoFiltroRep === 'todas');
-  // E a escolha morta precisa sair da sessão, não só da tela: guardada, ela
-  // RESSUSCITAVA quando a opção voltasse a existir — a tabela encolhia sozinha
-  // e o seletor saltava para um valor que ninguém escolheu de novo.
+  const resumoAposSumir = await page.evaluate(() => document.querySelector('[data-abrir-multi="repFiltroCantor"] span').textContent.trim());
+  ok('Sumindo o cantor(a) escolhido, o filtro volta sozinho para Todos', resumoAposSumir === 'Todos');
+  ok('E a tabela não fica vazia filtrando por um valor invisível', linhasRep.length === 4);
+
+  // e a escolha morta não ressuscita quando a opção volta a existir
   await page.evaluate(async () => {
     const fb = await import('./firebase-init.mock.js');
     const col = fb.collection(fb.db, 'edicoes', '2027-1', 'musicas');
@@ -2135,31 +2300,21 @@ async function main() {
   });
   await page.waitForTimeout(1000);
   const aposVoltar = await page.evaluate(() => ({
-    selecionado: document.querySelector('#rep-filtro-cantor').value,
+    resumo: document.querySelector('[data-abrir-multi="repFiltroCantor"] span').textContent.trim(),
     linhas: document.querySelectorAll('#tabela-repertorio-batuqueiro tbody tr').length,
   }));
-  ok('A opção que volta a existir não ressuscita o filtro antigo', aposVoltar.selecionado === 'todas');
+  ok('A opção que volta a existir não ressuscita o filtro antigo', aposVoltar.resumo === 'Todos');
   ok('E a tabela continua mostrando todo mundo', aposVoltar.linhas === 5);
   await page.evaluate(async () => {
     const fb = await import('./firebase-init.mock.js');
     const snap = await fb.getDocs(fb.collection(fb.db, 'edicoes', '2027-1', 'musicas'));
-    const alvo = snap.docs.find(d => d.data().nome === 'Volta do Zeca');
-    if (alvo) await fb.deleteDoc(fb.doc(fb.db, 'edicoes', '2027-1', 'musicas', alvo.id));
-  });
-  await page.waitForTimeout(900);
-  ok('E a tabela não fica vazia filtrando por um valor invisível', linhasRep.length === 4);
-
-  // devolve a edição ao estado que as seções seguintes esperam
-  await page.evaluate(async () => {
-    const fb = await import('./firebase-init.mock.js');
-    const snap = await fb.getDocs(fb.collection(fb.db, 'edicoes', '2027-1', 'musicas'));
     for (const d of snap.docs) {
-      if (['Zabumba', 'Meio do Set'].includes(d.data().nome)) {
+      if (['Volta do Zeca', 'Zabumba', 'Meio do Set'].includes(d.data().nome)) {
         await fb.deleteDoc(fb.doc(fb.db, 'edicoes', '2027-1', 'musicas', d.id));
       }
     }
   });
-  await page.waitForTimeout(900);
+  await page.waitForTimeout(1000);
   linhasRep = await lerRep();
   ok('Removidas as de teste, sobram as duas originais', linhasRep.length === 2);
 

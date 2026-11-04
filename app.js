@@ -143,11 +143,11 @@ const session = {
   errors: {},
   editingMyData: false,
   addPayOpenFor: null,
-  presencaFiltro: "todas",
-  presencaEnsaioFiltro: "todos",
-  adminPessoasFiltro: "todas",
-  relatorioFiltroStatus: "todos",
-  relatorioFiltroPosicao: "todas",
+  presencaFiltro: [],
+  presencaEnsaioFiltro: [],
+  adminPessoasFiltro: [],
+  relatorioFiltroStatus: [],
+  relatorioFiltroPosicao: [],
   adminEditingUser: null,
   posicoesDraft: null,
   musicasDraft: null,
@@ -169,14 +169,15 @@ const session = {
   repSugestaoFiltro: "",
   setDestino: 1,
   repBusca: "",
-  repFiltroSet: "todas",
-  repFiltroTom: "todas",
-  repFiltroCantor: "todas",
-  repFiltroEnsaio: "todas",
+  repFiltroSet: [],
+  repFiltroTom: [],
+  repFiltroCantor: [],
+  repFiltroEnsaio: [],
   repOrdemCol: "",
   repOrdemDir: "asc",
-  relatorioFiltroPago: "todos",
-  relatorioFiltroSaldo: "todos",
+  multiAberto: null,
+  relatorioFiltroPago: [],
+  relatorioFiltroSaldo: [],
   // Comprovantes da pessoa que o admin está editando. Carregados sob demanda —
   // não faz sentido manter um listener aberto para os pagamentos de todo mundo.
   pagsDoEditado: null,
@@ -262,8 +263,6 @@ function posicoesUnicasOrdenadas(pessoas) {
   return pessoas.some(p => !(p.posicao || "").trim()) ? [...nomes, SEM_POSICAO] : nomes;
 }
 const rotuloDaPosicao = p => (p === SEM_POSICAO ? "Sem posição definida" : p);
-const pessoaNaPosicao = (p, filtro) =>
-  filtro === SEM_POSICAO ? !(p.posicao || "").trim() : p.posicao === filtro;
 /* ------------------------------------------------------------
    Rascunho de repertório
    ------------------------------------------------------------
@@ -444,11 +443,11 @@ function limparEstadoDeSessao() {
     busy: {},
     editingMyData: false,
     addPayOpenFor: null,
-    presencaFiltro: "todas",
-    presencaEnsaioFiltro: "todos",
-    adminPessoasFiltro: "todas",
-    relatorioFiltroStatus: "todos",
-    relatorioFiltroPosicao: "todas",
+    presencaFiltro: [],
+    presencaEnsaioFiltro: [],
+    adminPessoasFiltro: [],
+    relatorioFiltroStatus: [],
+    relatorioFiltroPosicao: [],
     adminEditingUser: null,
     posicoesDraft: null,
     musicasDraft: null,
@@ -470,14 +469,15 @@ function limparEstadoDeSessao() {
   repSugestaoFiltro: "",
   setDestino: 1,
   repBusca: "",
-  repFiltroSet: "todas",
-  repFiltroTom: "todas",
-  repFiltroCantor: "todas",
-  repFiltroEnsaio: "todas",
+  repFiltroSet: [],
+  repFiltroTom: [],
+  repFiltroCantor: [],
+  repFiltroEnsaio: [],
   repOrdemCol: "",
   repOrdemDir: "asc",
-  relatorioFiltroPago: "todos",
-  relatorioFiltroSaldo: "todos",
+  multiAberto: null,
+  relatorioFiltroPago: [],
+  relatorioFiltroSaldo: [],
   // Comprovantes da pessoa que o admin está editando. Carregados sob demanda —
   // não faz sentido manter um listener aberto para os pagamentos de todo mundo.
   pagsDoEditado: null,
@@ -631,17 +631,17 @@ function limparEstadoDaEdicao() {
   // edição: mantê-los deixava a tabela de presença sem nenhuma coluna e a lista
   // de cadastros vazia, com o seletor exibindo "Todos"/"Todas" — ou seja,
   // mentindo sobre o próprio estado, e sem disparar change ao reselecionar.
-  session.presencaEnsaioFiltro = "todos";
-  session.presencaFiltro = "todas";
-  session.adminPessoasFiltro = "todas";
-  session.relatorioFiltroPosicao = "todas";
-  session.relatorioFiltroPago = "todos";
-  session.relatorioFiltroSaldo = "todos";
+  session.presencaEnsaioFiltro = [];
+  session.presencaFiltro = [];
+  session.adminPessoasFiltro = [];
+  session.relatorioFiltroPosicao = [];
+  session.relatorioFiltroPago = [];
+  session.relatorioFiltroSaldo = [];
   // O filtro de ensaio guarda um id que não existe na outra edição, e tom e
   // cantor(a) mudam de um carnaval para o outro.
-  session.repBusca = ""; session.repFiltroSet = "todas"; session.repFiltroTom = "todas";
-  session.repFiltroCantor = "todas"; session.repFiltroEnsaio = "todas";
-  session.repOrdemCol = ""; session.repOrdemDir = "asc";
+  session.repBusca = ""; session.repFiltroSet = []; session.repFiltroTom = [];
+  session.repFiltroCantor = []; session.repFiltroEnsaio = [];
+  session.repOrdemCol = ""; session.repOrdemDir = "asc"; session.multiAberto = null;
   // O pré-preenchimento da inscrição é de UM carnaval. Sem zerar aqui, a troca
   // automática de edição levava as escolhas feitas para o carnaval anterior
   // (inclusive "não vou tocar", que decide a isenção da anuidade) para a tela
@@ -1001,11 +1001,6 @@ function contagemPorCamisa(pessoas) {
    a tabela aparece vazia, com o seletor mentindo sobre o próprio estado.
    Reselecionar "Todas" nem dispara change, então não havia saída sem trocar de
    tela. */
-function filtroDePosicaoValido(valor, pessoas) {
-  if (!valor || valor === "todas") return "todas";
-  return posicoesUnicasOrdenadas(pessoas).includes(valor) ? valor : "todas";
-}
-
 /* Saldo em aberto de uma pessoa. Devolve null quando não dá para saber: quem
    ainda não escolheu a forma de pagamento não tem valor devido definido, e
    fingir que deve zero colocaria essa pessoa junto de quem já quitou. */
@@ -1029,35 +1024,6 @@ function faixasDeValor(valores) {
 }
 function rotuloDaFaixa(f) {
   return f.min === 0 ? `Até ${currency(f.max)}` : `${currency(f.min)} a ${currency(f.max)}`;
-}
-/* Compara com a faixa. O limite inferior é exclusivo (e o zero sai por fora, na
-   opção própria), então uma pessoa nunca cai em duas faixas ao mesmo tempo. */
-function valorNaFaixa(valor, chave) {
-  if (!chave || chave === "todos") return true;
-  if (valor === null || valor === undefined) return false;  // indefinido só em "todos"
-  if (chave === "zero") return valor === 0;
-  const [min, max] = chave.split("-").map(Number);
-  return valor > min && valor <= max;
-}
-/* A faixa escolhida some do seletor quando o maior valor da lista cai (alguém
-   saiu da edição, o filtro de posição mudou). Sem validar, nenhuma <option>
-   ficava marcada, o navegador exibia "Qualquer valor" e o filtro ANTIGO
-   continuava valendo: a tabela dizia "Ninguém encontrado" e não havia como
-   desfazer, porque reselecionar o que já aparece não dispara change. */
-function faixaValida(chave, valores) {
-  if (!chave || chave === "todos" || chave === "zero") return chave || "todos";
-  return faixasDeValor(valores).some(f => f.chave === chave) ? chave : "todos";
-}
-function selectDeFaixa(id, rotulo, valorAtual, valores, rotuloZero) {
-  const faixas = faixasDeValor(valores);
-  return `
-    <div><label>${rotulo}</label>
-      <select id="${id}">
-        <option value="todos" ${(valorAtual || "todos") === "todos" ? "selected" : ""}>Qualquer valor</option>
-        <option value="zero" ${valorAtual === "zero" ? "selected" : ""}>${rotuloZero}</option>
-        ${faixas.map(f => `<option value="${f.chave}" ${valorAtual === f.chave ? "selected" : ""}>${rotuloDaFaixa(f)}</option>`).join("")}
-      </select>
-    </div>`;
 }
 
 function contagemPorPosicao(pessoas) {
@@ -1577,11 +1543,35 @@ function viewBatuqueiro() {
   // Um filtro que aponta para algo que não existe mais (ensaio apagado, posição
   // removida) esvaziava a tela enquanto o seletor exibia "Todos" — o filtro
   // mentia sobre o próprio estado, e reselecionar "Todos" nem disparava change.
-  const ensaioFiltro = ensaiosCache.some(e => e.id === session.presencaEnsaioFiltro) ? session.presencaEnsaioFiltro : "todos";
-  const ensaios = ensaioFiltro === "todos" ? ensaiosCache : ensaiosCache.filter(e => e.id === ensaioFiltro);
+  limparFiltroInvalido("presencaEnsaioFiltro", ensaiosCache.map(e => e.id));
+  const ensaios = filtroAtivo("presencaEnsaioFiltro")
+    ? ensaiosCache.filter(e => passaNoFiltro("presencaEnsaioFiltro", e.id))
+    : ensaiosCache;
   // Quem avisou que não vai tocar não vai a ensaio: fora da tabela de presença.
   const todos = vaoTocarNaEdicao();
-  const posicaoFiltro = filtroDePosicaoValido(session.presencaFiltro, todos);
+  limparFiltroInvalido("presencaFiltro", valoresExistentes(todos, p => (p.posicao || "").trim() || SEM_POSICAO));
+  // As duas listas se encadeiam: escolhido um ensaio, o filtro de posição passa
+  // a oferecer só os naipes que têm alguém com presença marcada nele; escolhido
+  // um naipe, a lista de ensaios encolhe do mesmo jeito.
+  const temPresencaNoEnsaio = (p, eid) => !!(presencasCache[p.id] && presencasCache[p.id][eid]);
+  const pessoasParaOpcoes = filtroAtivo("presencaEnsaioFiltro")
+    ? todos.filter(p => ensaios.some(e => temPresencaNoEnsaio(p, e.id)))
+    : todos;
+  const opcPresencaPosicao = [...new Set([
+    ...valoresExistentes(pessoasParaOpcoes, p => (p.posicao || "").trim() || SEM_POSICAO),
+    ...listaDeFiltro("presencaFiltro"),
+  ])].map(v => ({
+    valor: v, rotulo: rotuloDaPosicao(v),
+    qtd: pessoasParaOpcoes.filter(p => ((p.posicao || "").trim() || SEM_POSICAO) === v).length,
+  })).sort((a, b) => a.rotulo.localeCompare(b.rotulo, "pt-BR", { sensitivity: "base" }));
+  const ensaiosParaOpcoes = filtroAtivo("presencaFiltro")
+    ? ensaiosCache.filter(e => todos.some(p => passaNoFiltro("presencaFiltro", (p.posicao || "").trim() || SEM_POSICAO) && temPresencaNoEnsaio(p, e.id)))
+    : ensaiosCache;
+  const opcPresencaEnsaio = [...new Set([...ensaiosParaOpcoes.map(e => e.id), ...listaDeFiltro("presencaEnsaioFiltro")])]
+    .map(id => {
+      const e = ensaiosCache.find(x => x.id === id);
+      return { valor: id, rotulo: e ? ensaioLabel(e) : id, qtd: todos.filter(p => temPresencaNoEnsaio(p, id)).length };
+    });
   const editavel = edicaoEditavel(ed);
 
   return `
@@ -1615,21 +1605,12 @@ function viewBatuqueiro() {
         <div><h2>Presença em ensaios</h2><p class="card-sub" style="margin-bottom:0">${souEditorDePresenca() && editavel ? "Clique em SIM/NÃO para marcar a presença de qualquer batuqueiro em cada ensaio" : "Veja a presença de todos os batuqueiros em cada ensaio"}</p></div>
       </div>
       <div class="filter-row">
-        <div><label>Filtrar por posição</label>
-          <select id="presenca-filtro-posicao">
-            <option value="todas" ${posicaoFiltro === "todas" ? "selected" : ""}>Todas as posições</option>
-            ${posicoesUnicasOrdenadas(todos).map(pos => `<option value="${esc(pos)}" ${posicaoFiltro === pos ? "selected" : ""}>${esc(rotuloDaPosicao(pos))}</option>`).join("")}
-          </select>
-        </div>
-        <div><label>Filtrar por ensaio</label>
-          <select id="presenca-filtro-ensaio">
-            <option value="todos" ${ensaioFiltro === "todos" ? "selected" : ""}>Todos os ensaios</option>
-            ${ensaiosCache.map(e => `<option value="${e.id}" ${ensaioFiltro === e.id ? "selected" : ""}>${ensaioLabel(e)}</option>`).join("")}
-          </select>
-        </div>
+        ${filtroMulti("presencaFiltro", "Filtrar por posição", opcPresencaPosicao, "Todas as posições")}
+        ${filtroMulti("presencaEnsaioFiltro", "Filtrar por ensaio", opcPresencaEnsaio, "Todos os ensaios")}
+        ${(filtroAtivo("presencaFiltro") || filtroAtivo("presencaEnsaioFiltro")) ? `<div class="multi"><label>&nbsp;</label><button class="btn-ghost btn-sm" id="presenca-limpar-filtros">Limpar filtros</button></div>` : ""}
       </div>
       ${ensaiosCache.length === 0 ? `<div class="hint">Nenhum ensaio cadastrado ainda.</div>` : (() => {
-        const pessoasFiltradas = todos.filter(p => posicaoFiltro === "todas" || pessoaNaPosicao(p, posicaoFiltro));
+        const pessoasFiltradas = todos.filter(p => passaNoFiltro("presencaFiltro", (p.posicao || "").trim() || SEM_POSICAO));
         return `
       <div class="table-scroll">
         <table>
@@ -1671,27 +1652,50 @@ function viewBatuqueiro() {
       const todasLinhas = linhasDoRepertorio(musicasPublicadas());
       if (!todasLinhas.length) return "";
 
-      const tonsDisponiveis = [...new Set(todasLinhas.map(l => l.tom).filter(Boolean))].sort((a, b) => a.localeCompare(b, "pt-BR", { sensitivity: "base" }));
-      const cantoresDisponiveis = [...new Set(todasLinhas.map(l => l.cantor).filter(Boolean))].sort((a, b) => a.localeCompare(b, "pt-BR", { sensitivity: "base" }));
-      const ensaiosDisponiveis = ensaiosCache.filter(e => todasLinhas.some(l => l.ensaios.includes(e.id)));
-
-      const fSet = filtroValido("repFiltroSet", SETS_DO_CARNAVAL.map(String));
-      const fTom = filtroValido("repFiltroTom", [...tonsDisponiveis, "sem"]);
-      const fCantor = filtroValido("repFiltroCantor", [...cantoresDisponiveis, "sem"]);
-      const fEnsaio = filtroValido("repFiltroEnsaio", [...ensaiosDisponiveis.map(e => e.id), "nenhum"]);
       const busca = (session.repBusca || "").trim().toLowerCase();
       const ordCol = COLUNAS_REPERTORIO[session.repOrdemCol] ? session.repOrdemCol : "";
       const ordDir = session.repOrdemDir === "desc" ? "desc" : "asc";
 
-      const linhas = ordenarLinhasRepertorio(todasLinhas.filter(l =>
-        (fSet === "todas" || String(l.set) === fSet) &&
-        (fTom === "todas" || (fTom === "sem" ? !l.tom : l.tom === fTom)) &&
-        (fCantor === "todas" || (fCantor === "sem" ? !l.cantor : l.cantor === fCantor)) &&
-        (fEnsaio === "todas" || (fEnsaio === "nenhum" ? !l.ensaios.length : l.ensaios.includes(fEnsaio))) &&
-        (!busca || l.nome.toLowerCase().includes(busca))
-      ), ordCol, ordDir);
+      // Cada filtro diz qual valor da linha ele olha. "sem" e "nenhum" são
+      // valores de verdade aqui (sem tom definido, ainda não ensaiada), por isso
+      // entram como opção normal em vez de caso especial.
+      const filtrosRep = [
+        { chave: "repFiltroSet", campos: l => String(l.set) },
+        { chave: "repFiltroTom", campos: l => l.tom || "sem" },
+        { chave: "repFiltroCantor", campos: l => l.cantor || "sem" },
+        { chave: "repFiltroEnsaio", campos: l => (l.ensaios.length ? l.ensaios : ["nenhum"]) },
+      ];
+      const porBusca = todasLinhas.filter(l => !busca || l.nome.toLowerCase().includes(busca));
+      const ordenarRotulos = lista => lista.sort((a, b) => a.rotulo.localeCompare(b.rotulo, "pt-BR", { sensitivity: "base" }));
+      const contar = (base, campos, valor) => base.filter(l => {
+        const v = campos(l);
+        return (Array.isArray(v) ? v : [v]).includes(valor);
+      }).length;
+      const opcoesDe = (chave, rotuloDe, ordenar = true) => {
+        const alvo = filtrosRep.find(f => f.chave === chave);
+        const base = porBusca.filter(l => filtrosRep.every(f => f.chave === chave || passaNoFiltro(f.chave, f.campos(l))));
+        // Valida contra a lista INTEIRA, não contra o que a busca deixou: digitar
+        // na busca não pode apagar o filtro escolhido.
+        limparFiltroInvalido(chave, valoresExistentes(todasLinhas, alvo.campos));
+        const valores = opcoesEncadeadas(porBusca, filtrosRep, chave);
+        const lista = valores.map(v => ({ valor: v, rotulo: rotuloDe(v), qtd: contar(base, alvo.campos, v) }));
+        return ordenar ? ordenarRotulos(lista) : lista;
+      };
+      const nomeDoEnsaio = id => {
+        if (id === "nenhum") return "Ainda não ensaiada";
+        const e = ensaiosCache.find(x => x.id === id);
+        return e ? ensaioLabel(e) : id;
+      };
+      const opcSet = opcoesDe("repFiltroSet", v => `Set ${v}`, false).sort((a, b) => Number(a.valor) - Number(b.valor));
+      const opcTom = opcoesDe("repFiltroTom", v => (v === "sem" ? "Sem tom definido" : v));
+      const opcCantor = opcoesDe("repFiltroCantor", v => (v === "sem" ? "Sem cantor(a) definido" : v));
+      const opcEnsaio = opcoesDe("repFiltroEnsaio", nomeDoEnsaio);
 
-      const filtrando = fSet !== "todas" || fTom !== "todas" || fCantor !== "todas" || fEnsaio !== "todas" || !!busca;
+      const linhas = ordenarLinhasRepertorio(
+        porBusca.filter(l => filtrosRep.every(f => passaNoFiltro(f.chave, f.campos(l)))),
+        ordCol, ordDir);
+
+      const filtrando = filtrosRep.some(f => filtroAtivo(f.chave)) || !!busca;
       const seta = col => ordCol === col ? (ordDir === "asc" ? " \u2191" : " \u2193") : "";
       const th = (col, rotulo, classe) =>
         `<th class="${classe || ""} ord" data-ord-rep="${col}" title="Clique para ordenar por ${rotulo.toLowerCase()}" aria-sort="${ordCol === col ? (ordDir === "asc" ? "ascending" : "descending") : "none"}">${rotulo}${seta(col)}</th>`;
@@ -1707,33 +1711,10 @@ function viewBatuqueiro() {
           <label>Buscar música</label>
           <input type="text" id="rep-busca" value="${esc(session.repBusca || "")}" placeholder="Digite parte do nome">
         </div>
-        <div><label>Set</label>
-          <select id="rep-filtro-set">
-            <option value="todas">Os dois</option>
-            ${SETS_DO_CARNAVAL.map(st => `<option value="${st}" ${fSet === String(st) ? "selected" : ""}>Set ${st}</option>`).join("")}
-          </select>
-        </div>
-        <div><label>Tom</label>
-          <select id="rep-filtro-tom">
-            <option value="todas">Todos</option>
-            ${tonsDisponiveis.map(t => `<option value="${esc(t)}" ${fTom === t ? "selected" : ""}>${esc(t)}</option>`).join("")}
-            <option value="sem" ${fTom === "sem" ? "selected" : ""}>Sem tom definido</option>
-          </select>
-        </div>
-        <div><label>Cantor(a)</label>
-          <select id="rep-filtro-cantor">
-            <option value="todas">Todos</option>
-            ${cantoresDisponiveis.map(c => `<option value="${esc(c)}" ${fCantor === c ? "selected" : ""}>${esc(c)}</option>`).join("")}
-            <option value="sem" ${fCantor === "sem" ? "selected" : ""}>Sem cantor(a) definido</option>
-          </select>
-        </div>
-        <div><label>Ensaiada em</label>
-          <select id="rep-filtro-ensaio">
-            <option value="todas">Qualquer ensaio</option>
-            ${ensaiosDisponiveis.map(e => `<option value="${esc(e.id)}" ${fEnsaio === e.id ? "selected" : ""}>${ensaioLabel(e)}</option>`).join("")}
-            <option value="nenhum" ${fEnsaio === "nenhum" ? "selected" : ""}>Ainda não ensaiada</option>
-          </select>
-        </div>
+        ${filtroMulti("repFiltroSet", "Set", opcSet, "Os dois")}
+        ${filtroMulti("repFiltroTom", "Tom", opcTom, "Todos")}
+        ${filtroMulti("repFiltroCantor", "Cantor(a)", opcCantor, "Todos")}
+        ${filtroMulti("repFiltroEnsaio", "Ensaiada em", opcEnsaio, "Qualquer ensaio")}
         ${(filtrando || ordCol) ? `<div><label>&nbsp;</label><button class="btn-ghost btn-sm" id="rep-limpar">Limpar e voltar à ordem dos sets</button></div>` : ""}
       </div>
 
@@ -1778,18 +1759,106 @@ function viewBatuqueiro() {
    a exibir "Todos" e a tabela continuava filtrada por um valor invisível, sem
    jeito de desfazer.
    ------------------------------------------------------------ */
+/* ------------------------------------------------------------
+   Filtros de múltipla escolha, com opções encadeadas
+   ------------------------------------------------------------
+   Todo filtro do site guarda uma LISTA de valores escolhidos. Lista vazia quer
+   dizer "todos" — é o estado inicial e o que o botão Limpar devolve.
+
+   As opções de cada filtro são calculadas sobre os dados já filtrados pelos
+   OUTROS filtros. Assim, escolher um naipe faz o filtro de ensaio passar a
+   oferecer só os ensaios em que aquele naipe aparece, em vez de oferecer
+   combinações que não têm nenhuma linha. O valor que já está escolhido entra na
+   lista de qualquer jeito, senão não haveria como desmarcá-lo.
+   ------------------------------------------------------------ */
+function listaDeFiltro(chave) {
+  const v = session[chave];
+  if (Array.isArray(v)) return v;
+  // Tolera o formato antigo (um valor só) para a troca não quebrar uma sessão
+  // que já estava aberta.
+  return v && v !== "todas" && v !== "todos" ? [v] : [];
+}
+function filtroAtivo(chave) { return listaDeFiltro(chave).length > 0; }
+function passaNoFiltro(chave, valores) {
+  const escolhidos = listaDeFiltro(chave);
+  if (!escolhidos.length) return true;
+  const lista = Array.isArray(valores) ? valores : [valores];
+  return lista.some(v => escolhidos.includes(v));
+}
+/* Opções de um filtro: os valores que sobrevivem aos outros filtros, mais o que
+   já está escolhido. `campos` devolve, para cada item, o(s) valor(es) dele. */
+function opcoesEncadeadas(itens, filtros, chave) {
+  const outros = filtros.filter(f => f.chave !== chave);
+  const sobrevivem = itens.filter(item => outros.every(f => passaNoFiltro(f.chave, f.campos(item))));
+  const alvo = filtros.find(f => f.chave === chave);
+  const vistos = new Set();
+  sobrevivem.forEach(item => {
+    const v = alvo.campos(item);
+    (Array.isArray(v) ? v : [v]).forEach(x => { if (x !== null && x !== undefined && x !== "") vistos.add(x); });
+  });
+  listaDeFiltro(chave).forEach(x => vistos.add(x));
+  return [...vistos];
+}
+/* Todos os valores que existem de verdade na lista, sem considerar escolha
+   nenhuma. É o universo usado para validar o que está marcado — separado de
+   opcoesEncadeadas, que inclui de propósito o valor já escolhido para ele poder
+   ser desmarcado. Misturar os dois fazia a validação se aprovar sozinha. */
+function valoresExistentes(itens, campos) {
+  const vistos = new Set();
+  itens.forEach(item => {
+    const v = campos(item);
+    (Array.isArray(v) ? v : [v]).forEach(x => { if (x !== null && x !== undefined && x !== "") vistos.add(x); });
+  });
+  return [...vistos];
+}
+
+/* Tira da escolha o que não existe mais. Devolve true se mexeu — o chamador usa
+   isso para não deixar um filtro morto continuar escondendo linhas. */
+function limparFiltroInvalido(chave, opcoesValidas) {
+  const antes = listaDeFiltro(chave);
+  const depois = antes.filter(v => opcoesValidas.includes(v));
+  if (antes.length === depois.length) { session[chave] = antes; return false; }
+  session[chave] = depois;
+  return true;
+}
+function resumoDoFiltro(chave, opcoes, rotuloVazio) {
+  const escolhidos = listaDeFiltro(chave);
+  if (!escolhidos.length) return rotuloVazio;
+  if (escolhidos.length === 1) {
+    const achou = opcoes.find(o => o.valor === escolhidos[0]);
+    return achou ? achou.rotulo : escolhidos[0];
+  }
+  return `${escolhidos.length} selecionados`;
+}
+/* O seletor em si. É um botão que abre uma caixa de caixas-de-seleção: o
+   <select multiple> nativo exige ctrl+clique no computador e é praticamente
+   inutilizável no celular, que é por onde a bateria usa o site. */
+function filtroMulti(chave, rotulo, opcoes, rotuloVazio) {
+  const escolhidos = listaDeFiltro(chave);
+  const aberto = session.multiAberto === chave;
+  return `
+    <div class="multi" data-multi="${esc(chave)}">
+      <label>${esc(rotulo)}</label>
+      <button type="button" class="multi-btn${escolhidos.length ? " tem-escolha" : ""}" data-abrir-multi="${esc(chave)}" aria-expanded="${aberto}" aria-haspopup="true">
+        <span>${esc(resumoDoFiltro(chave, opcoes, rotuloVazio))}</span><span class="multi-seta">${aberto ? "\u25B4" : "\u25BE"}</span>
+      </button>
+      ${aberto ? `
+      <div class="multi-pop">
+        ${opcoes.length === 0 ? `<p class="hint" style="margin:4px 8px;">Nenhuma opção com os outros filtros.</p>` : opcoes.map(o => `
+          <label class="multi-item">
+            <input type="checkbox" class="multi-opt" data-multi-chave="${esc(chave)}" data-valor="${esc(o.valor)}" ${escolhidos.includes(o.valor) ? "checked" : ""}>
+            <span>${esc(o.rotulo)}</span>${o.qtd === undefined ? "" : `<span class="multi-qtd">${o.qtd}</span>`}
+          </label>`).join("")}
+        <div class="multi-rodape">
+          <button type="button" class="btn-ghost btn-sm" data-limpar-multi="${esc(chave)}" ${escolhidos.length ? "" : "disabled"}>Limpar</button>
+          <button type="button" class="btn-secondary btn-sm" data-fechar-multi="1">Fechar</button>
+        </div>
+      </div>` : ""}
+    </div>`;
+}
+
 function opcaoValida(valor, opcoes) {
   return valor && opcoes.includes(valor) ? valor : "todas";
-}
-/* Além de devolver o valor bom para desenhar, apaga da sessão a escolha que não
-   existe mais. Sem isso o filtro morto ficava guardado e RESSUSCITAVA: a opção
-   voltava a existir (o admin remarcou aquela música naquele ensaio) e a tabela
-   encolhia sozinha, com o seletor saltando de "Qualquer ensaio" para uma data
-   que ninguém escolheu de novo. */
-function filtroValido(chave, opcoes) {
-  const bom = opcaoValida(session[chave], opcoes);
-  if (session[chave] !== bom) session[chave] = bom;
-  return bom;
 }
 /* Uma linha da tabela já com tudo que ordena e filtra resolvido. A posição no
    set é calculada aqui, na ordem de execução, e segue com a linha quando a
@@ -1846,6 +1915,33 @@ function bannerEdicao(ed) {
   </div>`;
 }
 
+/* A chave Pix é a informação mais procurada da tela — é com ela que a pessoa
+   paga. Ficava só no trecho de quem JÁ escolheu a forma de pagamento, então
+   quem ainda estava escolhendo não via chave nenhuma; e quando a organização
+   não tinha cadastrado a chave, a área inteira sumia em silêncio, sem nada
+   dizer que faltava cadastrar. Agora aparece em todos os estados de quem paga,
+   e a falta é dita em voz alta. */
+function blocoPix() {
+  const chave = chavePixDaEdicao();
+  if (!chave) {
+    return `<div class="pix-box pix-box-vazio">
+      <div>
+        <div class="hint">Chave Pix da bateria</div>
+        <div class="muted-sm">A organização ainda não cadastrou a chave deste carnaval. Fale com ela para combinar o pagamento.</div>
+      </div>
+    </div>`;
+  }
+  return `
+    <div class="pix-box">
+      <div>
+        <div class="hint">Chave Pix da bateria</div>
+        <div class="pix-chave">${esc(chave)}</div>
+      </div>
+      <button class="btn-secondary btn-sm" id="btn-copiar-pix">Copiar</button>
+    </div>
+    <p class="hint">Faça o pix por aqui e depois registre o pagamento abaixo — só entra na sua conta o que for registrado.</p>`;
+}
+
 function renderPaymentBoxBody(u, editavel = true) {
   if (isIsento(u)) {
     // Se a pessoa já tinha pago algo antes de ficar isenta (por exemplo, pagou e
@@ -1867,7 +1963,8 @@ function renderPaymentBoxBody(u, editavel = true) {
     <p class="hint">Como você está isento(a), esse valor não é mais cobrado. Fale com a organização para combinar a devolução ou o crédito.</p>` : ""}`;
   }
   if (!precosCache) {
-    return `<div class="hint">O organizador ainda não configurou os valores da anuidade. Volte em breve.</div>`;
+    return `<div class="hint">O organizador ainda não configurou os valores da anuidade. Volte em breve.</div>
+    ${blocoPix()}`;
   }
   if (!planoValido(u.formaPagamento)) {
     if (!editavel) return `<div class="hint">Nenhuma forma de pagamento foi escolhida neste carnaval.</div>`;
@@ -1879,7 +1976,8 @@ function renderPaymentBoxBody(u, editavel = true) {
           <div class="muted-sm">${currency(valorDoPlano(k))}${PLANOS[k].parcelas > 1 ? ` (${PLANOS[k].parcelas}x de ${currency(valorDoPlano(k) / PLANOS[k].parcelas)})` : ""}</div>
           <div class="muted-sm">${prazosDoPlano(k).map((d, i) => `${PLANOS[k].parcelas > 1 ? `${i + 1}ª: ` : ""}até ${dateBR(d)}`).join(" · ")}</div>
         </div>`).join("")}
-      </div>`;
+      </div>
+      ${blocoPix()}`;
   }
   const meta = totalDevido(u);
   const pago = totalPago(u);
@@ -1915,15 +2013,7 @@ function renderPaymentBoxBody(u, editavel = true) {
     </div>
     ${myPagamentos.length && editavel ? `<p class="hint">Lançou errado? Remova e registre de novo — o valor sai da sua conta na hora. Um lançamento não pode ser editado: some e entra outro no lugar, para não mudar um registro por baixo.</p>` : ""}
 
-    ${chavePixDaEdicao() ? `
-    <div class="pix-box">
-      <div>
-        <div class="hint">Chave Pix da bateria</div>
-        <div class="pix-chave">${esc(chavePixDaEdicao())}</div>
-      </div>
-      <button class="btn-secondary btn-sm" id="btn-copiar-pix">Copiar</button>
-    </div>
-    <p class="hint">Faça o pix por aqui e depois registre o pagamento abaixo — só entra na sua conta o que for registrado.</p>` : ""}
+    ${blocoPix()}
 
     ${editavel ? `
     <div style="display:flex; gap:8px; margin-top:14px; flex-wrap:wrap;">
@@ -2544,6 +2634,7 @@ function viewAdmin() {
           <div><h2>Valores e prazos da anuidade</h2><p class="card-sub" style="margin-bottom:0">${precosCache ? `À vista ${currency(valorDoPlano("avista"))} · 2x ${currency(valorDoPlano("duasVezes"))} · 3x ${currency(valorDoPlano("tresVezes"))}` : "Ainda não configurado"}</p></div>
           <button class="btn-secondary btn-sm" id="btn-goto-precos">Editar valores e prazos</button>
         </div>
+        ${edicaoEditavel(ed) && !chavePixDaEdicao() ? `<p class="hint" style="color:var(--critical); margin-top:10px;"><b>A chave Pix deste carnaval não está cadastrada.</b> Sem ela, a área de pagamento do batuqueiro não tem para onde mandar o dinheiro. Preencha em "Editar valores e prazos".</p>` : ""}
       </div>
     </div>
 
@@ -3326,19 +3417,41 @@ function viewAdminRelatorio() {
   // no caixa e alguém precisa decidir se devolve ou credita. Some da lista de
   // cobrança e reaparece embaixo, só quem tem valor pago.
   const aDevolver = naoVaoTocarNaEdicao().filter(p => totalPago(p) > 0);
-  const posicaoFiltro = filtroDePosicaoValido(session.relatorioFiltroPosicao, todos);
   // Quem não escolheu plano não entra na soma de saldo: não dá para saber quanto
   // deve, e somar zero faria o rodapé dizer que não falta entrar nada.
-  const filtroPago = faixaValida(session.relatorioFiltroPago, todos.map(totalPago));
-  const filtroSaldo = faixaValida(session.relatorioFiltroSaldo, todos.map(saldoEmAberto));
-  const filtrados = todos.filter(p => {
-    const st = paymentStatus(p).label;
-    const okStatus = !session.relatorioFiltroStatus || session.relatorioFiltroStatus === "todos" || st === session.relatorioFiltroStatus;
-    const okPos = posicaoFiltro === "todas" || pessoaNaPosicao(p, posicaoFiltro);
-    const okPago = valorNaFaixa(totalPago(p), filtroPago);
-    const okSaldo = valorNaFaixa(saldoEmAberto(p), filtroSaldo);
-    return okStatus && okPos && okPago && okSaldo;
-  });
+  const faixasPago = faixasDeValor(todos.map(totalPago));
+  const faixasSaldo = faixasDeValor(todos.map(saldoEmAberto));
+  const chaveDaFaixa = (valor, faixas) => {
+    if (valor === null || valor === undefined) return "";
+    if (valor === 0) return "zero";
+    const f = faixas.find(x => valor > x.min && valor <= x.max);
+    return f ? f.chave : "";
+  };
+  const filtrosRel = [
+    { chave: "relatorioFiltroStatus", campos: p => paymentStatus(p).label },
+    { chave: "relatorioFiltroPosicao", campos: p => (p.posicao || "").trim() || SEM_POSICAO },
+    { chave: "relatorioFiltroPago", campos: p => chaveDaFaixa(totalPago(p), faixasPago) },
+    { chave: "relatorioFiltroSaldo", campos: p => chaveDaFaixa(saldoEmAberto(p), faixasSaldo) },
+  ];
+  const opcoesRel = (chave, rotuloDe, ordenador) => {
+    const alvo = filtrosRel.find(f => f.chave === chave);
+    limparFiltroInvalido(chave, valoresExistentes(todos, alvo.campos));
+    const base = todos.filter(p => filtrosRel.every(f => f.chave === chave || passaNoFiltro(f.chave, f.campos(p))));
+    const lista = opcoesEncadeadas(todos, filtrosRel, chave)
+      .map(v => ({ valor: v, rotulo: rotuloDe(v), qtd: base.filter(p => alvo.campos(p) === v).length }));
+    return ordenador ? lista.sort(ordenador) : lista.sort((a, b) => a.rotulo.localeCompare(b.rotulo, "pt-BR", { sensitivity: "base" }));
+  };
+  const rotuloDaFaixaPorChave = (chave, faixas, rotuloZero) => {
+    if (chave === "zero") return rotuloZero;
+    const f = faixas.find(x => x.chave === chave);
+    return f ? rotuloDaFaixa(f) : chave;
+  };
+  const ordemDeFaixa = (a, b) => (a.valor === "zero" ? -1 : b.valor === "zero" ? 1 : Number(a.valor.split("-")[0]) - Number(b.valor.split("-")[0]));
+  const opcStatus = opcoesRel("relatorioFiltroStatus", v => v, (a, b) => STATUS_ORDEM.indexOf(a.valor) - STATUS_ORDEM.indexOf(b.valor));
+  const opcPosicao = opcoesRel("relatorioFiltroPosicao", rotuloDaPosicao);
+  const opcPago = opcoesRel("relatorioFiltroPago", v => rotuloDaFaixaPorChave(v, faixasPago, "Não pagou nada"), ordemDeFaixa);
+  const opcSaldo = opcoesRel("relatorioFiltroSaldo", v => rotuloDaFaixaPorChave(v, faixasSaldo, "Não deve nada"), ordemDeFaixa);
+  const filtrados = todos.filter(p => filtrosRel.every(f => passaNoFiltro(f.chave, f.campos(p))));
   const semSaldoConhecido = filtrados.filter(p => saldoEmAberto(p) === null).length;
   return `
   ${headerBar(u)}
@@ -3349,20 +3462,11 @@ function viewAdminRelatorio() {
       <h2>Relatório geral de pagamentos — ${esc(edicaoLabel(ed))}</h2>
       <p class="card-sub">Visão completa — só o organizador vê os pagamentos de todos</p>
       <div class="filter-row">
-        <div><label>Status</label>
-          <select id="relatorio-filtro-status">
-            <option value="todos" ${(session.relatorioFiltroStatus || "todos") === "todos" ? "selected" : ""}>Todos os status</option>
-            ${STATUS_ORDEM.map(s => `<option value="${s}" ${session.relatorioFiltroStatus === s ? "selected" : ""}>${s}</option>`).join("")}
-          </select>
-        </div>
-        <div><label>Posição</label>
-          <select id="relatorio-filtro-posicao">
-            <option value="todas" ${posicaoFiltro === "todas" ? "selected" : ""}>Todas as posições</option>
-            ${posicoesUnicasOrdenadas(todos).map(pos => `<option value="${esc(pos)}" ${posicaoFiltro === pos ? "selected" : ""}>${esc(rotuloDaPosicao(pos))}</option>`).join("")}
-          </select>
-        </div>
-        ${selectDeFaixa("relatorio-filtro-pago", "Pago", filtroPago, todos.map(totalPago), "Não pagou nada")}
-        ${selectDeFaixa("relatorio-filtro-saldo", "Saldo", filtroSaldo, todos.map(saldoEmAberto), "Não deve nada")}
+        ${filtroMulti("relatorioFiltroStatus", "Status", opcStatus, "Todos os status")}
+        ${filtroMulti("relatorioFiltroPosicao", "Posição", opcPosicao, "Todas as posições")}
+        ${filtroMulti("relatorioFiltroPago", "Pago", opcPago, "Qualquer valor")}
+        ${filtroMulti("relatorioFiltroSaldo", "Saldo", opcSaldo, "Qualquer valor")}
+        ${filtrosRel.some(f => filtroAtivo(f.chave)) ? `<div class="multi"><label>&nbsp;</label><button class="btn-ghost btn-sm" id="relatorio-limpar-filtros">Limpar filtros</button></div>` : ""}
       </div>
       <div class="table-scroll">
         <table>
@@ -3865,11 +3969,14 @@ function viewAdminPessoas() {
   const u = perfilMesclado();
   const ed = edicaoCtx();
   const editavel = edicaoEditavel(ed);
-  const filtro = filtroDePosicaoValido(session.adminPessoasFiltro, vaoTocarNaEdicao());
   const todos = vaoTocarNaEdicao();
   const foraDesteCarnaval = naoVaoTocarNaEdicao();
-  const posicoesPresentes = posicoesUnicasOrdenadas(todos);
-  const lista = filtro === "todas" ? todos : todos.filter(p => pessoaNaPosicao(p, filtro));
+  const posicaoDe = p => (p.posicao || "").trim() || SEM_POSICAO;
+  limparFiltroInvalido("adminPessoasFiltro", valoresExistentes(todos, posicaoDe));
+  const opcCadastros = [...new Set([...valoresExistentes(todos, posicaoDe), ...listaDeFiltro("adminPessoasFiltro")])]
+    .map(v => ({ valor: v, rotulo: rotuloDaPosicao(v), qtd: todos.filter(p => posicaoDe(p) === v).length }))
+    .sort((a, b) => a.rotulo.localeCompare(b.rotulo, "pt-BR", { sensitivity: "base" }));
+  const lista = todos.filter(p => passaNoFiltro("adminPessoasFiltro", posicaoDe(p)));
   const naoInscritos = pessoasCache.filter(p => !inscricoesCache.some(i => i.id === p.id));
   return `
   ${headerBar(u)}
@@ -3883,10 +3990,7 @@ function viewAdminPessoas() {
           <button class="btn-secondary btn-sm" id="btn-exportar-xlsx">Baixar Excel (.xlsx)</button>
           <button class="btn-ghost btn-sm" id="btn-exportar-csv">Baixar CSV</button>
         </div>
-        <select id="admin-pessoas-filtro" style="width:auto;">
-          <option value="todas" ${filtro === "todas" ? "selected" : ""}>Todas as posições</option>
-          ${posicoesPresentes.map(p => `<option value="${esc(p)}" ${filtro === p ? "selected" : ""}>${esc(rotuloDaPosicao(p))}</option>`).join("")}
-        </select>
+        ${filtroMulti("adminPessoasFiltro", "Posição", opcCadastros, "Todas as posições")}
       </div>
       ${lista.length === 0 ? '<div class="hint">Nenhuma pessoa encontrada com esse filtro.</div>' : lista.map(p => `
         <div class="list-row">
@@ -4495,13 +4599,15 @@ function wireEvents() {
     atualizarRodapesHistorico();
   });
   on("#btn-voltar-edicao-aberta", "click", () => { const a = edicaoAberta(); if (a) trocarEdicaoCtx(a.id); });
-  on("#admin-pessoas-filtro", "change", e => { session.adminPessoasFiltro = e.target.value; render(); });
+
   on("#btn-exportar-csv", "click", exportarCSV);
   on("#btn-exportar-xlsx", "click", exportarXLSX);
-  on("#relatorio-filtro-status", "change", e => { session.relatorioFiltroStatus = e.target.value; render(); });
-  on("#relatorio-filtro-posicao", "change", e => { session.relatorioFiltroPosicao = e.target.value; render(); });
-  on("#relatorio-filtro-pago", "change", e => { session.relatorioFiltroPago = e.target.value; render(); });
-  on("#relatorio-filtro-saldo", "change", e => { session.relatorioFiltroSaldo = e.target.value; render(); });
+  on("#relatorio-limpar-filtros", "click", () => {
+    session.relatorioFiltroStatus = []; session.relatorioFiltroPosicao = [];
+    session.relatorioFiltroPago = []; session.relatorioFiltroSaldo = [];
+    session.multiAberto = null;
+    render();
+  });
   on("#admin-troca-edicao", "change", e => trocarEdicaoCtx(e.target.value));
 
   // HISTÓRICO
@@ -4785,8 +4891,10 @@ function wireEvents() {
     render();
   });
 
-  on("#presenca-filtro-posicao", "change", e => { session.presencaFiltro = e.target.value; render(); });
-  on("#presenca-filtro-ensaio", "change", e => { session.presencaEnsaioFiltro = e.target.value; render(); });
+  on("#presenca-limpar-filtros", "click", () => {
+    session.presencaFiltro = []; session.presencaEnsaioFiltro = []; session.multiAberto = null;
+    render();
+  });
 
   // BATUQUEIRO — presença (só quem tem acesso — admin ou presencaAccess — pode alterar; os
   // demais só veem a tabela, o próprio HTML nem gera o toggle clicável para eles, mas o
@@ -4917,11 +5025,26 @@ function wireEvents() {
   on("#rep-sugestao-filtro", "input", e => { session.repSugestaoFiltro = e.target.value; renderExterno(); });
 
   // Repertório do batuqueiro: ordenar por coluna e filtrar por valor.
+  // Filtros de múltipla escolha (todas as telas usam os mesmos handlers).
+  onAll("[data-abrir-multi]", "click", el => {
+    const chave = el.dataset.abrirMulti;
+    session.multiAberto = session.multiAberto === chave ? null : chave;
+    renderExterno();
+  });
+  onAll("[data-fechar-multi]", "click", () => { session.multiAberto = null; renderExterno(); });
+  onAll(".multi-opt", "change", el => {
+    const chave = el.dataset.multiChave, valor = el.dataset.valor;
+    const atual = new Set(listaDeFiltro(chave));
+    if (el.checked) atual.add(valor); else atual.delete(valor);
+    session[chave] = [...atual];
+    renderExterno();
+  });
+  onAll("[data-limpar-multi]", "click", el => {
+    session[el.dataset.limparMulti] = [];
+    renderExterno();
+  });
+
   on("#rep-busca", "input", e => { session.repBusca = e.target.value; renderExterno(); });
-  on("#rep-filtro-set", "change", e => { session.repFiltroSet = e.target.value; render(); });
-  on("#rep-filtro-tom", "change", e => { session.repFiltroTom = e.target.value; render(); });
-  on("#rep-filtro-cantor", "change", e => { session.repFiltroCantor = e.target.value; render(); });
-  on("#rep-filtro-ensaio", "change", e => { session.repFiltroEnsaio = e.target.value; render(); });
   onAll("[data-ord-rep]", "click", el => {
     const col = el.dataset.ordRep;
     // Terceiro clique na mesma coluna devolve a ordem dos sets: sem isso, só
@@ -4932,9 +5055,10 @@ function wireEvents() {
     render();
   });
   on("#rep-limpar", "click", () => {
-    session.repBusca = ""; session.repFiltroSet = "todas"; session.repFiltroTom = "todas";
-    session.repFiltroCantor = "todas"; session.repFiltroEnsaio = "todas";
+    session.repBusca = ""; session.repFiltroSet = []; session.repFiltroTom = [];
+    session.repFiltroCantor = []; session.repFiltroEnsaio = [];
     session.repOrdemCol = ""; session.repOrdemDir = "asc";
+    session.multiAberto = null;
     render();
   });
 
