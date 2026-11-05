@@ -312,7 +312,17 @@ A avaliação é automática, mas não é a palavra final: **clicar na caixinha 
 
 > A música é reconhecida **pelo nome**, igual ao resto do histórico — maiúsculas, acentos e espaço a mais não contam. Nome escrito diferente do que está no arquivo é avaliado como música nova; é para esses casos que serve a edição à mão. Mudar a classificação à mão não mexe no histórico nem no arquivo: muda só o rótulo daquela música naquele carnaval.
 
-O filtro **"Nova no bloco?"**, acima das tabelas, separa as duas situações — serve para conferir quantas novidades o repertório tem antes de fechar. Enquanto algum filtro está aplicado, **as setas e o campo de posição ficam desligados**: numa tabela que esconde linhas, subir uma música uma posição significaria coisas diferentes do que está na tela. Um botão **"Limpar filtro"** aparece ao lado do filtro; com a tabela inteira à vista, a ordenação volta.
+**Dá para filtrar o repertório enquanto monto?** Dá: acima das duas tabelas há **um filtro para cada coluna**, no mesmo formato do resto do site — cada um aceita mais de uma opção, e ao lado de cada opção aparece quantas músicas ela tem.
+
+- **Buscar música** acha pelo nome, sem percorrer a lista.
+- **Set** mostra só um dos dois sets.
+- **Nova no bloco?** separa o que é novidade do que a bateria já tocou — serve para conferir quantas músicas novas o repertório tem antes de fechar.
+- **Tom** e **Cantor(a)** filtram por valor, e têm as opções "Sem tom definido" e "Sem cantor(a) definido" para achar o que ainda falta preencher.
+- **Situação** separa o que já foi publicado do que ainda está em rascunho.
+
+As opções de cada filtro são calculadas sobre o que os outros já deixaram passar: escolhido o Set 2, o filtro de Cantor(a) passa a oferecer só quem canta no set 2, em vez de oferecer combinações sem nenhuma música. Tom e Cantor(a) olham o texto que está na tela, inclusive o que você acabou de digitar e ainda não salvou.
+
+> Enquanto algum filtro (ou a busca) está ligado, **as setas e o campo de posição ficam desligados**: numa tabela que esconde linhas, subir uma música uma posição significaria coisa diferente do que está na tela. O número de cada música continua sendo a posição dela no set inteiro, e o título de cada set mostra quantas músicas passaram no filtro e quantas o set tem. Um botão **"Limpar filtros"** devolve a tabela inteira, com a ordenação de volta.
 
 **Dá para ver quantas músicas cada cantor(a) canta?** No fim da tela de Repertório há a tabela **"Músicas por cantor(a)"**: uma linha por pessoa, quantas músicas são dela e quais. Quem canta mais aparece primeiro, e as músicas que ainda não têm cantor(a) definido entram agrupadas em **"Sem cantor(a) definido"** — é o jeito rápido de ver o que falta decidir e se o repertório não está pesado demais para uma voz só. A tabela conta o repertório deste carnaval, rascunhos incluídos.
 

@@ -168,7 +168,12 @@ const session = {
   repHistOrdem: "alfabetica",
   repSugestaoFiltro: "",
   setDestino: 1,
+  repAdminBusca: "",
+  repAdminFiltroSet: [],
   repAdminFiltroNova: [],
+  repAdminFiltroTom: [],
+  repAdminFiltroCantor: [],
+  repAdminFiltroStatus: [],
   repBusca: "",
   repFiltroSet: [],
   repFiltroTom: [],
@@ -471,7 +476,12 @@ function limparEstadoDeSessao() {
   repHistOrdem: "alfabetica",
   repSugestaoFiltro: "",
   setDestino: 1,
+  repAdminBusca: "",
+  repAdminFiltroSet: [],
   repAdminFiltroNova: [],
+  repAdminFiltroTom: [],
+  repAdminFiltroCantor: [],
+  repAdminFiltroStatus: [],
   repBusca: "",
   repFiltroSet: [],
   repFiltroTom: [],
@@ -647,7 +657,9 @@ function limparEstadoDaEdicao() {
   // cantor(a) mudam de um carnaval para o outro.
   session.repBusca = ""; session.repFiltroSet = []; session.repFiltroTom = [];
   session.repFiltroCantor = []; session.repFiltroEnsaio = [];
-  session.repFiltroNova = []; session.repFiltroQtdEnsaios = []; session.repAdminFiltroNova = [];
+  session.repFiltroNova = []; session.repFiltroQtdEnsaios = [];
+  session.repAdminBusca = ""; session.repAdminFiltroSet = []; session.repAdminFiltroNova = [];
+  session.repAdminFiltroTom = []; session.repAdminFiltroCantor = []; session.repAdminFiltroStatus = [];
   session.repOrdemCol = ""; session.repOrdemDir = "asc"; session.multiAberto = null;
   // O pré-preenchimento da inscrição é de UM carnaval. Sem zerar aqui, a troca
   // automática de edição levava as escolhas feitas para o carnaval anterior
@@ -3779,20 +3791,42 @@ function viewAdminMusicas() {
   const draft = session.musicasDraft || [];
   const setDestino = Number(session.setDestino) === 2 ? 2 : 1;
   const emRascunho = draft.filter(m => m.rascunho);
-  // Filtro de novidade: quem está montando o repertório quer olhar só o que é
-  // novo (para ensaiar mais) ou só o que já é de casa.
+  /* Um filtro por coluna da tabela, no mesmo formato do resto do site: múltipla
+     escolha, com as opções de cada um calculadas sobre o que os OUTROS já
+     deixaram passar. Quem monta o repertório precisa das mesmas perguntas que o
+     batuqueiro faz na área dele — o que é novo, o que está sem tom, quem canta
+     o quê — e ainda de uma que é só da organização: o que ainda está em
+     rascunho. Tom e cantor(a) olham o texto que está na tela (o rascunho local),
+     não o que está gravado, senão o filtro discordaria da linha que ele filtra. */
   const eidAqui = edicaoCtxId();
   const novidadeDe = m => (ehMusicaNova(m, eidAqui) ? "nova" : "repetida");
-  limparFiltroInvalido("repAdminFiltroNova", ["nova", "repetida"]);
-  const opcNovidade = [...new Set([...valoresExistentes(draft, novidadeDe), ...listaDeFiltro("repAdminFiltroNova")])]
-    .map(v => ({
-      valor: v,
-      rotulo: v === "nova" ? "Nova no bloco" : "Já tocou antes",
-      qtd: draft.filter(m => novidadeDe(m) === v).length,
-    }))
-    .sort((a, b) => a.rotulo.localeCompare(b.rotulo, "pt-BR", { sensitivity: "base" }));
-  const filtrandoAdmin = filtroAtivo("repAdminFiltroNova");
-  const draftVisivel = draft.filter(m => passaNoFiltro("repAdminFiltroNova", novidadeDe(m)));
+  const buscaAdmin = (session.repAdminBusca || "").trim().toLowerCase();
+  const filtrosAdmin = [
+    { chave: "repAdminFiltroSet", campos: m => String(m.set) },
+    { chave: "repAdminFiltroNova", campos: novidadeDe },
+    { chave: "repAdminFiltroTom", campos: m => (m.tom || "").trim() || "sem" },
+    { chave: "repAdminFiltroCantor", campos: m => (m.cantor || "").trim() || "sem" },
+    { chave: "repAdminFiltroStatus", campos: m => (m.rascunho ? "rascunho" : "publicada") },
+  ];
+  const draftPorBusca = draft.filter(m => !buscaAdmin || (m.nome || "").toLowerCase().includes(buscaAdmin));
+  const opcoesAdminDe = (chave, rotuloDe, ordenar = true) => {
+    const alvo = filtrosAdmin.find(f => f.chave === chave);
+    const base = draftPorBusca.filter(m => filtrosAdmin.every(f => f.chave === chave || passaNoFiltro(f.chave, f.campos(m))));
+    // Valida contra o repertório INTEIRO, não contra o que a busca deixou:
+    // digitar na busca não pode apagar o filtro que já estava escolhido.
+    limparFiltroInvalido(chave, valoresExistentes(draft, alvo.campos));
+    const lista = opcoesEncadeadas(draftPorBusca, filtrosAdmin, chave)
+      .map(v => ({ valor: v, rotulo: rotuloDe(v), qtd: base.filter(m => alvo.campos(m) === v).length }));
+    return ordenar ? lista.sort((a, b) => a.rotulo.localeCompare(b.rotulo, "pt-BR", { sensitivity: "base" })) : lista;
+  };
+  const opcAdminSet = opcoesAdminDe("repAdminFiltroSet", v => `Set ${v}`, false)
+    .sort((a, b) => Number(a.valor) - Number(b.valor));
+  const opcNovidade = opcoesAdminDe("repAdminFiltroNova", v => (v === "nova" ? "Nova no bloco" : "Já tocou antes"));
+  const opcAdminTom = opcoesAdminDe("repAdminFiltroTom", v => (v === "sem" ? "Sem tom definido" : v));
+  const opcAdminCantor = opcoesAdminDe("repAdminFiltroCantor", v => (v === "sem" ? "Sem cantor(a) definido" : v));
+  const opcAdminStatus = opcoesAdminDe("repAdminFiltroStatus", v => (v === "rascunho" ? "Rascunho" : "Publicada"));
+  const filtrandoAdmin = filtrosAdmin.some(f => filtroAtivo(f.chave)) || !!buscaAdmin;
+  const draftVisivel = draftPorBusca.filter(m => filtrosAdmin.every(f => passaNoFiltro(f.chave, f.campos(m))));
   // Com filtro ligado a tabela mostra parte do repertório: reordenar ali moveria
   // a música por cima das linhas escondidas, sem ninguém ver.
   const podeOrdenar = editavel && !filtrandoAdmin;
@@ -3869,12 +3903,21 @@ function viewAdminMusicas() {
       </div>` : ""}
 
       ${draft.length === 0 ? `<p class="hint">Nenhuma música cadastrada ainda.</p>` : ""}
+      ${draft.length ? `
       <div class="filter-row" style="margin-top:14px;">
+        <div style="flex:1; min-width:200px;">
+          <label>Buscar música</label>
+          <input type="text" id="rep-admin-busca" value="${esc(session.repAdminBusca || "")}" placeholder="Digite parte do nome">
+        </div>
+        ${filtroMulti("repAdminFiltroSet", "Set", opcAdminSet, "Os dois")}
         ${filtroMulti("repAdminFiltroNova", "Nova no bloco?", opcNovidade, "Todas")}
-        ${filtrandoAdmin ? `<div class="multi"><label>&nbsp;</label><button class="btn-ghost btn-sm" data-limpar-multi="repAdminFiltroNova">Limpar filtro</button></div>` : ""}
-      </div>
+        ${filtroMulti("repAdminFiltroTom", "Tom", opcAdminTom, "Todos")}
+        ${filtroMulti("repAdminFiltroCantor", "Cantor(a)", opcAdminCantor, "Todos")}
+        ${filtroMulti("repAdminFiltroStatus", "Situação", opcAdminStatus, "Todas")}
+        ${filtrandoAdmin ? `<div class="multi"><label>&nbsp;</label><button class="btn-ghost btn-sm" id="rep-admin-limpar">Limpar filtros</button></div>` : ""}
+      </div>` : ""}
 
-      ${filtrandoAdmin ? `<p class="hint" style="margin-top:10px;"><b>Filtro ligado:</b> a tabela está mostrando parte do repertório, então os controles de ordem estão desligados — reordenar vendo só algumas músicas moveria por cima das escondidas. Limpe o filtro para voltar a mexer na ordem.</p>` : ""}
+      ${filtrandoAdmin ? `<p class="hint" style="margin-top:10px;"><b>Filtro ligado:</b> a tabela está mostrando parte do repertório, então os controles de ordem estão desligados — reordenar vendo só algumas músicas moveria por cima das escondidas. Limpe os filtros para voltar a mexer na ordem. O número de cada música continua sendo a posição dela no set inteiro.</p>` : ""}
 
       ${SETS_DO_CARNAVAL.map(set => {
         const doSet = musicasDoSet(draftVisivel, set);
@@ -3885,7 +3928,7 @@ function viewAdminMusicas() {
             <h3>Set ${set}</h3>
             <span class="hint">${doSet.length} música${doSet.length === 1 ? "" : "s"}${filtrandoAdmin ? ` de ${totalDoSet}` : ""}</span>
           </div>
-          ${doSet.length === 0 ? `<p class="hint" style="padding:10px 0 14px;">Nenhuma música neste set ainda.</p>` : `
+          ${doSet.length === 0 ? `<p class="hint" style="padding:10px 0 14px;">${filtrandoAdmin && totalDoSet ? `Nenhuma das ${totalDoSet} música${totalDoSet === 1 ? "" : "s"} deste set passa nos filtros.` : "Nenhuma música neste set ainda."}</p>` : `
           <div class="table-scroll">
             <table class="tabela-repertorio">
               <thead><tr>
@@ -5168,6 +5211,16 @@ function wireEvents() {
   on("#rep-hist-filtro", "input", e => { session.repHistFiltro = e.target.value; renderExterno(); });
   on("#rep-hist-ordem", "change", e => { session.repHistOrdem = e.target.value; render(); });
   on("#rep-sugestao-filtro", "input", e => { session.repSugestaoFiltro = e.target.value; renderExterno(); });
+  // Busca e filtros do repertório no painel admin. Mesmo cuidado dos outros
+  // campos de texto: só mexe no estado e redesenha por fora, para não tirar o
+  // foco de quem está digitando.
+  on("#rep-admin-busca", "input", e => { session.repAdminBusca = e.target.value; renderExterno(); });
+  on("#rep-admin-limpar", "click", () => {
+    session.repAdminBusca = ""; session.repAdminFiltroSet = []; session.repAdminFiltroNova = [];
+    session.repAdminFiltroTom = []; session.repAdminFiltroCantor = []; session.repAdminFiltroStatus = [];
+    session.multiAberto = null;
+    render();
+  });
 
   // Repertório do batuqueiro: ordenar por coluna e filtrar por valor.
   // Filtros de múltipla escolha (todas as telas usam os mesmos handlers).

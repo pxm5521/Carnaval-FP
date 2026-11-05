@@ -343,7 +343,17 @@ async function main() {
   await page.waitForTimeout(300);
   html = await appHtml(page);
   ok('Dia/mês não trocam: 05/11/1980 fica 05/11/1980 (não 11/05)', html.includes('05/11/1980'));
-  ok('Idade calculada bate com a data real, não com uma troca dia/mês', html.includes('(45 anos)'));
+  // A idade esperada é calculada aqui, no fuso do site: deixar o número fixo
+  // fazia o teste quebrar sozinho na virada do ano — e justamente no dia 5 de
+  // novembro, que é o aniversário usado neste cenário.
+  const idadeEsperada = await page.evaluate(() => {
+    const hoje = new Date();
+    let anos = hoje.getFullYear() - 1980;
+    const fezAniversario = hoje.getMonth() > 10 || (hoje.getMonth() === 10 && hoje.getDate() >= 5);
+    if (!fezAniversario) anos -= 1;
+    return anos;
+  });
+  ok('Idade calculada bate com a data real, não com uma troca dia/mês', html.includes(`(${idadeEsperada} anos)`));
   await logout(page);
 
   await registrar(page, { email: 'carla@example.com', nome: 'Carla', sobrenome: 'Dias', posicao: 'Voz', camisa: 'P' });
@@ -760,10 +770,97 @@ async function main() {
   ok('E a tela avisa que os controles de ordem ficam desligados com filtro', html.includes('controles de ordem estão desligados'));
   const semSetas = await page.evaluate(() => document.querySelectorAll('[data-mover-musica]').length);
   ok('As setas de reordenar somem enquanto o filtro está ligado', semSetas === 0);
-  await page.click('[data-limpar-multi="repAdminFiltroNova"]');
+  await page.click('#rep-admin-limpar');
   await page.waitForTimeout(500);
   const comSetas = await page.evaluate(() => document.querySelectorAll('[data-mover-musica]').length);
   ok('E voltam quando o filtro é limpo', comSetas > 0);
+
+  // ---- um filtro por coluna da tabela do admin ----
+  console.log('\n== 20d. Filtro por coluna no repertório do painel admin ==');
+  const nomesVisiveis = () => page.evaluate(() => [...document.querySelectorAll('.musica-name-input')].map(i => i.value));
+  const setsVisiveis = () => page.evaluate(() => [...document.querySelectorAll('[data-set-bloco]')]
+    .filter(b => b.querySelectorAll('.musica-name-input').length)
+    .map(b => b.dataset.setBloco));
+
+  const todasAntes = await nomesVisiveis();
+  ok('A tela abre com todas as músicas do repertório', todasAntes.length >= 3);
+
+  // Set
+  await marcarMulti('repAdminFiltroSet', '2');
+  await fecharMulti();
+  ok('O filtro de Set mostra só o set escolhido', (await setsVisiveis()).join() === '2');
+  await page.click('#rep-admin-limpar');
+  await page.waitForTimeout(400);
+
+  // Tom: o filtro olha o texto que está na linha, inclusive o que ainda não foi salvo
+  await marcarMulti('repAdminFiltroTom', 'Sol maior');
+  await fecharMulti();
+  ok('O filtro de Tom mostra só as músicas naquele tom', (await nomesVisiveis()).join() === 'Ventania');
+  await page.click('#rep-admin-limpar');
+  await page.waitForTimeout(400);
+
+  // Cantor(a), inclusive quem ainda não tem voz definida
+  await marcarMulti('repAdminFiltroCantor', 'sem');
+  await fecharMulti();
+  const semCantor = await nomesVisiveis();
+  ok('O filtro de Cantor(a) tem a opção "sem definido"',
+     semCantor.length === todasAntes.length - 1 && !semCantor.includes('Ventania'));
+  await page.click('#rep-admin-limpar');
+  await page.waitForTimeout(400);
+
+  // Situação: rascunho x publicada
+  const idAberturaFiltro = await page.evaluate(() => {
+    const inp = [...document.querySelectorAll('.musica-name-input')].find(i => i.value === 'Abertura do Set 2');
+    return inp ? inp.dataset.musicaId : null;
+  });
+  await page.click(`[data-publicar-musica="${idAberturaFiltro}"]`);
+  await page.waitForTimeout(800);
+  await marcarMulti('repAdminFiltroStatus', 'publicada');
+  await fecharMulti();
+  ok('O filtro de Situação separa o que já foi publicado do que é rascunho',
+     (await nomesVisiveis()).join() === 'Abertura do Set 2');
+
+  // opções encadeadas: com "publicada" escolhido, o filtro de Tom só oferece os
+  // tons que ainda têm música
+  const tonsOferecidosAdmin = await opcoesMulti('repAdminFiltroTom');
+  await fecharMulti();
+  ok('Com um filtro ligado, os outros só oferecem opções que ainda têm música',
+     !tonsOferecidosAdmin.includes('Sol maior'));
+
+  // dois valores no mesmo filtro
+  await marcarMulti('repAdminFiltroStatus', 'rascunho');
+  await fecharMulti();
+  const comOsDois = await nomesVisiveis();
+  ok('Dá para marcar mais de uma opção no mesmo filtro',
+     comOsDois.includes('Abertura do Set 2') && comOsDois.includes('Ventania'));
+  await page.click('#rep-admin-limpar');
+  await page.waitForTimeout(400);
+
+  // busca por nome
+  await page.fill('#rep-admin-busca', 'ventan');
+  await page.waitForTimeout(500);
+  ok('A busca por nome acha a música sem precisar rolar a lista',
+     (await nomesVisiveis()).join() === 'Ventania');
+  const semSetasBusca = await page.evaluate(() => document.querySelectorAll('[data-mover-musica]').length);
+  ok('E com a busca ligada os controles de ordem também ficam desligados', semSetasBusca === 0);
+  await page.click('#rep-admin-limpar');
+  await page.waitForTimeout(500);
+  ok('Limpar devolve a lista inteira', (await nomesVisiveis()).length === todasAntes.length);
+
+  // o set que ficou vazio por causa do filtro diz que é filtro, não falta de música
+  await marcarMulti('repAdminFiltroSet', '1');
+  await fecharMulti();
+  html = await appHtml(page);
+  ok('O set escondido pelo filtro avisa que é filtro, não repertório vazio',
+     html.includes('passa nos filtros'));
+  await page.click('#rep-admin-limpar');
+  await page.waitForTimeout(400);
+
+  // devolve a música publicada aqui para rascunho, para as seções seguintes
+  // encontrarem o repertório como estava
+  await page.click(`[data-despublicar-musica="${idAberturaFiltro}"]`);
+  await page.waitForTimeout(800);
+
 
   // quantas músicas cada cantor(a) canta
   html = await appHtml(page);
