@@ -195,9 +195,12 @@
   }
   /* O selo de rascunho fica na célula de ações, junto do botão Publicar: no
      campo do nome ele empurrava as colunas seguintes para fora da tela. */
-  .tabela-repertorio .col-musica { width: 34%; min-width: 210px; }
-  .tabela-repertorio .col-musica input { width: 100%; min-width: 150px; }
-  .tabela-repertorio .musica-tom-input, .tabela-repertorio .musica-cantor-input { min-width: 110px; }
+  /* A tabela precisa caber nos ~980px do cartão: com a coluna de novidade, o
+     nome e os dois campos livres cedem largura para a ação não sair da tela. */
+  .tabela-repertorio .col-musica { width: 30%; min-width: 180px; }
+  .tabela-repertorio .col-musica input { width: 100%; min-width: 140px; }
+  .tabela-repertorio .musica-tom-input, .tabela-repertorio .musica-cantor-input { min-width: 92px; }
+  .tabela-repertorio td, .tabela-repertorio th { padding-left: 6px; padding-right: 6px; }
   .tabela-repertorio .badge { font-size: 11px; padding: 3px 7px; }
   .tabela-repertorio td input[type=number].musica-posicao-input { width: 52px; text-align: center; font-variant-numeric: tabular-nums; }
   .tabela-repertorio td select.musica-set-input { width: 58px; }
@@ -233,6 +236,11 @@
   .multi-qtd { color: var(--text-secondary); font-size: 12px; font-variant-numeric: tabular-nums; }
   .multi-rodape { display: flex; justify-content: space-between; gap: 8px; padding: 6px 4px 2px; border-top: 1px solid var(--gridline); margin-top: 4px; }
   @media (max-width: 640px) { .multi-pop { max-width: 86vw; } }
+
+  /* A caixinha de "nova" é clicável: além da cor, o cursor e a borda dizem
+     isso. O asterisco no rótulo marca o que foi decidido à mão. */
+  .badge-botao { border: 1px dashed currentColor; cursor: pointer; font-family: inherit; }
+  .badge-botao:hover { filter: brightness(0.95); }
 
   /* ---------- tables ---------- */
   .table-scroll { overflow-x: auto; border-radius: 12px; border: 1px solid var(--gridline); }

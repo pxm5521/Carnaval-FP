@@ -106,6 +106,31 @@ async function main() {
 
   await page.goto(BASE);
   await page.waitForSelector('#btn-goto-register');
+  // ---- helpers dos filtros de múltipla escolha (usados em várias seções) ----
+  const abrirMulti = async (chave) => {
+    const aberto = await page.evaluate(k => {
+      const b = document.querySelector(`[data-abrir-multi="${k}"]`);
+      return b ? b.getAttribute('aria-expanded') === 'true' : false;
+    }, chave);
+    if (!aberto) { await page.click(`[data-abrir-multi="${chave}"]`); await page.waitForTimeout(350); }
+  };
+  const marcarMulti = async (chave, valor) => {
+    await abrirMulti(chave);
+    await page.click(`.multi-opt[data-multi-chave="${chave}"][data-valor="${valor}"]`);
+    await page.waitForTimeout(450);
+  };
+  const fecharMulti = async () => { await page.click('[data-fechar-multi]'); await page.waitForTimeout(300); };
+  const opcoesMulti = async (chave) => {
+    await abrirMulti(chave);
+    return page.evaluate(k => [...document.querySelectorAll(`.multi-opt[data-multi-chave="${k}"]`)].map(i => i.dataset.valor), chave);
+  };
+  const limparMulti = async (chave) => {
+    await abrirMulti(chave);
+    await page.click(`[data-limpar-multi="${chave}"]`);
+    await page.waitForTimeout(450);
+    await fecharMulti();
+  };
+
 
   // ============================================================
   console.log('\n== 1. Cadastro do organizador (Bruno) antes de existir qualquer edição ==');
@@ -672,6 +697,101 @@ async function main() {
   await page.click('#btn-save-all-musicas');
   await page.waitForTimeout(1000);
 
+  // ------------------------------------------------------------------
+  // Música nova no bloco: avaliação automática, correção à mão e filtro.
+  // ------------------------------------------------------------------
+  const lerNovidade = (nome) => page.evaluate(n => {
+    const inp = [...document.querySelectorAll('.musica-name-input')].find(i => i.value === n);
+    if (!inp) return null;
+    const linha = inp.closest('.musica-linha');
+    const botao = linha.querySelector('[data-ciclar-nova]');
+    return { rotulo: botao ? botao.textContent.trim() : null, titulo: botao ? botao.title : null, id: inp.dataset.musicaId };
+  }, nome);
+
+  let novidadeVentania = await lerNovidade('Ventania');
+  ok('Música que o bloco nunca tocou é avaliada como Nova', novidadeVentania.rotulo === 'Nova');
+  ok('E a caixinha explica de onde veio a avaliação', novidadeVentania.titulo.includes('Não aparece em nenhum carnaval anterior'));
+
+  // uma música que já tocou em carnavais anteriores não é nova
+  await page.evaluate(async () => {
+    const fb = await import('./firebase-init.mock.js');
+    await fb.addDoc(fb.collection(fb.db, 'repertorioHistorico'), { nome: 'Ventania', anos: ['2019', '2021'] });
+  });
+  await page.waitForTimeout(400);
+  // O arquivo é lido uma vez por sessão (não tem listener), então a entrada
+  // criada direto no banco só entra no cache depois de entrar de novo no site.
+  await logout(page);
+  await login(page, 'bruno@example.com');
+  await page.click('#btn-goto-admin');
+  await page.waitForTimeout(300);
+  await page.click('#btn-goto-musicas');
+  await page.waitForTimeout(1500);
+  novidadeVentania = await lerNovidade('Ventania');
+  ok('Música que está no arquivo de anos anteriores NÃO é nova', novidadeVentania.rotulo === 'Já tocou');
+  ok('E a caixinha diz em quais carnavais ela tocou', novidadeVentania.titulo.includes('2019'));
+
+  // o admin corrige à mão: automático -> Nova -> Já tocou -> automático
+  await page.click(`[data-ciclar-nova="${novidadeVentania.id}"]`);
+  await page.waitForTimeout(800);
+  let marcada = await lerNovidade('Ventania');
+  ok('Clicando na caixinha, o admin marca como Nova à mão', marcada.rotulo === 'Nova *');
+  const gravadoManual = await page.evaluate(() => Object.values(window.__mock.dumpStore()['edicoes/2027-1/musicas'] || {})
+    .find(m => m.nome === 'Ventania').novaManual);
+  ok('E a decisão grava no banco na hora', gravadoManual === true);
+  await page.click(`[data-ciclar-nova="${novidadeVentania.id}"]`);
+  await page.waitForTimeout(800);
+  marcada = await lerNovidade('Ventania');
+  ok('O clique seguinte marca como Já tocou', marcada.rotulo === 'Já tocou *');
+  await page.click(`[data-ciclar-nova="${novidadeVentania.id}"]`);
+  await page.waitForTimeout(800);
+  marcada = await lerNovidade('Ventania');
+  ok('E o terceiro clique devolve para a avaliação automática', marcada.rotulo === 'Já tocou');
+  const voltouAutomatico = await page.evaluate(() => Object.values(window.__mock.dumpStore()['edicoes/2027-1/musicas'] || {})
+    .find(m => m.nome === 'Ventania').novaManual);
+  ok('Sem decisão do admin guardada no banco', voltouAutomatico === null);
+
+  // filtro de novidade no admin
+  await marcarMulti('repAdminFiltroNova', 'nova');
+  await fecharMulti();
+  const nomesFiltrados = await page.evaluate(() => [...document.querySelectorAll('.musica-name-input')].map(i => i.value));
+  ok('O filtro de novidade mostra só as músicas novas',
+     nomesFiltrados.length > 0 && !nomesFiltrados.includes('Ventania'));
+  html = await appHtml(page);
+  ok('E a tela avisa que os controles de ordem ficam desligados com filtro', html.includes('controles de ordem estão desligados'));
+  const semSetas = await page.evaluate(() => document.querySelectorAll('[data-mover-musica]').length);
+  ok('As setas de reordenar somem enquanto o filtro está ligado', semSetas === 0);
+  await page.click('[data-limpar-multi="repAdminFiltroNova"]');
+  await page.waitForTimeout(500);
+  const comSetas = await page.evaluate(() => document.querySelectorAll('[data-mover-musica]').length);
+  ok('E voltam quando o filtro é limpo', comSetas > 0);
+
+  // quantas músicas cada cantor(a) canta
+  html = await appHtml(page);
+  ok('A tela mostra quantas músicas cada cantor(a) canta', html.includes('Músicas por cantor(a)'));
+  const porCantorNaTela = await page.evaluate(() => {
+    const h = [...document.querySelectorAll('h3')].find(x => x.textContent.includes('Músicas por cantor'));
+    if (!h) return null;
+    return [...h.closest('.set-bloco').querySelectorAll('tbody tr')].map(tr => {
+      const tds = tr.querySelectorAll('td');
+      return { cantor: tds[0].textContent.trim(), qtd: Number(tds[1].textContent.trim()) };
+    });
+  });
+  const carla = porCantorNaTela.find(x => x.cantor === 'Carla');
+  ok('Com a contagem certa por pessoa', !!carla && carla.qtd === 1);
+  ok('E quem está sem cantor(a) também é contado',
+     porCantorNaTela.some(x => x.cantor === 'Sem cantor(a) definido'));
+
+  // limpa o registro de arquivo criado para o teste
+  await page.evaluate(async () => {
+    const fb = await import('./firebase-init.mock.js');
+    const snap = await fb.getDocs(fb.collection(fb.db, 'repertorioHistorico'));
+    // Só a entrada COM anos: a outra com o mesmo nome é o catálogo de tom e
+    // cantor(a), que precisa continuar lá.
+    const alvo = snap.docs.find(d => d.data().nome === 'Ventania' && (d.data().anos || []).length);
+    if (alvo) await fb.deleteDoc(fb.doc(fb.db, 'repertorioHistorico', alvo.id));
+  });
+  await page.waitForTimeout(600);
+
   // editar tom e cantor na própria linha da tabela
   const idVentaniaTabela = await page.evaluate(() => {
     const inp = [...document.querySelectorAll('.musica-name-input')].find(i => i.value === 'Ventania');
@@ -966,25 +1086,7 @@ async function main() {
   await page.waitForTimeout(200);
   html = await appHtml(page);
   ok('Relatório lista todas as pessoas da edição', html.includes('Ana Silva') && html.includes('Duda Reis'));
-  // Os filtros são de múltipla escolha: um botão que abre caixas de seleção.
-  const marcarMulti = async (chave, valor) => {
-    const aberto = await page.evaluate(k => {
-      const b = document.querySelector(`[data-abrir-multi="${k}"]`);
-      return b ? b.getAttribute('aria-expanded') === 'true' : false;
-    }, chave);
-    if (!aberto) { await page.click(`[data-abrir-multi="${chave}"]`); await page.waitForTimeout(350); }
-    await page.click(`.multi-opt[data-multi-chave="${chave}"][data-valor="${valor}"]`);
-    await page.waitForTimeout(400);
-  };
-  const fecharMulti = async () => { await page.click('[data-fechar-multi]'); await page.waitForTimeout(300); };
-  const opcoesMulti = async (chave) => {
-    const aberto = await page.evaluate(k => {
-      const b = document.querySelector(`[data-abrir-multi="${k}"]`);
-      return b ? b.getAttribute('aria-expanded') === 'true' : false;
-    }, chave);
-    if (!aberto) { await page.click(`[data-abrir-multi="${chave}"]`); await page.waitForTimeout(350); }
-    return page.evaluate(k => [...document.querySelectorAll(`.multi-opt[data-multi-chave="${k}"]`)].map(i => i.dataset.valor), chave);
-  };
+
 
   await marcarMulti('relatorioFiltroPosicao', 'Repique');
   await fecharMulti();
@@ -2175,43 +2277,62 @@ async function main() {
   linhasRep = await lerRep();
   ok('O terceiro clique devolve a ordem dos sets', linhasRep[0][2] === 'Ventania');
 
+  // ---- colunas novas: "Nova?" e quantidade de ensaios ----
+  const cabecalhoRep = await page.evaluate(() =>
+    [...document.querySelectorAll('#tabela-repertorio-batuqueiro thead th')].map(t => t.textContent.trim().replace(/[\u2191\u2193]/g, '').trim()));
+  ok('A tabela do batuqueiro tem a coluna de novidade', cabecalhoRep.includes('Nova?'));
+  ok('E a coluna com a quantidade de ensaios', cabecalhoRep.includes('Ensaios'));
+  const linhasComNovidade = await lerRep();
+  ok('Cada linha diz se a música é nova ou já tocou',
+     linhasComNovidade.every(l => l[3] === 'Nova' || l[3] === 'Já tocou'));
+  ok('E a quantidade de ensaios bate com as datas listadas',
+     linhasComNovidade.every(l => Number(l[6]) === (l[7] === 'Ainda não' ? 0 : l[7].split(',').length)));
+
+  // ordenar pela coluna nova
+  await page.click('[data-ord-rep="nova"]');
+  await page.waitForTimeout(400);
+  const ordenadoPorNova = await lerRep();
+  ok('Clicar em "Nova?" ordena com as novas na frente',
+     ordenadoPorNova.every((l, i, arr) => i === 0 || !(arr[i - 1][3] === 'Já tocou' && l[3] === 'Nova')));
+  await page.click('#rep-limpar');
+  await page.waitForTimeout(400);
+
+  // filtro pela quantidade de ensaios
+  await marcarMulti('repFiltroQtdEnsaios', '0');
+  await fecharMulti();
+  let porQtd = await lerRep();
+  ok('O filtro por quantidade de ensaios acha as que nunca foram tocadas',
+     porQtd.length > 0 && porQtd.every(l => l[6] === '0'));
+  await limparMulti('repFiltroQtdEnsaios');
+
+  // filtro de novidade
+  await marcarMulti('repFiltroNova', 'nova');
+  await fecharMulti();
+  const soNovas = await lerRep();
+  ok('O filtro de novidade mostra só as novas', soNovas.length > 0 && soNovas.every(l => l[3] === 'Nova'));
+  await limparMulti('repFiltroNova');
+  const todasDeVolta = await lerRep();
+  ok('E limpar devolve a lista inteira', todasDeVolta.length === 5);
+
   // ---- filtros de múltipla escolha, com opções encadeadas ----
-  const abrirFiltro = async (chave) => {
-    const aberto = await page.evaluate(k => {
-      const b = document.querySelector(`[data-abrir-multi="${k}"]`);
-      return b ? b.getAttribute('aria-expanded') === 'true' : false;
-    }, chave);
-    if (!aberto) { await page.click(`[data-abrir-multi="${chave}"]`); await page.waitForTimeout(350); }
-  };
-  const marcar = async (chave, valor) => {
-    await abrirFiltro(chave);
-    await page.click(`.multi-opt[data-multi-chave="${chave}"][data-valor="${valor}"]`);
-    await page.waitForTimeout(450);
-  };
-  const opcoesDoFiltro = async (chave) => {
-    await abrirFiltro(chave);
-    return page.evaluate(k => [...document.querySelectorAll(`.multi-opt[data-multi-chave="${k}"]`)].map(i => i.dataset.valor), chave);
-  };
-  const fecharFiltro = async () => { await page.click('[data-fechar-multi]'); await page.waitForTimeout(350); };
-  const limparFiltro = async (chave) => {
-    await abrirFiltro(chave);
-    await page.click(`[data-limpar-multi="${chave}"]`);
-    await page.waitForTimeout(450);
-    await fecharFiltro();
-  };
+  const abrirFiltro = abrirMulti;
+  const marcar = marcarMulti;
+  const opcoesDoFiltro = opcoesMulti;
+  const fecharFiltro = fecharMulti;
+  const limparFiltro = limparMulti;
 
   await marcar('repFiltroCantor', 'Ana');
   await fecharFiltro();
   linhasRep = await lerRep();
   ok('O filtro de cantor(a) mostra só o que aquela pessoa canta',
-     linhasRep.length === 2 && linhasRep.every(l => l[4] === 'Ana'));
+     linhasRep.length === 2 && linhasRep.every(l => l[5] === 'Ana'));
 
   // MAIS DE UMA OPÇÃO ao mesmo tempo
   await marcar('repFiltroCantor', 'Zeca');
   await fecharFiltro();
   linhasRep = await lerRep();
   ok('Dá para marcar mais de um cantor(a) ao mesmo tempo',
-     linhasRep.length === 3 && linhasRep.every(l => l[4] === 'Ana' || l[4] === 'Zeca'));
+     linhasRep.length === 3 && linhasRep.every(l => l[5] === 'Ana' || l[5] === 'Zeca'));
   const resumoDois = await page.evaluate(() => document.querySelector('[data-abrir-multi="repFiltroCantor"] span').textContent.trim());
   ok('E o botão do filtro diz quantas opções estão marcadas', resumoDois === '2 selecionados');
 
@@ -2236,13 +2357,13 @@ async function main() {
   await fecharFiltro();
   linhasRep = await lerRep();
   ok('O filtro de tom mostra só as músicas naquele tom',
-     linhasRep.length === 2 && linhasRep.every(l => l[3] === 'Dó maior'));
+     linhasRep.length === 2 && linhasRep.every(l => l[4] === 'Dó maior'));
   await limparFiltro('repFiltroTom');
   await marcar('repFiltroTom', 'sem');
   await fecharFiltro();
   linhasRep = await lerRep();
   ok('E dá para achar as que estão sem tom definido',
-     linhasRep.length > 0 && linhasRep.every(l => l[3] === '—'));
+     linhasRep.length > 0 && linhasRep.every(l => l[4] === '—'));
   await limparFiltro('repFiltroTom');
 
   // filtrar por set
@@ -2258,7 +2379,7 @@ async function main() {
   await fecharFiltro();
   linhasRep = await lerRep();
   ok('Dá para ver só o que ainda não foi ensaiado',
-     linhasRep.length > 0 && linhasRep.every(l => l[5] === 'Ainda não'));
+     linhasRep.length > 0 && linhasRep.every(l => l[7] === 'Ainda não'));
   await limparFiltro('repFiltroEnsaio');
 
   // busca por nome

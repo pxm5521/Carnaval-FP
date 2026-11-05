@@ -306,10 +306,22 @@ Ao cadastrar uma música nova, o seletor **"no fim do Set"**, ao lado do botão 
 
 A ordem e os sets aparecem para todo mundo: na área do batuqueiro o repertório vem com as colunas **Set** e **#**, e na tela de marcar músicas do ensaio as músicas aparecem agrupadas e numeradas por set. Música em rascunho continua invisível para os outros até ser publicada.
 
+**Como sei se a música é nova no bloco?** A coluna **Nova?**, na linha de cada música, responde isso sozinha. O site procura o nome da música em todo o histórico — a planilha antiga e os repertórios dos outros carnavais do próprio site — e mostra uma caixinha: **"Já tocou"** (verde) quando achou, **"Nova"** (violeta) quando não achou em nenhum ano. Passando o mouse na caixinha, aparece em quais carnavais ela foi tocada.
+
+A avaliação é automática, mas não é a palavra final: **clicar na caixinha troca a classificação à mão**. Cada clique passa para o estado seguinte — automático → forçar "Nova" → forçar "Já tocou" → automático —, então um clique a mais sempre devolve a decisão para o site. Quando a classificação está forçada, a caixinha ganha um asterisco (`Nova *`), para a tela não parecer errada depois. A troca grava na hora, sem depender do "Salvar todas as músicas".
+
+> A música é reconhecida **pelo nome**, igual ao resto do histórico — maiúsculas, acentos e espaço a mais não contam. Nome escrito diferente do que está no arquivo é avaliado como música nova; é para esses casos que serve a edição à mão. Mudar a classificação à mão não mexe no histórico nem no arquivo: muda só o rótulo daquela música naquele carnaval.
+
+O filtro **"Nova no bloco?"**, acima das tabelas, separa as duas situações — serve para conferir quantas novidades o repertório tem antes de fechar. Enquanto algum filtro está aplicado, **as setas e o campo de posição ficam desligados**: numa tabela que esconde linhas, subir uma música uma posição significaria coisas diferentes do que está na tela. Um botão **"Limpar filtro"** aparece ao lado do filtro; com a tabela inteira à vista, a ordenação volta.
+
+**Dá para ver quantas músicas cada cantor(a) canta?** No fim da tela de Repertório há a tabela **"Músicas por cantor(a)"**: uma linha por pessoa, quantas músicas são dela e quais. Quem canta mais aparece primeiro, e as músicas que ainda não têm cantor(a) definido entram agrupadas em **"Sem cantor(a) definido"** — é o jeito rápido de ver o que falta decidir e se o repertório não está pesado demais para uma voz só. A tabela conta o repertório deste carnaval, rascunhos incluídos.
+
 **Dá para ordenar e filtrar o repertório na área do batuqueiro?** Dá, e vale para qualquer pessoa da bateria, não só para a organização.
 
-- **Clicar no título de uma coluna** ordena por ela: Música e Cantor(a) em ordem alfabética, Tom idem, "Ensaiada em" pela quantidade de ensaios. Um segundo clique inverte; o terceiro devolve a ordem dos sets.
-- **Os filtros acima da tabela** filtram por Set, Tom, Cantor(a) e por ensaio, cada um aceitando mais de uma opção — inclusive duas que resolvem perguntas frequentes: "Ainda não ensaiada" e "Sem tom definido".
+- **Clicar no título de uma coluna** ordena por ela: Música e Cantor(a) em ordem alfabética, Tom idem, Nova? pelas novidades primeiro, Ensaios e "Ensaiada em" pela quantidade de ensaios. Um segundo clique inverte; o terceiro devolve a ordem dos sets.
+- A coluna **Nova?** diz se a música é nova no bloco ou se a bateria já tocou ela em algum carnaval anterior — é a mesma avaliação que a organização vê no painel, inclusive as correções feitas à mão.
+- A coluna **Ensaios** mostra **em quantos ensaios deste carnaval a música já foi tocada**; ao lado, "Ensaiada em" traz as datas. Serve para ver de relance o que está pouco rodado perto do carnaval.
+- **Os filtros acima da tabela** filtram por Set, Tom, Cantor(a), "Nova no bloco?", "Quantos ensaios" e por ensaio, cada um aceitando mais de uma opção — inclusive duas que resolvem perguntas frequentes: "Ainda não ensaiada" e "Sem tom definido".
 - O campo **Buscar música** acha pelo nome, sem precisar percorrer a lista.
 - Um botão **"Limpar e voltar à ordem dos sets"** aparece assim que algo está filtrado ou reordenado.
 
