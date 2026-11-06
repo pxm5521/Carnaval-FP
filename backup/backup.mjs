@@ -83,6 +83,7 @@ async function principal() {
     backup.edicoes[eid] = {
       dados: paraJSON(ed.data()),
       inscricoes: await lerColecao(db.collection(`edicoes/${eid}/inscricoes`)),
+      financeiro: await lerColecao(db.collection(`edicoes/${eid}/financeiro`)),
       posicoes: await lerColecao(db.collection(`edicoes/${eid}/posicoes`)),
       ensaios: await lerColecao(db.collection(`edicoes/${eid}/ensaios`)),
       musicas: await lerColecao(db.collection(`edicoes/${eid}/musicas`)),

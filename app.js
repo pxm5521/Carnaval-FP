@@ -75,6 +75,16 @@ const P = {
   edicao:     (eid)       => doc(db, "edicoes", eid),
   inscricoes: (eid)       => collection(db, "edicoes", eid, "inscricoes"),
   inscricao:  (eid, uid)  => doc(db, "edicoes", eid, "inscricoes", uid),
+  // Dinheiro (forma de pagamento, total pago e isenção) fica FORA da inscrição
+  // pelo mesmo motivo do contato: a inscrição é lida por qualquer pessoa logada
+  // — é dela que saem a lista de naipes, a presença e a contagem de camisas — e
+  // regra do Firestore filtra documento, não campo. Enquanto esses três campos
+  // moravam ali, qualquer cadastrado conseguia ler, pelo console do navegador,
+  // quanto cada pessoa da bateria pagou e quem está isento. Separando, só o
+  // próprio dono e a organização leem. Ver firestore.rules,
+  // match /edicoes/{eid}/financeiro/{uid}.
+  financeiros: (eid)      => collection(db, "edicoes", eid, "financeiro"),
+  financeiro: (eid, uid)  => doc(db, "edicoes", eid, "financeiro", uid),
   posicoes:   (eid)       => collection(db, "edicoes", eid, "posicoes"),
   posicao:    (eid, id)   => doc(db, "edicoes", eid, "posicoes", id),
   ensaios:    (eid)       => collection(db, "edicoes", eid, "ensaios"),
@@ -115,6 +125,10 @@ let musicasCache = [];
 let precosCache = null;
 let presencasCache = {};    // uid -> { ensaioId: true/false }
 let myPagamentos = [];      // só os pagamentos do próprio usuário logado, na edição em contexto
+/* uid -> { formaPagamento, totalPago, isencaoManual } da edição em contexto.
+   O admin recebe a coleção inteira; quem não é admin recebe só o próprio
+   documento, que é o que as regras permitem ler. */
+let financeiroCache = {};
 /* Células de presença com gravação em andamento, para o segundo clique não
    recalcular o novo valor em cima de um cache que ainda não voltou. */
 const presencasEmVoo = new Set();
@@ -427,6 +441,25 @@ function contatoDe(p) {
   };
 }
 
+/* Dinheiro e isenção de uma pessoa na edição em contexto, com queda para os
+   campos antigos que ainda estejam dentro da inscrição enquanto a separação não
+   foi rodada pelo admin. Quem não pode ler o financeiro alheio recebe o que a
+   inscrição ainda tiver (nada, depois da separação) — a tela não quebra. */
+function financeiroDe(p) {
+  const f = (p && financeiroCache[p.id]) || {};
+  const temDoc = Object.keys(f).length > 0;
+  // isencaoManual tem três estados: "isento", "naoIsento" e null (automático).
+  // O campo antigo isentoManual era booleano e só sabia dizer "isento".
+  const manual = f.isencaoManual === "isento" || f.isencaoManual === "naoIsento"
+    ? f.isencaoManual
+    : (f.isentoManual === true || (!temDoc && p && p.isentoManual === true) ? "isento" : null);
+  return {
+    formaPagamento: temDoc ? (f.formaPagamento || null) : ((p && p.formaPagamento) || null),
+    totalPago: numero(temDoc ? f.totalPago : (p && p.totalPago)),
+    isencaoManual: manual,
+  };
+}
+
 /* Cadastro do usuário logado, venha ele do formato novo ou do antigo. */
 function meuCadastro() { return myPessoa || myLegado || null; }
 /* Sou admin? Vale tanto o cadastro novo quanto o antigo (período de transição). */
@@ -505,7 +538,7 @@ function limparEstadoDeSessao() {
 
 function limparCachesDaEdicao() {
   inscricoesCache = []; posicoesCache = []; ensaiosCache = []; musicasCache = [];
-  precosCache = null; presencasCache = {}; myPagamentos = [];
+  precosCache = null; presencasCache = {}; myPagamentos = []; financeiroCache = {};
 }
 
 function onErr(label) {
@@ -527,6 +560,7 @@ function setupUserListeners(uid) {
     // listeners da edição precisam ser reavaliados; senão o painel abria com
     // tudo zerado ("0 inscritos", "0 posições") e não se corrigia sozinho.
     ensureEdicaoListeners();
+    ensureFinanceiroListener();
     renderExterno();
   }, onErr("perfil"));
 
@@ -556,6 +590,37 @@ function teardownUserListeners() {
 }
 function teardownEdicaoListeners() {
   Object.keys(unsubEd).forEach(k => { if (unsubEd[k]) { unsubEd[k](); unsubEd[k] = null; } });
+  financeiroListenerPara = "";
+}
+
+/* Listener do financeiro da edição. Fica separado dos outros porque depende de
+   DUAS coisas: qual edição está em contexto e se quem está logado é admin. O
+   acesso admin pode chegar no meio da sessão (concedido por outro organizador),
+   e aí o listener precisa trocar de "só o meu documento" para "a coleção
+   inteira" — sem isso, o painel abria o relatório de pagamentos zerado e não se
+   corrigia sozinho. */
+let financeiroListenerPara = "";
+function ensureFinanceiroListener() {
+  const eid = edicaoCtxId();
+  const chave = !eid || !fbUser ? "" : `${eid}|${souAdmin() ? "admin" : "dono"}`;
+  if (chave === financeiroListenerPara) return;
+  if (unsubEd.financeiro) { unsubEd.financeiro(); unsubEd.financeiro = null; }
+  financeiroListenerPara = chave;
+  financeiroCache = {};
+  if (!chave) { renderExterno(); return; }
+  if (souAdmin()) {
+    unsubEd.financeiro = onSnapshot(P.financeiros(eid), snap => {
+      const novo = {};
+      snap.docs.forEach(d => { novo[d.id] = d.data(); });
+      financeiroCache = novo;
+      renderExterno();
+    }, onErr("financeiro da bateria"));
+  } else {
+    unsubEd.financeiro = onSnapshot(P.financeiro(eid, fbUser.uid), snap => {
+      financeiroCache = { [fbUser.uid]: snap.exists() ? snap.data() : {} };
+      renderExterno();
+    }, onErr("meu financeiro"));
+  }
 }
 
 /* (Re)liga os listeners das subcoleções da edição em contexto. Chamado sempre que
@@ -583,6 +648,8 @@ function ensureEdicaoListeners() {
     }
     renderExterno();
   }, onErr("inscrições"));
+
+  ensureFinanceiroListener();
 
   unsubEd.posicoes = onSnapshot(P.posicoes(eid), snap => {
     posicoesCache = snap.docs.map(d => ({ id: d.id, ...d.data() }));
@@ -692,7 +759,7 @@ function perfilMesclado() {
   const insc = minhaInscricao();
   const id = fbUser ? fbUser.uid : base.id;
   const juntos = insc ? { ...base, ...insc, id } : { ...base, id };
-  return { ...juntos, ...soDoCadastro(base), ...contatoDe(juntos) };
+  return { ...juntos, ...soDoCadastro(base), ...contatoDe(juntos), ...financeiroDe(juntos) };
 }
 /* Identidade e privilégio vêm SEMPRE de /pessoas, nunca da inscrição.
    A inscrição é escrita pelo próprio dono, e as telas montam cada batuqueiro
@@ -725,8 +792,9 @@ function batuqueirosDaEdicao() {
       const pes = pessoasCache.find(x => x.id === i.id);
       if (!pes) return null;
       const juntos = { ...pes, ...i, id: i.id };
-      // celular/nascimento entram só se o usuário logado tiver permissão de ler
-      return { ...juntos, ...soDoCadastro(pes), ...contatoDe(juntos) };
+      // celular/nascimento e dinheiro entram só se o usuário logado tiver
+      // permissão de ler; para os outros vêm vazios, e a tela se vira.
+      return { ...juntos, ...soDoCadastro(pes), ...contatoDe(juntos), ...financeiroDe(juntos) };
     })
     .filter(Boolean)
     .sort((a, b) => fullName(a).localeCompare(fullName(b), "pt-BR", { sensitivity: "base" }));
@@ -894,15 +962,27 @@ function respostaVaiTocar(u) {
   return "";
 }
 function naoVaiTocar(u) { return respostaVaiTocar(u) === "Não"; }
+/* A isenção tem três estados, e a decisão da organização vence as duas
+   automáticas. "Não isento" existe porque a posição isenta é automática: quem
+   toca numa função isenta mas combinou de pagar precisava ser cobrado à mão, e
+   antes só dava para tirá-lo da função — o que bagunçava o naipe. */
+function isencaoManualDe(u) {
+  if (!u) return null;
+  if (u.isencaoManual === "isento" || u.isencaoManual === "naoIsento") return u.isencaoManual;
+  return u.isentoManual === true ? "isento" : null;
+}
 function isIsento(u) {
+  const manual = isencaoManualDe(u);
+  if (manual === "isento") return true;
+  if (manual === "naoIsento") return false;
   const info = posicaoInfo(u.posicao);
-  return naoVaiTocar(u) || !!(info && info.isenta) || !!u.isentoManual;
+  return naoVaiTocar(u) || !!(info && info.isenta);
 }
 function isentoMotivo(u) {
+  if (isencaoManualDe(u) === "isento") return "isenção especial concedida pela organização";
   const info = posicaoInfo(u.posicao);
   if (naoVaiTocar(u)) return "você não vai tocar neste carnaval";
   if (info && info.isenta) return `isento pela função de ${u.posicao}`;
-  if (u.isentoManual) return "isenção especial concedida pela organização";
   return "";
 }
 function posicaoOptionsHtml(selected) {
@@ -1729,6 +1809,7 @@ function viewBatuqueiro() {
     <div class="card">
       <div class="card-head">
         <div><h2>Repertório</h2><p class="card-sub" style="margin-bottom:0">Músicas do ${esc(edicaoLabel(ed))} na ordem dos dois sets, e em quais ensaios cada uma foi tocada. Clique no título de uma coluna para ordenar por ela.</p></div>
+        <button class="btn-secondary btn-sm" id="btn-exportar-repertorio-batuqueiro" title="Baixa o repertório completo em Excel, na ordem dos sets — o filtro da tela não muda a planilha">Baixar Excel (.xlsx)</button>
       </div>
 
       <div class="filter-row">
@@ -2230,7 +2311,16 @@ async function carregarHistorico() {
     for (const ed of edicoesOrdenadas()) {
       const inscSnap = await getDoc(P.inscricao(ed.id, uid));
       if (!inscSnap.exists()) continue;
-      const inscricao = { id: uid, ...inscSnap.data() };
+      // O dinheiro daquele ano vive fora da inscrição (área restrita). Cada
+      // pessoa lê o próprio, em qualquer carnaval; se o documento não existir,
+      // valem os campos antigos que ainda estejam na inscrição.
+      const finSnap = await getDoc(P.financeiro(ed.id, uid)).catch(() => null);
+      const fin = finSnap && finSnap.exists() ? finSnap.data() : null;
+      const inscricao = { id: uid, ...inscSnap.data(), ...(fin ? {
+        formaPagamento: fin.formaPagamento || null,
+        totalPago: numero(fin.totalPago),
+        isencaoManual: fin.isencaoManual || (fin.isentoManual ? "isento" : null),
+      } : {}) };
 
       const [posSnap, precoSnap, ensaiosSnap, presSnap] = await Promise.all([
         getDocs(P.posicoes(ed.id)),
@@ -2272,10 +2362,12 @@ async function carregarHistorico() {
    edição específica (que não é necessariamente a que está carregada em memória). */
 function statusPagamentoHistorico(insc, posicoes, precos) {
   const info = posicoes.find(p => p.nome === insc.posicao);
-  // As TRÊS origens de isenção, na mesma ordem de isIsento(): não vai tocar,
-  // função isenta e isenção individual. Sem a primeira, o histórico cobrava
-  // anuidade de quem tinha avisado que não ia desfilar.
-  if (respostaVaiTocar(insc) === "Não" || (info && info.isenta) || insc.isentoManual) return "Isenta";
+  // A decisão da organização vem primeiro, nos dois sentidos, e só depois as
+  // duas isenções automáticas: não vai tocar e função isenta. Sem a segunda, o
+  // histórico cobrava anuidade de quem tinha avisado que não ia desfilar.
+  const manual = isencaoManualDe(insc);
+  if (manual === "isento") return "Isenta";
+  if (manual !== "naoIsento" && (respostaVaiTocar(insc) === "Não" || (info && info.isenta))) return "Isenta";
   if (!planoValido(insc.formaPagamento) || !precos) return "Sem plano";
   const cfg = precos[insc.formaPagamento];
   // valor 0 não é "quitado": é anuidade que ninguém configurou ainda.
@@ -2412,6 +2504,7 @@ async function baixarBackup() {
       backup.edicoes[eid] = {
         dados: ed.data(),
         inscricoes: await lerColecao(P.inscricoes(eid)),
+        financeiro: await lerColecao(P.financeiros(eid)),
         posicoes: await lerColecao(P.posicoes(eid)),
         ensaios: await lerColecao(P.ensaios(eid)),
         musicas: await lerColecao(P.musicas(eid)),
@@ -2544,6 +2637,396 @@ async function exportarXLSX() {
 }
 
 /* ============================================================
+   GERADOR DE PLANILHA .XLSX COM FORMATAÇÃO (sem biblioteca)
+   ------------------------------------------------------------
+   O .xlsx é um ZIP com arquivos XML dentro (formato OOXML, ECMA-376). Este
+   trecho escreve esse ZIP à mão, por um motivo concreto: a versão aberta do
+   SheetJS — usada na exportação de cadastros, acima — IGNORA estilo de célula
+   ao gravar (cor, negrito, borda são da versão paga). Para uma planilha que
+   precisa sair formatada e com fórmulas, ou se paga uma licença, ou se escreve
+   o arquivo. São ~200 linhas e nenhuma dependência nova no site.
+
+   Duas escolhas que valem registro:
+   - O ZIP sai SEM compressão (método "stored"). Comprimir exigiria um deflate
+     em JavaScript, e o arquivo aqui tem dezenas de KB — não compensa.
+   - As fórmulas vão sem valor calculado. O Excel, o LibreOffice e o Google
+     Sheets calculam na abertura porque o arquivo pede isso (fullCalcOnLoad).
+     Nome de função e separador de argumentos são SEMPRE em inglês e vírgula no
+     arquivo; quem abre no Excel em português vê "CONT.SE" e ponto-e-vírgula,
+     porque a tradução é da interface, não do formato.
+   ============================================================ */
+let crcTabela = null;
+function crc32(bytes) {
+  if (!crcTabela) {
+    crcTabela = new Uint32Array(256);
+    for (let n = 0; n < 256; n++) {
+      let c = n;
+      for (let k = 0; k < 8; k++) c = c & 1 ? 0xEDB88320 ^ (c >>> 1) : c >>> 1;
+      crcTabela[n] = c >>> 0;
+    }
+  }
+  let c = 0xFFFFFFFF;
+  for (let i = 0; i < bytes.length; i++) c = (crcTabela[(c ^ bytes[i]) & 0xFF] ^ (c >>> 8)) >>> 0;
+  return (c ^ 0xFFFFFFFF) >>> 0;
+}
+
+/* ZIP no formato mínimo que o Excel aceita: cabeçalho local + dado por arquivo,
+   diretório central no fim. */
+function zipSemCompressao(arquivos) {
+  const enc = new TextEncoder();
+  const u16 = n => [n & 0xFF, (n >>> 8) & 0xFF];
+  const u32 = n => [n & 0xFF, (n >>> 8) & 0xFF, (n >>> 16) & 0xFF, (n >>> 24) & 0xFF];
+  const agora = new Date();
+  const hora = (agora.getHours() << 11) | (agora.getMinutes() << 5) | Math.floor(agora.getSeconds() / 2);
+  const data = ((agora.getFullYear() - 1980) << 9) | ((agora.getMonth() + 1) << 5) | agora.getDate();
+
+  const blocos = [];
+  const entradas = [];
+  let deslocamento = 0;
+  arquivos.forEach(({ nome, conteudo }) => {
+    const dados = enc.encode(conteudo);
+    const nomeBytes = enc.encode(nome);
+    const crc = crc32(dados);
+    const local = new Uint8Array([
+      ...u32(0x04034b50), ...u16(20), ...u16(0), ...u16(0), ...u16(hora), ...u16(data),
+      ...u32(crc), ...u32(dados.length), ...u32(dados.length), ...u16(nomeBytes.length), ...u16(0),
+    ]);
+    blocos.push(local, nomeBytes, dados);
+    entradas.push({ crc, tam: dados.length, nomeBytes, deslocamento });
+    deslocamento += local.length + nomeBytes.length + dados.length;
+  });
+
+  const inicioCentral = deslocamento;
+  let tamanhoCentral = 0;
+  entradas.forEach(e => {
+    const central = new Uint8Array([
+      ...u32(0x02014b50), ...u16(20), ...u16(20), ...u16(0), ...u16(0), ...u16(hora), ...u16(data),
+      ...u32(e.crc), ...u32(e.tam), ...u32(e.tam), ...u16(e.nomeBytes.length),
+      ...u16(0), ...u16(0), ...u16(0), ...u16(0), ...u32(0), ...u32(e.deslocamento),
+    ]);
+    blocos.push(central, e.nomeBytes);
+    tamanhoCentral += central.length + e.nomeBytes.length;
+  });
+  blocos.push(new Uint8Array([
+    ...u32(0x06054b50), ...u16(0), ...u16(0), ...u16(entradas.length), ...u16(entradas.length),
+    ...u32(tamanhoCentral), ...u32(inicioCentral), ...u16(0),
+  ]));
+  return new Blob(blocos, { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+}
+
+function xmlEsc(v) {
+  return String(v == null ? "" : v)
+    .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    // Caractere de controle quebra o XML e o Excel se recusa a abrir o arquivo
+    // inteiro por causa de um byte perdido num nome de música.
+    .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g, "");
+}
+function colunaLetra(n) {
+  let s = "";
+  while (n > 0) { const r = (n - 1) % 26; s = String.fromCharCode(65 + r) + s; n = Math.floor((n - 1) / 26); }
+  return s;
+}
+/* Uma célula: { t: texto } ou { n: número } ou { f: fórmula }, com s = estilo. */
+function xlsxCelula(ref, c) {
+  if (!c) return "";
+  const s = c.s ? ` s="${c.s}"` : "";
+  if (c.f) return `<c r="${ref}"${s}><f>${xmlEsc(c.f)}</f></c>`;
+  if (typeof c.n === "number" && isFinite(c.n)) return `<c r="${ref}"${s}><v>${c.n}</v></c>`;
+  const texto = c.t == null ? "" : String(c.t);
+  if (!texto) return `<c r="${ref}"${s}/>`;
+  return `<c r="${ref}"${s} t="inlineStr"><is><t xml:space="preserve">${xmlEsc(texto)}</t></is></c>`;
+}
+function xlsxLinhas(linhas) {
+  return linhas.map((celulas, i) => {
+    const numero = i + 1;
+    const corpo = celulas.map((c, j) => xlsxCelula(colunaLetra(j + 1) + numero, c)).join("");
+    if (!corpo) return "";
+    const altura = celulas.altura ? ` ht="${celulas.altura}" customHeight="1"` : "";
+    return `<row r="${numero}"${altura}>${corpo}</row>`;
+  }).join("");
+}
+/* A ordem dos elementos dentro de <worksheet> é fixa no esquema do OOXML:
+   cols, sheetData, autoFilter, mergeCells. Trocar a ordem faz o Excel recusar
+   o arquivo como corrompido. */
+function xlsxFolha({ larguras = [], congelarEm = 0, autofiltro = "", merges = [], linhas = [] }) {
+  const cols = larguras.length
+    ? `<cols>${larguras.map((w, i) => `<col min="${i + 1}" max="${i + 1}" width="${w}" customWidth="1"/>`).join("")}</cols>`
+    : "";
+  const painel = congelarEm
+    ? `<sheetView showGridLines="0" workbookViewId="0"><pane ySplit="${congelarEm}" topLeftCell="A${congelarEm + 1}" activePane="bottomLeft" state="frozen"/><selection pane="bottomLeft" activeCell="A${congelarEm + 1}" sqref="A${congelarEm + 1}"/></sheetView>`
+    : `<sheetView showGridLines="0" workbookViewId="0"/>`;
+  // Impressão em paisagem e tudo na largura de uma folha: a tabela tem dez
+  // colunas e, no padrão retrato, o Excel quebra as últimas para outra página.
+  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetPr><pageSetUpPr fitToPage="1"/></sheetPr><sheetViews>${painel}</sheetViews><sheetFormatPr defaultRowHeight="15"/>${cols}<sheetData>${xlsxLinhas(linhas)}</sheetData>${autofiltro ? `<autoFilter ref="${autofiltro}"/>` : ""}${merges.length ? `<mergeCells count="${merges.length}">${merges.map(r => `<mergeCell ref="${r}"/>`).join("")}</mergeCells>` : ""}<pageMargins left="0.5" right="0.5" top="0.6" bottom="0.6" header="0.3" footer="0.3"/><pageSetup orientation="landscape" fitToWidth="1" fitToHeight="0" paperSize="9"/></worksheet>`;
+}
+
+/* Paleta igual à do site, para a planilha parecer parte do mesmo material. */
+const XLSX_ESTILOS = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+<fonts count="9">
+<font><sz val="11"/><name val="Calibri"/></font>
+<font><b/><sz val="16"/><color rgb="FFFFFFFF"/><name val="Calibri"/></font>
+<font><i/><sz val="10"/><color rgb="FF898781"/><name val="Calibri"/></font>
+<font><b/><sz val="11"/><color rgb="FFFFFFFF"/><name val="Calibri"/></font>
+<font><b/><sz val="11"/><color rgb="FF4A3AA7"/><name val="Calibri"/></font>
+<font><b/><sz val="11"/><color rgb="FF0A7A0A"/><name val="Calibri"/></font>
+<font><b/><sz val="11"/><color rgb="FF8A5A00"/><name val="Calibri"/></font>
+<font><b/><sz val="11"/><color rgb="FF0B0B0B"/><name val="Calibri"/></font>
+<font><sz val="11"/><color rgb="FF52514E"/><name val="Calibri"/></font>
+</fonts>
+<fills count="9">
+<fill><patternFill patternType="none"/></fill>
+<fill><patternFill patternType="gray125"/></fill>
+<fill><patternFill patternType="solid"><fgColor rgb="FFE34948"/><bgColor indexed="64"/></patternFill></fill>
+<fill><patternFill patternType="solid"><fgColor rgb="FF514F49"/><bgColor indexed="64"/></patternFill></fill>
+<fill><patternFill patternType="solid"><fgColor rgb="FFF5F4F0"/><bgColor indexed="64"/></patternFill></fill>
+<fill><patternFill patternType="solid"><fgColor rgb="FFECE9FB"/><bgColor indexed="64"/></patternFill></fill>
+<fill><patternFill patternType="solid"><fgColor rgb="FFE5F6E1"/><bgColor indexed="64"/></patternFill></fill>
+<fill><patternFill patternType="solid"><fgColor rgb="FFFFF4DC"/><bgColor indexed="64"/></patternFill></fill>
+<fill><patternFill patternType="solid"><fgColor rgb="FFF0EEE7"/><bgColor indexed="64"/></patternFill></fill>
+</fills>
+<borders count="3">
+<border><left/><right/><top/><bottom/><diagonal/></border>
+<border><left style="thin"><color rgb="FFE1E0D9"/></left><right style="thin"><color rgb="FFE1E0D9"/></right><top style="thin"><color rgb="FFE1E0D9"/></top><bottom style="thin"><color rgb="FFE1E0D9"/></bottom><diagonal/></border>
+<border><left style="thin"><color rgb="FFE1E0D9"/></left><right style="thin"><color rgb="FFE1E0D9"/></right><top style="medium"><color rgb="FF514F49"/></top><bottom style="thin"><color rgb="FFE1E0D9"/></bottom><diagonal/></border>
+</borders>
+<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>
+<cellXfs count="19">
+<xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>
+<xf numFmtId="0" fontId="1" fillId="2" borderId="0" xfId="0" applyFont="1" applyFill="1" applyAlignment="1"><alignment vertical="center" indent="1"/></xf>
+<xf numFmtId="0" fontId="2" fillId="0" borderId="0" xfId="0" applyFont="1" applyAlignment="1"><alignment vertical="center" indent="1"/></xf>
+<xf numFmtId="0" fontId="3" fillId="3" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center" wrapText="1"/></xf>
+<xf numFmtId="0" fontId="0" fillId="0" borderId="1" xfId="0" applyBorder="1" applyAlignment="1"><alignment vertical="center"/></xf>
+<xf numFmtId="0" fontId="0" fillId="4" borderId="1" xfId="0" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center"/></xf>
+<xf numFmtId="0" fontId="0" fillId="0" borderId="1" xfId="0" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center"/></xf>
+<xf numFmtId="0" fontId="0" fillId="4" borderId="1" xfId="0" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center"/></xf>
+<xf numFmtId="0" fontId="4" fillId="5" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center"/></xf>
+<xf numFmtId="0" fontId="5" fillId="6" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center"/></xf>
+<xf numFmtId="0" fontId="6" fillId="7" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center"/></xf>
+<xf numFmtId="0" fontId="8" fillId="0" borderId="1" xfId="0" applyFont="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center"/></xf>
+<xf numFmtId="0" fontId="7" fillId="8" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center"/></xf>
+<xf numFmtId="0" fontId="0" fillId="0" borderId="1" xfId="0" applyBorder="1" applyAlignment="1"><alignment vertical="center" wrapText="1"/></xf>
+<xf numFmtId="0" fontId="7" fillId="0" borderId="1" xfId="0" applyFont="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center"/></xf>
+<xf numFmtId="9" fontId="0" fillId="0" borderId="1" xfId="0" applyNumberFormat="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center"/></xf>
+<xf numFmtId="0" fontId="7" fillId="8" borderId="2" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center"/></xf>
+<xf numFmtId="0" fontId="7" fillId="8" borderId="2" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center"/></xf>
+<xf numFmtId="9" fontId="7" fillId="8" borderId="2" xfId="0" applyNumberFormat="1" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center"/></xf>
+</cellXfs>
+<cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles>
+</styleSheet>`;
+
+/* Nomes dos estilos, para o código abaixo não virar uma lista de números. */
+const E = {
+  titulo: 1, subtitulo: 2, cabecalho: 3, texto: 4, textoZebra: 5, centro: 6, centroZebra: 7,
+  nova: 8, jaTocou: 9, rascunho: 10, publicada: 11, secao: 12, textoQuebra: 13,
+  numero: 14, percentual: 15, totalRotulo: 16, totalNumero: 17, totalPercentual: 18,
+};
+
+/* Monta o .xlsx a partir de uma lista de abas já descritas. */
+function montarXLSX(abas) {
+  const arquivos = [
+    { nome: "[Content_Types].xml", conteudo: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>${abas.map((_, i) => `<Override PartName="/xl/worksheets/sheet${i + 1}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>`).join("")}<Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/></Types>` },
+    { nome: "_rels/.rels", conteudo: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>` },
+    { nome: "xl/workbook.xml", conteudo: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets>${abas.map((a, i) => `<sheet name="${xmlEsc(a.nome)}" sheetId="${i + 1}" r:id="rId${i + 1}"/>`).join("")}</sheets><calcPr calcId="0" fullCalcOnLoad="1"/></workbook>` },
+    { nome: "xl/_rels/workbook.xml.rels", conteudo: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">${abas.map((_, i) => `<Relationship Id="rId${i + 1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet${i + 1}.xml"/>`).join("")}<Relationship Id="rId${abas.length + 1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>` },
+    { nome: "xl/styles.xml", conteudo: XLSX_ESTILOS },
+  ];
+  abas.forEach((a, i) => arquivos.push({ nome: `xl/worksheets/sheet${i + 1}.xml`, conteudo: xlsxFolha(a) }));
+  return zipSemCompressao(arquivos);
+}
+
+/* ============================================================
+   EXPORTAÇÃO DO REPERTÓRIO DO CARNAVAL
+   ------------------------------------------------------------
+   Duas abas: o repertório linha a linha e um resumo que NÃO é texto fixo — são
+   fórmulas apontando para a primeira aba. Quem receber a planilha pode corrigir
+   um cantor ou apagar uma música e os totais acompanham, em vez de ficarem
+   mentindo a partir do dia em que o arquivo foi gerado.
+   ============================================================ */
+function dadosDoRepertorio({ somentePublicadas = false } = {}) {
+  const ed = edicaoCtx();
+  const eid = edicaoCtxId();
+  // Sai o repertório INTEIRO, mesmo com filtro ou ordenação ligados na tela:
+  // planilha com parte das músicas e sem dizer isso é o tipo de arquivo que
+  // circula no WhatsApp e vira a versão oficial errada.
+  //
+  // No painel admin sai o que está na TELA (o rascunho local), porque é o que o
+  // admin acabou de digitar — uma planilha que discorda da tela que a gerou não
+  // teria explicação possível. Na área do batuqueiro não existe rascunho local:
+  // sai o que está publicado, que é exatamente o que ele enxerga.
+  const doBanco = m => ({
+    id: m.id, nome: m.nome, tom: m.tom || "", cantor: m.cantor || "",
+    rascunho: ehRascunho(m), set: setDaMusica(m), ordem: m.ordem,
+    novaManual: m.novaManual === true || m.novaManual === false ? m.novaManual : null,
+  });
+  const lista = ordenarRepertorio(somentePublicadas
+    ? musicasPublicadas().map(doBanco)
+    : (session.musicasDraft && session.musicasDraft.length
+      ? session.musicasDraft
+      : musicasCache.map(doBanco)));
+  const linhas = [];
+  SETS_DO_CARNAVAL.forEach(set => {
+    musicasDoSet(lista, set).forEach((m, i) => {
+      const ensaios = ensaiosCache.filter(e => (e.musicaIds || []).includes(m.id));
+      const sit = situacaoDeNovidade(m, eid);
+      linhas.push({
+        set, posicao: i + 1,
+        nome: (m.nome || "").trim(),
+        nova: sit.nova ? "Nova" : "Já tocou",
+        decididoPeloAdmin: sit.decididoPeloAdmin,
+        tom: (m.tom || "").trim() || "Sem tom definido",
+        cantor: (m.cantor || "").trim() || "Sem cantor(a) definido",
+        ensaios: ensaios.length,
+        datas: ensaios.map(e => ensaioLabel(e)).join(", "),
+        situacao: m.rascunho ? "Rascunho" : "Publicada",
+        anos: sit.anos.join(", "),
+      });
+    });
+  });
+  const nomeBase = `repertorio-${(edicaoLabel(ed) || "carnaval").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "")}-${hojeISO()}`;
+  return { linhas, ed, nomeBase };
+}
+
+/* A aba do repertório, igual nas duas telas. A coluna "Situação" (publicada ou
+   rascunho) só existe na versão do admin: rascunho é assunto da organização, e
+   na área do batuqueiro todas as músicas da planilha já estão publicadas. */
+function abaDoRepertorio(linhas, ed, { comSituacao }) {
+  const COLS = ["Set", "#", "Música", "Nova no bloco?", "Tom", "Cantor(a)", "Ensaios", "Ensaiada em"]
+    .concat(comSituacao ? ["Situação"] : [])
+    .concat(["Carnavais anteriores"]);
+  const PRIMEIRA = 5;                      // linha 1 título, 2 subtítulo, 3 vazia, 4 cabeçalho
+  const ULTIMA = PRIMEIRA + linhas.length - 1;
+  const novas = linhas.filter(l => l.nova === "Nova").length;
+  const dados = [
+    Object.assign([{ t: `Repertório — ${edicaoLabel(ed)}`, s: E.titulo }], { altura: 34 }),
+    Object.assign([{ t: `${linhas.length} música${linhas.length === 1 ? "" : "s"} · ${novas} nova${novas === 1 ? "" : "s"} no bloco · na ordem dos sets · gerado em ${dateBR(hojeISO())}${comSituacao ? " · a aba Resumo calcula sozinha a partir desta" : ""}`, s: E.subtitulo }], { altura: 20 }),
+    [],
+    Object.assign(COLS.map(c => ({ t: c, s: E.cabecalho })), { altura: 26 }),
+  ];
+  linhas.forEach((l, i) => {
+    const zebra = i % 2 === 1;
+    const texto = zebra ? E.textoZebra : E.texto;
+    const centro = zebra ? E.centroZebra : E.centro;
+    dados.push([
+      { n: l.set, s: centro },
+      { n: l.posicao, s: centro },
+      { t: l.nome, s: texto },
+      { t: l.nova, s: l.nova === "Nova" ? E.nova : E.jaTocou },
+      { t: l.tom, s: texto },
+      { t: l.cantor, s: texto },
+      { n: l.ensaios, s: centro },
+      { t: l.datas, s: E.textoQuebra },
+      ...(comSituacao ? [{ t: l.situacao, s: l.situacao === "Rascunho" ? E.rascunho : E.publicada }] : []),
+      { t: l.anos, s: texto },
+    ]);
+  });
+  const larguras = [6, 5, 38, 16, 18, 22, 10, 34].concat(comSituacao ? [14] : []).concat([22]);
+  return {
+    aba: {
+      nome: "Repertório",
+      larguras,
+      congelarEm: 4,
+      autofiltro: `A4:${colunaLetra(COLS.length)}${ULTIMA}`,
+      merges: [`A1:${colunaLetra(COLS.length)}1`, `A2:${colunaLetra(COLS.length)}2`],
+      linhas: dados,
+    },
+    PRIMEIRA, ULTIMA, COLS,
+  };
+}
+
+/* Versão da área do batuqueiro: só a lista, sem resumo e sem rascunho. */
+function exportarRepertorioBatuqueiroXLSX() {
+  const { linhas, ed, nomeBase } = dadosDoRepertorio({ somentePublicadas: true });
+  if (!linhas.length) { alert("Este carnaval ainda não tem repertório publicado para exportar."); return; }
+  const { aba } = abaDoRepertorio(linhas, ed, { comSituacao: false });
+  baixarArquivo(`${nomeBase}.xlsx`, montarXLSX([aba]));
+  showToast(`Planilha do repertório baixada (${linhas.length} músicas).`);
+}
+
+function exportarRepertorioXLSX() {
+  const { linhas, ed, nomeBase } = dadosDoRepertorio();
+  if (!linhas.length) { alert("Este carnaval ainda não tem nenhuma música no repertório para exportar."); return; }
+  const { aba, PRIMEIRA, ULTIMA } = abaDoRepertorio(linhas, ed, { comSituacao: true });
+
+  // ---- aba 2: só fórmulas, nenhum número digitado ----
+  const col = { set: "A", nova: "D", tom: "E", cantor: "F", ensaios: "G", situacao: "I" };
+  const faixa = letra => `'Repertório'!$${letra}$${PRIMEIRA}:$${letra}$${ULTIMA}`;
+  const resumo = [
+    Object.assign([{ t: `Resumo do repertório — ${edicaoLabel(ed)}`, s: E.titulo }], { altura: 34 }),
+    Object.assign([{ t: "Todos os números desta aba são fórmulas sobre a aba Repertório: corrigir uma música lá atualiza tudo aqui.", s: E.subtitulo }], { altura: 20 }),
+    [],
+    [{ t: "Visão geral", s: E.secao }, { t: "", s: E.secao }],
+    [{ t: "Total de músicas", s: E.texto }, { f: `COUNTA(${faixa("C")})`, s: E.numero }],
+    [{ t: "Novas no bloco", s: E.texto }, { f: `COUNTIF(${faixa(col.nova)},"Nova")`, s: E.numero }],
+    [{ t: "Já tocadas em outros carnavais", s: E.texto }, { f: `COUNTIF(${faixa(col.nova)},"Já tocou")`, s: E.numero }],
+    [{ t: "% de novidade no repertório", s: E.texto }, { f: `IF(B5=0,0,B6/B5)`, s: E.percentual }],
+    [{ t: "Músicas no Set 1", s: E.texto }, { f: `COUNTIF(${faixa(col.set)},1)`, s: E.numero }],
+    [{ t: "Músicas no Set 2", s: E.texto }, { f: `COUNTIF(${faixa(col.set)},2)`, s: E.numero }],
+    [{ t: "Publicadas", s: E.texto }, { f: `COUNTIF(${faixa(col.situacao)},"Publicada")`, s: E.numero }],
+    [{ t: "Em rascunho (só a organização vê)", s: E.texto }, { f: `COUNTIF(${faixa(col.situacao)},"Rascunho")`, s: E.numero }],
+    [{ t: "Ainda sem nenhum ensaio", s: E.texto }, { f: `COUNTIF(${faixa(col.ensaios)},0)`, s: E.numero }],
+    [],
+  ];
+  const cabecalhoCantor = resumo.length + 1;
+  resumo.push([
+    { t: "Cantor(a)", s: E.cabecalho }, { t: "Músicas", s: E.cabecalho }, { t: "Novas", s: E.cabecalho },
+    { t: "Já tocadas", s: E.cabecalho }, { t: "% do repertório", s: E.cabecalho },
+  ]);
+  const cantores = [...new Set(linhas.map(l => l.cantor))]
+    .sort((a, b) => linhas.filter(l => l.cantor === b).length - linhas.filter(l => l.cantor === a).length
+      || a.localeCompare(b, "pt-BR", { sensitivity: "base" }));
+  cantores.forEach(nome => {
+    const r = resumo.length + 1;
+    resumo.push([
+      { t: nome, s: E.texto },
+      { f: `COUNTIF(${faixa(col.cantor)},$A${r})`, s: E.numero },
+      { f: `COUNTIFS(${faixa(col.cantor)},$A${r},${faixa(col.nova)},"Nova")`, s: E.numero },
+      { f: `COUNTIFS(${faixa(col.cantor)},$A${r},${faixa(col.nova)},"Já tocou")`, s: E.numero },
+      { f: `IF($B$5=0,0,B${r}/$B$5)`, s: E.percentual },
+    ]);
+  });
+  const primeiroCantor = cabecalhoCantor + 1;
+  const ultimoCantor = resumo.length;
+  resumo.push([
+    { t: "Total", s: E.totalRotulo },
+    { f: `SUM(B${primeiroCantor}:B${ultimoCantor})`, s: E.totalNumero },
+    { f: `SUM(C${primeiroCantor}:C${ultimoCantor})`, s: E.totalNumero },
+    { f: `SUM(D${primeiroCantor}:D${ultimoCantor})`, s: E.totalNumero },
+    { f: `SUM(E${primeiroCantor}:E${ultimoCantor})`, s: E.totalPercentual },
+  ]);
+  resumo.push([]);
+  resumo.push([{ t: "Tom", s: E.cabecalho }, { t: "Músicas", s: E.cabecalho }, { t: "Novas", s: E.cabecalho }]);
+  [...new Set(linhas.map(l => l.tom))]
+    .sort((a, b) => a.localeCompare(b, "pt-BR", { sensitivity: "base" }))
+    .forEach(tom => {
+      const r = resumo.length + 1;
+      resumo.push([
+        { t: tom, s: E.texto },
+        { f: `COUNTIF(${faixa(col.tom)},$A${r})`, s: E.numero },
+        { f: `COUNTIFS(${faixa(col.tom)},$A${r},${faixa(col.nova)},"Nova")`, s: E.numero },
+      ]);
+    });
+
+  const arquivo = montarXLSX([
+    aba,
+    {
+      nome: "Resumo",
+      larguras: [34, 12, 12, 14, 16],
+      merges: ["A1:E1", "A2:E2"],
+      linhas: resumo,
+    },
+  ]);
+  baixarArquivo(`${nomeBase}.xlsx`, arquivo);
+  showToast(`Planilha do repertório baixada (${linhas.length} músicas).`);
+}
+
+/* ============================================================
    VIEW: ADMIN — painel principal
    ============================================================ */
 /* Aviso no topo do painel enquanto houver contato guardado em local legível por
@@ -2557,6 +3040,22 @@ function boxContatosExpostos() {
     <p style="margin:8px 0 0;">No formato antigo esses dados ficavam junto do cadastro, que é lido por qualquer pessoa logada no site — inclusive fora das telas, consultando o banco direto. A separação move o celular e o nascimento para uma área que só a própria pessoa e a organização conseguem ler. Nada é apagado.</p>
     <div style="margin-top:10px;">
       <button class="btn-primary btn-sm" id="btn-separar-contatos">Restringir esses dados agora</button>
+    </div>
+  </div>`;
+}
+
+/* Mesmo aviso, para o dinheiro: enquanto houver inscrição com forma de
+   pagamento, valor pago ou isenção guardados dentro dela, qualquer pessoa
+   logada consegue ler isso pelo console do navegador. */
+function boxFinanceiroExposto() {
+  const n = financeirosExpostos().length;
+  if (!n) return "";
+  return `
+  <div class="seed-box" style="text-align:left; border-style:solid;">
+    <b>Dados de pagamento de ${n} ${n === 1 ? "inscrição" : "inscrições"} deste carnaval ainda estão em área de leitura geral.</b>
+    <p style="margin:8px 0 0;">Forma de pagamento, valor já pago e isenção ficavam dentro da inscrição, que é lida por qualquer pessoa logada no site — inclusive fora das telas, consultando o banco direto. A separação move esses três para uma área que só a própria pessoa e a organização conseguem ler. Nada é apagado, e nenhum valor muda.</p>
+    <div style="margin-top:10px;">
+      <button class="btn-primary btn-sm" id="btn-separar-financeiro">Restringir esses dados agora</button>
     </div>
   </div>`;
 }
@@ -2600,6 +3099,7 @@ function viewAdmin() {
     <div class="wrap">
       <p><button class="link-btn" id="btn-back-batuqueiro">← Voltar para minha área</button></p>
       ${boxContatosExpostos()}
+      ${boxFinanceiroExposto()}
       ${precisaImportarLegado() ? `
       <div class="seed-box" style="text-align:left; border-style:solid;">
         <b>Encontrei dados no formato antigo esperando importação.</b>
@@ -2622,6 +3122,7 @@ function viewAdmin() {
   <div class="wrap">
     <p><button class="link-btn" id="btn-back-batuqueiro">← Voltar para minha área</button></p>
       ${boxContatosExpostos()}
+      ${boxFinanceiroExposto()}
 
     <!-- ÁREA 1: um carnaval por vez ------------------------------------- -->
     <h2 class="section-title">Acompanhar um carnaval</h2>
@@ -3893,7 +4394,10 @@ function viewAdminMusicas() {
     <p><button class="link-btn" id="btn-back-admin6">← Voltar para o painel admin</button></p>
     ${bannerEdicao(ed)}
     <div class="card">
-      <h2>Repertório / músicas — ${esc(edicaoLabel(ed))}</h2>
+      <div class="card-head">
+        <h2 style="margin:0;">Repertório / músicas — ${esc(edicaoLabel(ed))}</h2>
+        ${draft.length ? `<button class="btn-secondary btn-sm" id="btn-exportar-repertorio-xlsx" title="Baixa o repertório completo em Excel, com uma aba de resumo em fórmulas">Baixar Excel (.xlsx)</button>` : ""}
+      </div>
       <p class="card-sub">O repertório deste carnaval na ordem em que a bateria vai tocar, dividido nos dois sets. Use as setas para subir e descer cada música, ou digite o número da posição; para passar uma música de um set para o outro, troque o set na própria linha. <b>A ordem e o set gravam na hora</b> — o botão "Salvar todas as músicas" é só para nome, tom e cantor(a). Tom e Cantor(a) são campos livres e ficam guardados para os próximos carnavais: ao trazer a mesma música de volta, eles voltam preenchidos.</p>
 
       ${emRascunho.length && editavel ? `
@@ -4271,10 +4775,13 @@ function renderAdminEditUserForm(p, editavel = true) {
         <p class="hint">O próprio batuqueiro só troca isso enquanto não registrou nenhum pagamento. Você pode trocar a qualquer momento — o valor já pago continua contando, e o total devido é recalculado pelo novo plano.</p>
       </div>
       <div class="field">
-        <label style="display:flex; align-items:center; gap:8px; font-weight:400; cursor:pointer;">
-          <input type="checkbox" id="ae-isento-${p.id}" ${p.isentoManual ? "checked" : ""} style="width:auto;" ${dis}>
-          Isenção individual de anuidade (além das posições isentas por padrão)
-        </label>
+        <label>Isenção de anuidade</label>
+        <select id="ae-isento-${p.id}" ${dis}>
+          <option value="" ${!isencaoManualDe(p) ? "selected" : ""}>Automática — ${esc(isIsento(p) ? `hoje isenta (${isentoMotivo(p)})` : "hoje paga a anuidade")}</option>
+          <option value="isento" ${isencaoManualDe(p) === "isento" ? "selected" : ""}>Isenta — decisão da organização</option>
+          <option value="naoIsento" ${isencaoManualDe(p) === "naoIsento" ? "selected" : ""}>Paga a anuidade — mesmo em função isenta</option>
+        </select>
+        <p class="hint">No automático, vale a regra do site: quem respondeu que não vai tocar e quem está numa função marcada como isenta não pagam. As outras duas opções são decisão sua e passam por cima da regra, nos dois sentidos.</p>
       </div>
       <div class="field">
         <label style="display:flex; align-items:center; gap:8px; font-weight:400; cursor:pointer;">
@@ -4409,6 +4916,51 @@ function contatosExpostos() {
   return pessoasCache.filter(p => (p.celular || "").trim() || (p.dataNascimento || "").trim());
 }
 
+/* Inscrições que ainda guardam dinheiro ou isenção dentro de si — ou seja,
+   legíveis por qualquer pessoa logada. É o que a separação abaixo resolve.
+   Só conta o que tem conteúdo: inscrição com totalPago 0, sem plano e sem
+   isenção não expõe nada e não entra na lista. */
+function financeirosExpostos() {
+  return inscricoesCache.filter(i =>
+    numero(i.totalPago) > 0 || !!i.formaPagamento || i.isentoManual === true);
+}
+
+/* Passo único por carnaval: move o financeiro de cada inscrição para
+   /edicoes/{eid}/financeiro e zera o campo na inscrição. Pode ser rodado
+   quantas vezes for preciso — o que já foi separado não aparece na lista. */
+async function separarFinanceiro() {
+  const expostos = financeirosExpostos();
+  const eid = edicaoCtxId();
+  if (!eid || expostos.length === 0) { alert("Nenhuma inscrição deste carnaval está com dado de pagamento em local visível para todos. Nada a fazer."); return; }
+  if (!confirm(`Mover forma de pagamento, valor pago e isenção de ${expostos.length} ${expostos.length === 1 ? "inscrição" : "inscrições"} para uma área restrita?\n\nDepois disso, esses dados só podem ser lidos pela própria pessoa e pela organização. Nada é apagado e nenhum valor muda — eles só saem de onde qualquer pessoa logada conseguia ler.`)) return;
+
+  const escritas = [];
+  expostos.forEach(i => {
+    // não sobrescreve o que já estiver na área restrita e for mais recente
+    const atual = financeiroCache[i.id] || {};
+    const temDoc = Object.keys(atual).length > 0;
+    escritas.push([P.financeiro(eid, i.id), {
+      formaPagamento: (temDoc ? atual.formaPagamento : i.formaPagamento) || null,
+      totalPago: numero(temDoc ? atual.totalPago : i.totalPago),
+      isencaoManual: temDoc
+        ? (atual.isencaoManual || (atual.isentoManual ? "isento" : null))
+        : (i.isentoManual ? "isento" : null),
+    }]);
+  });
+  try {
+    await gravarEmBlocos(escritas);
+    // só limpa a origem depois que a cópia entrou, para nunca ficar sem o dado.
+    // Os campos ficam com valor neutro em vez de serem apagados: as regras da
+    // inscrição ainda os conhecem, e um documento sem eles é tratado igual.
+    await gravarEmBlocos(expostos.map(i => [P.inscricao(eid, i.id), {
+      formaPagamento: null, totalPago: 0, isentoManual: false,
+    }]), 400, true);
+    showToast(`Pronto: o financeiro de ${expostos.length} ${expostos.length === 1 ? "inscrição" : "inscrições"} agora é restrito.`);
+  } catch (err) {
+    alert(friendlyFirestoreError(err));
+  }
+}
+
 /* Passo único: move o contato de cada cadastro para /contatos e apaga o campo
    de /pessoas. Pode ser rodado quantas vezes for preciso — se não houver nada
    exposto, não faz nada; e um cadastro já separado não aparece na lista. */
@@ -4508,10 +5060,13 @@ async function migrarDoFormatoAntigo() {
       escritas.push([P.contato(d.id), {
         celular: v.celular || "", dataNascimento: dataNascimentoNormalizada(v.dataNascimento),
       }]);
+      escritas.push([P.financeiro(eid, d.id), {
+        formaPagamento: v.formaPagamento || null, totalPago: numero(v.totalPago),
+        isencaoManual: v.isentoManual ? "isento" : null,
+      }]);
       escritas.push([P.inscricao(eid, d.id), {
         vaiTocar: respostaVaiTocar(v), posicao: v.posicao || "", posicaoOutro: v.posicaoOutro || "",
-        camisa: v.camisa || "", isentoManual: !!v.isentoManual,
-        formaPagamento: v.formaPagamento || null, totalPago: numero(v.totalPago),
+        camisa: v.camisa || "",
         // Sem data de inscrição de propósito: o formato antigo não guardava
         // quando a pessoa respondeu, e carimbar a hora da importação faria a
         // planilha afirmar que a bateria inteira se inscreveu no mesmo minuto.
@@ -4702,8 +5257,7 @@ function wireEvents() {
         await updateDoc(P.inscricao(ed.id, fbUser.uid), dadosDoAno);
       } else {
         await setDoc(P.inscricao(ed.id, fbUser.uid), {
-          ...dadosDoAno, isentoManual: false, formaPagamento: null, totalPago: 0,
-          inscritoEm: serverTimestamp(),
+          ...dadosDoAno, inscritoEm: serverTimestamp(),
         });
       }
       // Se a pessoa já tinha comprovantes nesta edição (foi tirada e voltou, ou
@@ -4713,7 +5267,7 @@ function wireEvents() {
       // segunda escrita, que as regras aceitam por só aumentar o total.
       const jaPago = jaEstavaInscrito ? 0 : myPagamentos.reduce((soma, p) => soma + numero(p.valor), 0);
       if (jaPago > 0) {
-        try { await updateDoc(P.inscricao(ed.id, fbUser.uid), { totalPago: jaPago }); }
+        try { await setDoc(P.financeiro(ed.id, fbUser.uid), { totalPago: jaPago }, { merge: true }); }
         catch (err) { console.warn("total já pago não pôde ser recomposto:", err); }
       }
       session.errors.inscricao = null;
@@ -4870,7 +5424,7 @@ function wireEvents() {
   // BATUQUEIRO — escolha / troca de forma de pagamento
   onAll("#plan-picker .plan-pill", "click", async el => {
     const eid = edicaoCtxId();
-    try { await updateDoc(P.inscricao(eid, fbUser.uid), { formaPagamento: el.dataset.plano }); }
+    try { await setDoc(P.financeiro(eid, fbUser.uid), { formaPagamento: el.dataset.plano }, { merge: true }); }
     catch (err) { alert(friendlyFirestoreError(err)); }
   });
   on("#btn-change-plan", "click", async () => {
@@ -4883,7 +5437,7 @@ function wireEvents() {
     }
     if (!confirm("Alterar a forma de pagamento? O valor total devido será recalculado.")) return;
     const eid = edicaoCtxId();
-    try { await updateDoc(P.inscricao(eid, fbUser.uid), { formaPagamento: null }); }
+    try { await setDoc(P.financeiro(eid, fbUser.uid), { formaPagamento: null }, { merge: true }); }
     catch (err) { alert(friendlyFirestoreError(err)); }
   });
 
@@ -4925,7 +5479,9 @@ function wireEvents() {
       const batch = writeBatch(db);
       const payRef = doc(P.pagamentos(eid));
       batch.set(payRef, { uid: fbUser.uid, data, valor, pix, createdAt: serverTimestamp() });
-      batch.update(P.inscricao(eid, fbUser.uid), { totalPago: increment(valor) });
+      // set com merge, não update: na primeira vez o documento do financeiro
+      // ainda não existe, e update falharia justo no primeiro pagamento.
+      batch.set(P.financeiro(eid, fbUser.uid), { totalPago: increment(valor) }, { merge: true });
       await batch.commit();
       session.addPayOpenFor = null;
     } catch (err) { alert("Não foi possível salvar o pagamento: " + friendlyFirestoreError(err)); }
@@ -4976,7 +5532,7 @@ function wireEvents() {
   const ajustarTotal = async (uid, delta) => {
     const pessoa = batuqueirosDaEdicao().find(x => x.id === uid);
     const novo = Math.max(0, totalPago(pessoa || {}) + delta);
-    await updateDoc(P.inscricao(edicaoCtxId(), uid), { totalPago: novo });
+    await setDoc(P.financeiro(edicaoCtxId(), uid), { totalPago: novo }, { merge: true });
   };
 
   onAll("[data-salvar-pag]", "click", async el => {
@@ -5048,7 +5604,7 @@ function wireEvents() {
     const pessoa = batuqueirosDaEdicao().find(x => x.id === uid);
     if (!confirm(`Acertar o total de ${fullName(pessoa || {})} de ${currency(totalPago(pessoa || {}))} para ${currency(soma)}?\n\nIsso descarta qualquer valor que esteja no total sem comprovante lançado aqui — normalmente resíduo da importação do site antigo. Não dá para desfazer pelo site.`)) return;
     try {
-      await updateDoc(P.inscricao(edicaoCtxId(), uid), { totalPago: soma });
+      await setDoc(P.financeiro(edicaoCtxId(), uid), { totalPago: soma }, { merge: true });
       showToast("Total acertado pela soma dos comprovantes.");
     } catch (err) { alert(friendlyFirestoreError(err)); }
     render();
@@ -5072,7 +5628,7 @@ function wireEvents() {
       // Calculado aqui, e não com increment(-valor), para nunca deixar o total
       // negativo caso ele e os comprovantes estejam fora de sincronia (o total
       // pode ter vindo da importação do formato antigo, sem comprovante atrás).
-      batch.update(P.inscricao(eid, fbUser.uid), { totalPago: Math.max(0, totalPago(u) - (pag.valor || 0)) });
+      batch.set(P.financeiro(eid, fbUser.uid), { totalPago: Math.max(0, totalPago(u) - (pag.valor || 0)) }, { merge: true });
       await batch.commit();
       showToast("Lançamento removido.");
     } catch (err) { alert(friendlyFirestoreError(err)); }
@@ -5200,6 +5756,7 @@ function wireEvents() {
   });
   on("#btn-migrar-legado", "click", migrarDoFormatoAntigo);
   on("#btn-separar-contatos", "click", separarContatos);
+  on("#btn-separar-financeiro", "click", separarFinanceiro);
   on("#btn-backup", "click", baixarBackup);
   on("#btn-importar-repertorio", "click", importarRepertorioHistorico);
   on("#btn-goto-repertorio-historico", "click", () => go("admin-repertorio-historico"));
@@ -5215,6 +5772,8 @@ function wireEvents() {
   // campos de texto: só mexe no estado e redesenha por fora, para não tirar o
   // foco de quem está digitando.
   on("#rep-admin-busca", "input", e => { session.repAdminBusca = e.target.value; renderExterno(); });
+  on("#btn-exportar-repertorio-xlsx", "click", exportarRepertorioXLSX);
+  on("#btn-exportar-repertorio-batuqueiro", "click", exportarRepertorioBatuqueiroXLSX);
   on("#rep-admin-limpar", "click", () => {
     session.repAdminBusca = ""; session.repAdminFiltroSet = []; session.repAdminFiltroNova = [];
     session.repAdminFiltroTom = []; session.repAdminFiltroCantor = []; session.repAdminFiltroStatus = [];
@@ -5849,16 +6408,24 @@ function wireEvents() {
         vaiTocar: $(`#ae-vaitocar-${id}`).value,
         posicao: $(`#ae-posicao-${id}`).value,
         camisa: $(`#ae-camisa-${id}`).value,
+      };
+      // Dinheiro e isenção vão para a área restrita, não para a inscrição, que
+      // qualquer pessoa logada lê.
+      const escolhaIsencao = $(`#ae-isento-${id}`).value;
+      const financeiroPatch = {
         // O admin é a única saída quando alguém escolhe o plano errado e já
         // registrou um pagamento (aí o botão do próprio batuqueiro some).
         formaPagamento: $(`#ae-formapagamento-${id}`).value || null,
-        isentoManual: $(`#ae-isento-${id}`).checked,
+        isencaoManual: escolhaIsencao === "isento" || escolhaIsencao === "naoIsento" ? escolhaIsencao : null,
       };
       try {
         const batch = writeBatch(db);
         batch.update(P.pessoa(id), pessoaPatch);
         if (Object.keys(contatoPatch).length) batch.set(P.contato(id), contatoPatch, { merge: true });
-        if (eid && edicaoEditavel(edicaoCtx())) batch.update(P.inscricao(eid, id), inscricaoPatch);
+        if (eid && edicaoEditavel(edicaoCtx())) {
+          batch.update(P.inscricao(eid, id), inscricaoPatch);
+          batch.set(P.financeiro(eid, id), financeiroPatch, { merge: true });
+        }
         await batch.commit();
         session.adminEditingUser = null;
         render();

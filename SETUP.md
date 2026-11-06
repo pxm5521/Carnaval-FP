@@ -39,7 +39,7 @@ O cadastro não exige confirmação por e-mail — assim que a pessoa cria o log
 
 ### 1.3 — Publicar as regras de segurança
 
-O arquivo `firestore.rules` (incluído neste pacote) já contém as regras corretas: qualquer pessoa logada pode ver a lista de batuqueiros e a presença de todos, mas só quem tem permissão marca presença; celular, data de nascimento e os pagamentos individuais só o dono e a organização leem; só o dono de um cadastro (ou um admin) pode editá-lo; e só admins mexem em edições, posições, ensaios, músicas, preços ou concedem acessos. Uma edição encerrada fica travada até para o admin.
+O arquivo `firestore.rules` (incluído neste pacote) já contém as regras corretas: qualquer pessoa logada pode ver a lista de batuqueiros e a presença de todos, mas só quem tem permissão marca presença; celular, data de nascimento, os pagamentos individuais e o financeiro de cada carnaval (valor pago, forma de pagamento e isenção) só o dono e a organização leem; só o dono de um cadastro (ou um admin) pode editá-lo; e só admins mexem em edições, posições, ensaios, músicas, preços ou concedem acessos. Uma edição encerrada fica travada até para o admin.
 
 > **Sempre que este arquivo mudar numa atualização do site, republique as regras.** É um passo separado de subir o código no GitHub — se esquecer, o site publica normalmente mas algumas ações passam a dar erro de permissão.
 
@@ -312,6 +312,19 @@ A avaliação é automática, mas não é a palavra final: **clicar na caixinha 
 
 > A música é reconhecida **pelo nome**, igual ao resto do histórico — maiúsculas, acentos e espaço a mais não contam. Nome escrito diferente do que está no arquivo é avaliado como música nova; é para esses casos que serve a edição à mão. Mudar a classificação à mão não mexe no histórico nem no arquivo: muda só o rótulo daquela música naquele carnaval.
 
+**Dá para levar o repertório para o Excel?** Dá, pelo botão **"Baixar Excel (.xlsx)"**, no alto da tela de Repertório. O arquivo sai formatado — título, cabeçalho fixo ao rolar, filtro em cada coluna, largura certa e as caixinhas "Nova" e "Já tocou" com a mesma cor da tela — e tem duas abas:
+
+- **Repertório**: uma linha por música, na ordem dos sets, com set, posição, nome, se é nova no bloco, tom, cantor(a), em quantos ensaios já foi tocada e em quais datas, se está publicada ou em rascunho, e em que carnavais anteriores ela aparece.
+- **Resumo**: quantas músicas no total, quantas são novas, quantas já tocaram, a porcentagem de novidade, quantas em cada set, quantas ainda não foram ensaiadas, **quantas músicas cada cantor(a) canta** (separando novas de já tocadas) e quantas músicas por tom.
+
+> **O resumo é fórmula, não número gravado.** Corrigir um cantor(a) ou apagar uma linha na aba Repertório atualiza os totais da aba Resumo na hora. É o que diferencia uma planilha de uma foto: o arquivo continua certo depois de editado, em vez de passar a mentir a partir do dia em que foi gerado.
+
+A planilha sai com o **repertório inteiro**, mesmo com filtro ligado na tela — arquivo com parte das músicas, e sem dizer isso, é exatamente o que circula no grupo e vira a versão oficial errada. Também sai o que está na tela, inclusive o que você digitou e ainda não salvou.
+
+Na **área do batuqueiro** o mesmo botão aparece no alto do Repertório, com uma diferença: ali a planilha tem **só a aba do repertório**, sem resumo, sem a coluna de situação e sem as músicas em rascunho — rascunho é assunto da organização.
+
+> O arquivo é gerado dentro do navegador, sem mandar nada para fora e sem depender de biblioteca nenhuma: o `.xlsx` é montado pelo próprio site. (A exportação de **cadastros**, em Cadastros, é outra coisa: ela usa a biblioteca SheetJS, como está documentado mais abaixo.)
+
 **Dá para filtrar o repertório enquanto monto?** Dá: acima das duas tabelas há **um filtro para cada coluna**, no mesmo formato do resto do site — cada um aceita mais de uma opção, e ao lado de cada opção aparece quantas músicas ela tem.
 
 - **Buscar música** acha pelo nome, sem percorrer a lista.
@@ -331,6 +344,7 @@ As opções de cada filtro são calculadas sobre o que os outros já deixaram pa
 - **Clicar no título de uma coluna** ordena por ela: Música e Cantor(a) em ordem alfabética, Tom idem, Nova? pelas novidades primeiro, Ensaios e "Ensaiada em" pela quantidade de ensaios. Um segundo clique inverte; o terceiro devolve a ordem dos sets.
 - A coluna **Nova?** diz se a música é nova no bloco ou se a bateria já tocou ela em algum carnaval anterior — é a mesma avaliação que a organização vê no painel, inclusive as correções feitas à mão.
 - A coluna **Ensaios** mostra **em quantos ensaios deste carnaval a música já foi tocada**; ao lado, "Ensaiada em" traz as datas. Serve para ver de relance o que está pouco rodado perto do carnaval.
+- O botão **"Baixar Excel (.xlsx)"**, no alto do box, baixa o repertório completo em planilha, na ordem dos sets. O filtro e a ordenação da tela não mudam o arquivo.
 - **Os filtros acima da tabela** filtram por Set, Tom, Cantor(a), "Nova no bloco?", "Quantos ensaios" e por ensaio, cada um aceitando mais de uma opção — inclusive duas que resolvem perguntas frequentes: "Ainda não ensaiada" e "Sem tom definido".
 - O campo **Buscar música** acha pelo nome, sem precisar percorrer a lista.
 - Um botão **"Limpar e voltar à ordem dos sets"** aparece assim que algo está filtrado ou reordenado.
@@ -347,7 +361,15 @@ Uma música já publicada pode voltar para rascunho pelo botão **"Voltar para r
 
 > **O rascunho esconde da tela, não do banco.** As regras do Firestore deixam qualquer pessoa com cadastro no site ler a coleção de músicas do carnaval, então alguém que saiba abrir o console do navegador consegue ver as músicas em rascunho. Serve para não anunciar antes da hora para o bloco — não é segredo à prova de curioso técnico. Se quiser fechar isso de verdade, dá para mudar a regra para o batuqueiro só conseguir ler as músicas publicadas; é uma alteração maior, que muda como o site lê a lista e exige marcar as músicas antigas, e por isso não foi feita junto.
 
-**Quem fica isento da anuidade?** Três situações, e basta uma delas: quem respondeu que NÃO vai tocar naquele carnaval; quem está numa função marcada como isenta (Voz, Mestre, Apoio etc., configurável em Posições); e quem recebeu isenção individual pelo painel. Se a pessoa já tinha pago antes de ficar isenta, o valor continua aparecendo para ela e no relatório — a cobrança some, o registro não.
+**Quem fica isento da anuidade?** Duas situações automáticas, e basta uma delas: quem respondeu que NÃO vai tocar naquele carnaval, e quem está numa função marcada como isenta (Voz, Mestre, Apoio etc., configurável em Posições). Se a pessoa já tinha pago antes de ficar isenta, o valor continua aparecendo para ela e no relatório — a cobrança some, o registro não.
+
+Acima das duas está a decisão da organização, no cadastro de cada pessoa (**Painel admin → Cadastros → editar a pessoa → "Isenção de anuidade"**), com três opções:
+
+- **Automática** — vale a regra do site. É como todo mundo nasce, e a opção diz, ali na hora, o que a regra está decidindo para aquela pessoa ("hoje isenta pela função de Voz", por exemplo).
+- **Isenta** — decisão sua, independentemente de função e de resposta.
+- **Paga a anuidade** — também decisão sua, e é a que faltava: serve para cobrar quem está numa função marcada como isenta mas combinou de pagar. Antes, a única saída era tirar a pessoa da função, o que bagunçava o naipe e a lista de presença.
+
+> A escolha vale para **aquele carnaval**, fica na área restrita (só a pessoa e a organização leem) e **o próprio batuqueiro não consegue mexer nela** — nem pela tela, nem pelo banco: a regra do Firestore exige que a isenção continue igual em qualquer gravação feita pelo dono. Trocar de posição continua sendo decisão livre dele, como você pediu; o que a posição isenta decide sozinha, você reverte aqui.
 
 **Alguém lançou um pagamento errado. Dá para corrigir?** De dois jeitos.
 
@@ -365,7 +387,7 @@ A **própria pessoa** remove: na área dela, cada lançamento tem um botão **Re
 
 **Onde coloco a chave Pix?** Painel admin → Editar valores e prazos → campo "Chave Pix para receber a anuidade". Ela aparece na área de pagamento de cada batuqueiro, com botão de copiar. É por carnaval, então dá para trocar de um ano para o outro; deixando em branco, nada é mostrado.
 
-**O que exatamente é guardado por carnaval e o que é permanente?** Permanente: em `/pessoas`, nome, sobrenome, apelido, e-mail, acesso ao painel admin e acesso para marcar presença; em `/contatos`, celular e data de nascimento (ver a pergunta sobre privacidade, abaixo). Por carnaval (dentro de `/edicoes/{id}`): posição/instrumento, tamanho da camisa, se vai tocar, isenção individual, forma de pagamento e valor pago, além das posições disponíveis, ensaios, repertório, valores da anuidade e presenças daquele ano.
+**O que exatamente é guardado por carnaval e o que é permanente?** Permanente: em `/pessoas`, nome, sobrenome, apelido, e-mail, acesso ao painel admin e acesso para marcar presença; em `/contatos`, celular e data de nascimento (ver a pergunta sobre privacidade, abaixo). Por carnaval (dentro de `/edicoes/{id}`): em `/inscricoes`, posição/instrumento, tamanho da camisa e se vai tocar; em `/financeiro`, isenção, forma de pagamento e valor pago (área restrita, ver a pergunta sobre privacidade); além das posições disponíveis, ensaios, repertório, valores da anuidade e presenças daquele ano.
 
 **Por que às vezes aparece "Carregando..." por um instante ao entrar?** Porque o site espera os dados chegarem antes de decidir o que mostrar. Parece um detalhe, mas é proteção: antes ele afirmava "você ainda não confirmou a inscrição" enquanto as inscrições ainda estavam a caminho, e quem já tinha respondido via a tela de confirmação piscar por cerca de um segundo a cada login. Quem clicasse ali naquele instante reescrevia a própria inscrição por cima — zerando forma de pagamento e valor já pago. Hoje isso não acontece por dois motivos: a tela só aparece depois que os dados chegaram e, mesmo que aparecesse, confirmar a inscrição de quem já está inscrito só atualiza posição, camisa e "vai tocar", sem tocar em dinheiro.
 
@@ -386,12 +408,15 @@ Para corrigir o "vai tocar" de alguém, a própria pessoa muda em "Meus dados", 
 
 - **Celular e data de nascimento** ficam em `/contatos`, uma área que só a própria pessoa e a organização conseguem ler.
 - **Pagamentos individuais** (valor, data e o nome de quem fez o Pix) são lidos pelo dono e pela organização. Nenhum outro batuqueiro vê o pagamento de ninguém.
-
-O que **não** é restrito, e vale você saber: o quanto cada pessoa já pagou, a forma de pagamento e a isenção ficam na inscrição daquele carnaval, que é legível por qualquer pessoa com cadastro. As telas só mostram isso a você, mas quem souber consultar o banco consegue ver. É o mesmo tipo de exposição que o contato tinha; ficou assim porque a lista de inscritos é lida por todas as telas do site, e separar o financeiro exigiria refazer boa parte delas. Se em algum momento isso incomodar, é uma mudança possível — só não é pequena.
+- **Quanto cada pessoa já pagou, a forma de pagamento e a isenção** ficam em `/edicoes/{ano}/financeiro`, com a mesma regra: só o dono e a organização leem. Até a separação, esses três campos moravam dentro da inscrição daquele carnaval, que é legível por qualquer pessoa com cadastro — as telas não mostravam, mas quem soubesse consultar o banco pelo navegador via quanto cada um pagou e quem estava isento.
 
 Vale entender por que o contato precisou ficar separado, porque a mesma armadilha pega qualquer campo novo que você adicione: uma regra do Firestore autoriza ou nega **um registro inteiro**, nunca um campo. Como o registro em `/pessoas` precisa ser legível por qualquer pessoa logada (é o que monta a lista da bateria), qualquer campo guardado ali é legível por todos — mesmo que nenhuma tela mostre, já que o banco pode ser consultado direto pelo navegador. Por isso o celular saiu de lá. **Se um dia você quiser guardar mais alguma coisa pessoal — endereço, documento, contato de emergência —, guarde em `/contatos`, não em `/pessoas`.**
 
 **Já tenho gente cadastrada. Como restrinjo o contato de quem se cadastrou antes?** O painel admin avisa sozinho quando encontra cadastros nessa situação, com um botão **"Restringir esses dados agora"**. Ele move o celular e a data de nascimento de todos os cadastros de uma vez, sem apagar nada, e o aviso some quando termina. Pode clicar mais de uma vez sem risco: quem já foi separado não entra na conta.
+
+**E o dinheiro de quem já estava inscrito?** Mesmo mecanismo, aviso próprio: quando o painel encontra inscrições com forma de pagamento, valor pago ou isenção guardados dentro delas, aparece um segundo botão **"Restringir esses dados agora"**, logo abaixo do de contato. Ele move os três para a área restrita daquele carnaval. **Nada é apagado e nenhum valor muda** — o total de cada pessoa continua o mesmo na tela e no relatório; o dado só sai de onde qualquer pessoa logada conseguia ler. Rode uma vez por carnaval: o aviso olha o carnaval que está selecionado no painel, então troque de carnaval e confira se o aviso aparece lá também.
+
+> Ordem recomendada: **publique as regras novas no Firebase Console primeiro, depois clique no botão.** Com as regras antigas publicadas, a área restrita ainda não existe para o Firestore e a cópia é recusada. Como nada é apagado antes da cópia entrar, uma tentativa recusada não perde dado nenhum — só não faz nada.
 
 **Onde cadastro a chave Pix da bateria?** **Painel admin → "Editar valores e prazos" → campo "Chave Pix"**. Ela vale para o carnaval que estiver selecionado, e aparece na área de pagamento de todo batuqueiro que não é isento — antes e depois de ele escolher a forma de pagamento, com botão de copiar.
 

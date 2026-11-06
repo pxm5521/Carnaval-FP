@@ -196,12 +196,15 @@ service cloud.firestore {
         }
 
         // a pessoa se inscreve sozinha só numa edição ABERTA, e não pode nascer
-        // isenta nem com pagamento já lançado.
+        // isenta nem com pagamento já lançado. Isenção e dinheiro agora moram em
+        // /financeiro (abaixo); os campos continuam aceitos aqui porque as
+        // inscrições criadas antes da separação ainda os carregam — mas, se
+        // vierem, têm de vir zerados.
         allow create: if (isAdmin() && edicaoNaoEncerrada(eid))
           || (isOwner(uid) && edicaoAberta(eid)
               && camposPermitidosDoDono()
-              && request.resource.data.isentoManual == false
-              && request.resource.data.totalPago == 0);
+              && request.resource.data.get('isentoManual', false) == false
+              && request.resource.data.get('totalPago', 0) == 0);
 
         // o dono atualiza os próprios dados da inscrição (inclusive totalPago,
         // ao registrar um pagamento), mas a isenção só o admin concede.
@@ -220,10 +223,57 @@ service cloud.firestore {
         allow update: if (isAdmin() && edicaoNaoEncerrada(eid))
           || (isOwner(uid) && edicaoAberta(eid)
               && camposPermitidosDoDono()
-              && request.resource.data.isentoManual == resource.data.isentoManual
+              && request.resource.data.get('isentoManual', false) == resource.data.get('isentoManual', false)
               && request.resource.data.get('inscritoEm', null) == resource.data.get('inscritoEm', null)
-              && request.resource.data.totalPago is number
-              && request.resource.data.totalPago >= 0);
+              && request.resource.data.get('totalPago', 0) is number
+              && request.resource.data.get('totalPago', 0) >= 0);
+
+        allow delete: if isAdmin() && edicaoNaoEncerrada(eid);
+      }
+
+      // ---------- dinheiro e isenção de cada pessoa naquele carnaval ----------
+      // Forma de pagamento, total pago e isenção saíram da inscrição e vieram
+      // para cá pelo mesmo motivo que o celular saiu de /pessoas: a inscrição é
+      // lida por QUALQUER pessoa logada (é dela que saem naipes, presença e
+      // camisas), e regra do Firestore filtra documento, não campo. Enquanto o
+      // dinheiro morava lá, qualquer cadastrado conseguia ler pelo console
+      // quanto cada um pagou e quem está isento.
+      //
+      // O total pago continua sendo gravado pelo cliente — não existe servidor
+      // próprio aqui, é a limitação conhecida e documentada no SETUP. Ele
+      // precisa poder cair, porque o dono remove um lançamento que fez errado;
+      // exigir que só crescesse prendia a pessoa ao próprio erro sem proteger
+      // nada (declarar que pagou MENOS nunca é vantagem para quem declara).
+      match /financeiro/{uid} {
+        allow read: if isOwner(uid) || isAdmin();
+
+        function camposFinanceiros() {
+          return request.resource.data.keys().hasOnly([
+            'formaPagamento', 'totalPago', 'isencaoManual', 'isentoManual'
+          ]);
+        }
+        function semMexerNaIsencao() {
+          return request.resource.data.get('isencaoManual', null) == resource.data.get('isencaoManual', null)
+            && request.resource.data.get('isentoManual', false) == resource.data.get('isentoManual', false);
+        }
+        function totalBemFormado() {
+          return request.resource.data.get('totalPago', 0) is number
+            && request.resource.data.get('totalPago', 0) >= 0;
+        }
+
+        // nascer isento é decisão da organização, nunca do próprio inscrito.
+        allow create: if (isAdmin() && edicaoNaoEncerrada(eid))
+          || (isOwner(uid) && edicaoAberta(eid)
+              && camposFinanceiros()
+              && request.resource.data.get('isencaoManual', null) == null
+              && request.resource.data.get('isentoManual', false) == false
+              && totalBemFormado());
+
+        allow update: if (isAdmin() && edicaoNaoEncerrada(eid))
+          || (isOwner(uid) && edicaoAberta(eid)
+              && camposFinanceiros()
+              && semMexerNaIsencao()
+              && totalBemFormado());
 
         allow delete: if isAdmin() && edicaoNaoEncerrada(eid);
       }

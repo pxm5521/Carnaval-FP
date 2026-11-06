@@ -13,10 +13,23 @@
 // - importação única dos dados do formato antigo
 import { chromium } from 'playwright';
 import { readFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+
+/* O .xlsx gerado pelo site é um ZIP sem compressão escrito à mão. Ler as partes
+   com o unzip do sistema é, de propósito, um leitor INDEPENDENTE do código que
+   escreveu o arquivo: se o ZIP sair malformado, aqui quebra. */
+function parteDoXlsx(arquivo, caminho) {
+  return execFileSync('unzip', ['-p', arquivo, caminho], { maxBuffer: 32 * 1024 * 1024 }).toString('utf8');
+}
+function zipValido(arquivo) {
+  try { execFileSync('unzip', ['-t', arquivo], { stdio: 'pipe' }); return true; } catch { return false; }
+}
 
 const BASE = 'http://localhost:8934/test.html';
 let pass = 0, fail = 0;
 const failures = [];
+
+const numero = v => (typeof v === 'number' ? v : Number(String(v == null ? 0 : v).replace(',', '.')) || 0);
 
 function ok(desc, cond) {
   if (cond) { pass++; console.log(`  OK    ${desc}`); }
@@ -861,6 +874,45 @@ async function main() {
   await page.click(`[data-despublicar-musica="${idAberturaFiltro}"]`);
   await page.waitForTimeout(800);
 
+  // ---- exportação do repertório em Excel ----
+  console.log('\n== 20e. Exportar o repertório do painel admin em Excel ==');
+  const [baixado] = await Promise.all([
+    page.waitForEvent('download'),
+    page.click('#btn-exportar-repertorio-xlsx'),
+  ]);
+  const caminhoAdmin = '/tmp/teste-repertorio-admin.xlsx';
+  await baixado.saveAs(caminhoAdmin);
+  ok('O botão do painel admin baixa um arquivo .xlsx', baixado.suggestedFilename().endsWith('.xlsx'));
+  ok('E o nome do arquivo diz de que carnaval é', baixado.suggestedFilename().includes('2027'));
+  ok('O arquivo é um pacote válido (abre como ZIP, que é o que o Excel faz)', zipValido(caminhoAdmin));
+
+  const livroXml = parteDoXlsx(caminhoAdmin, 'xl/workbook.xml');
+  ok('Tem as duas abas pedidas: repertório e resumo',
+     livroXml.includes('name="Repertório"') && livroXml.includes('name="Resumo"'));
+  ok('E manda o Excel recalcular as fórmulas ao abrir', livroXml.includes('fullCalcOnLoad="1"'));
+
+  const folha1 = parteDoXlsx(caminhoAdmin, 'xl/worksheets/sheet1.xml');
+  ok('A primeira aba traz as músicas do repertório', folha1.includes('Ventania'));
+  ok('Com a coluna que diz se a música é nova no bloco',
+     folha1.includes('Nova no bloco?') && folha1.includes('>Já tocou<'));
+  ok('E a planilha sai com o repertório inteiro, mesmo as músicas em rascunho',
+     folha1.includes('Abertura do Set 2') && folha1.includes('>Rascunho<'));
+  ok('O cabeçalho fica congelado e com filtro, para listas longas',
+     folha1.includes('state="frozen"') && folha1.includes('<autoFilter'));
+  ok('As colunas têm largura definida, em vez de sair tudo cortado', folha1.includes('customWidth="1"'));
+
+  const folha2 = parteDoXlsx(caminhoAdmin, 'xl/worksheets/sheet2.xml');
+  ok('O resumo conta as novas por fórmula, não por número fixo',
+     folha2.includes("COUNTIF('Repertório'!$D$5:$D$") && folha2.includes('&quot;Nova&quot;'));
+  ok('Conta também quantas cada cantor(a) canta, por fórmula',
+     folha2.includes("COUNTIF('Repertório'!$F$5:$F$"));
+  ok('E separa, dentro de cada cantor(a), o que é novo do que já tocou',
+     folha2.includes("COUNTIFS('Repertório'!$F$5:$F$"));
+  ok('Nenhum total do resumo está digitado como número solto',
+     !/<c [^>]*><v>\d+<\/v><\/c>/.test(folha2.split('<sheetData>')[1] || ''));
+  ok('A planilha leva estilo (cor, negrito, borda), não é texto cru',
+     parteDoXlsx(caminhoAdmin, 'xl/styles.xml').includes('FFE34948'));
+
 
   // quantas músicas cada cantor(a) canta
   html = await appHtml(page);
@@ -1169,7 +1221,7 @@ async function main() {
   }));
   await page.click(`[data-edit-user="${uids.ana}"]`);
   await page.waitForTimeout(200);
-  await page.check(`#ae-isento-${uids.ana}`);
+  await page.selectOption(`#ae-isento-${uids.ana}`, 'isento');
   await page.check(`#ae-adminaccess-${uids.ana}`);
   await page.click(`[data-admin-edit-form="${uids.ana}"] button[type=submit]`);
   await page.waitForTimeout(300);
@@ -1224,7 +1276,7 @@ async function main() {
   await page.waitForTimeout(200);
   await page.click(`[data-edit-user="${uids.ana}"]`);
   await page.waitForTimeout(200);
-  await page.uncheck(`#ae-isento-${uids.ana}`);
+  await page.selectOption(`#ae-isento-${uids.ana}`, '');
   await page.click(`[data-admin-edit-form="${uids.ana}"] button[type=submit]`);
   await page.waitForTimeout(300);
   await logout(page);
@@ -1319,7 +1371,7 @@ async function main() {
     const loja = window.__mock.dumpStore()['edicoes/2027-1/pagamentos'];
     const id = Object.keys(loja).filter(k => loja[k].uid === uid && loja[k].valor === 5)[0];
     if (id) await fb.deleteDoc(fb.doc(fb.db, 'edicoes', '2027-1', 'pagamentos', id));
-    await fb.updateDoc(fb.doc(fb.db, 'edicoes', '2027-1', 'inscricoes', uid), { totalPago: 115 });
+    await fb.setDoc(fb.doc(fb.db, 'edicoes', '2027-1', 'financeiro', uid), { totalPago: 115 }, { merge: true });
   });
   await page.waitForTimeout(400);
 
@@ -1330,7 +1382,7 @@ async function main() {
   // o que a própria pessoa declarou ter pago.
   const antesDeRemover = await page.evaluate(() => {
     const uid = window.__mock.uidPorEmail('ana@example.com');
-    return window.__mock.dumpStore()['edicoes/2027-1/inscricoes'][uid].totalPago;
+    return window.__mock.dumpStore()['edicoes/2027-1/financeiro'][uid].totalPago;
   });
   await page.click('#btn-toggle-addpay');
   await page.waitForTimeout(200);
@@ -1342,7 +1394,7 @@ async function main() {
   ok('O lançamento errado entra normalmente', html.includes('lançamento errado'));
   const comErro = await page.evaluate(() => {
     const uid = window.__mock.uidPorEmail('ana@example.com');
-    return window.__mock.dumpStore()['edicoes/2027-1/inscricoes'][uid].totalPago;
+    return window.__mock.dumpStore()['edicoes/2027-1/financeiro'][uid].totalPago;
   });
   ok('E soma no total', comErro === antesDeRemover + 99);
   const linhaErrada = await page.evaluate(() => {
@@ -1356,7 +1408,7 @@ async function main() {
   ok('Removido, some da lista', !html.includes('lançamento errado'));
   const depoisDeRemover = await page.evaluate(() => {
     const uid = window.__mock.uidPorEmail('ana@example.com');
-    return window.__mock.dumpStore()['edicoes/2027-1/inscricoes'][uid].totalPago;
+    return window.__mock.dumpStore()['edicoes/2027-1/financeiro'][uid].totalPago;
   });
   ok('E o valor sai do total', depoisDeRemover === antesDeRemover);
   const sobrouDoc = await page.evaluate(() => {
@@ -1391,7 +1443,7 @@ async function main() {
   const idPag = await page.evaluate(() => document.querySelector('.pg-valor').dataset.pagId);
   const totalAntes = await page.evaluate(() => {
     const uid = window.__mock.uidPorEmail('ana@example.com');
-    return window.__mock.dumpStore()['edicoes/2027-1/inscricoes'][uid].totalPago;
+    return window.__mock.dumpStore()['edicoes/2027-1/financeiro'][uid].totalPago;
   });
   await page.fill(`.pg-valor[data-pag-id="${idPag}"]`, '150');
   await page.fill(`.pg-pagador[data-pag-id="${idPag}"]`, 'Marido da Ana');
@@ -1401,7 +1453,7 @@ async function main() {
     const uid = window.__mock.uidPorEmail('ana@example.com');
     const s = window.__mock.dumpStore();
     const pag = Object.values(s['edicoes/2027-1/pagamentos']).find(p => p.uid === uid && p.pix === 'Marido da Ana');
-    return { total: s['edicoes/2027-1/inscricoes'][uid].totalPago, pag };
+    return { total: s['edicoes/2027-1/financeiro'][uid].totalPago, pag };
   });
   ok('A correção grava o novo valor e quem pagou', depoisDaCorrecao.pag && depoisDaCorrecao.pag.valor === 150);
   ok('E o total anda pela diferença, não pela soma', depoisDaCorrecao.total === totalAntes + 35);
@@ -1421,7 +1473,7 @@ async function main() {
   const comLancamento = await page.evaluate(() => {
     const uid = window.__mock.uidPorEmail('ana@example.com');
     const s = window.__mock.dumpStore();
-    return { total: s['edicoes/2027-1/inscricoes'][uid].totalPago, temPag: Object.values(s['edicoes/2027-1/pagamentos']).some(p => p.pix === 'pagou em dinheiro no ensaio') };
+    return { total: s['edicoes/2027-1/financeiro'][uid].totalPago, temPag: Object.values(s['edicoes/2027-1/pagamentos']).some(p => p.pix === 'pagou em dinheiro no ensaio') };
   });
   ok('A organização consegue lançar um pagamento pela pessoa', comLancamento.temPag);
   ok('E o total sobe junto', comLancamento.total === totalAntes + 40);
@@ -1434,7 +1486,7 @@ async function main() {
   // nem dobrar o total.
   const totalAntesDoDuplo = await page.evaluate(() => {
     const uid = window.__mock.uidPorEmail('ana@example.com');
-    return window.__mock.dumpStore()['edicoes/2027-1/inscricoes'][uid].totalPago;
+    return window.__mock.dumpStore()['edicoes/2027-1/financeiro'][uid].totalPago;
   });
   await page.fill(`#novo-pag-valor-${uids.ana}`, '30');
   await page.fill(`#novo-pag-pagador-${uids.ana}`, 'toque duplo');
@@ -1451,7 +1503,7 @@ async function main() {
     const s = window.__mock.dumpStore();
     return {
       quantos: Object.values(s['edicoes/2027-1/pagamentos']).filter(p => p.pix === 'toque duplo').length,
-      total: s['edicoes/2027-1/inscricoes'][uid].totalPago,
+      total: s['edicoes/2027-1/financeiro'][uid].totalPago,
     };
   });
   ok('Dois toques em "Lançar pagamento" não criam dois comprovantes', aposDuploClique.quantos === 1);
@@ -1470,7 +1522,7 @@ async function main() {
   await page.waitForTimeout(600);
   const depoisDeRemover2 = await page.evaluate(() => {
     const uid = window.__mock.uidPorEmail('ana@example.com');
-    return window.__mock.dumpStore()['edicoes/2027-1/inscricoes'][uid].totalPago;
+    return window.__mock.dumpStore()['edicoes/2027-1/financeiro'][uid].totalPago;
   });
   ok('Removendo, o total volta ao que era', depoisDeRemover2 === totalAntes);
 
@@ -1478,7 +1530,7 @@ async function main() {
   await page.evaluate(async () => {
     const fb = await import('./firebase-init.mock.js');
     const uid = window.__mock.uidPorEmail('ana@example.com');
-    await fb.updateDoc(fb.doc(fb.db, 'edicoes', '2027-1', 'inscricoes', uid), { totalPago: 300 });
+    await fb.setDoc(fb.doc(fb.db, 'edicoes', '2027-1', 'financeiro', uid), { totalPago: 300 }, { merge: true });
   });
   await page.waitForTimeout(400);
   html = await appHtml(page);
@@ -1487,7 +1539,7 @@ async function main() {
   await page.waitForTimeout(600);
   const acertado = await page.evaluate(() => {
     const uid = window.__mock.uidPorEmail('ana@example.com');
-    return window.__mock.dumpStore()['edicoes/2027-1/inscricoes'][uid].totalPago;
+    return window.__mock.dumpStore()['edicoes/2027-1/financeiro'][uid].totalPago;
   });
   ok('E acerta o total pela soma dos comprovantes', acertado === 115);
   await page.click(`[data-cancel-admin-edit="${uids.ana}"]`);
@@ -1542,7 +1594,7 @@ async function main() {
   await page.evaluate(async () => {
     const fb = await import('./firebase-init.mock.js');
     const uid = window.__mock.uidPorEmail('ana@example.com');
-    await fb.updateDoc(fb.doc(fb.db, 'edicoes', '2027-1', 'inscricoes', uid), { totalPago: 250 });
+    await fb.setDoc(fb.doc(fb.db, 'edicoes', '2027-1', 'financeiro', uid), { totalPago: 250 }, { merge: true });
   });
   await page.waitForTimeout(700);
   await marcarMulti('relatorioFiltroPago', '200-300');
@@ -1550,7 +1602,7 @@ async function main() {
   await page.evaluate(async () => {
     const fb = await import('./firebase-init.mock.js');
     const uid = window.__mock.uidPorEmail('ana@example.com');
-    await fb.updateDoc(fb.doc(fb.db, 'edicoes', '2027-1', 'inscricoes', uid), { totalPago: 0 });
+    await fb.setDoc(fb.doc(fb.db, 'edicoes', '2027-1', 'financeiro', uid), { totalPago: 0 }, { merge: true });
   });
   await page.waitForTimeout(900);
   const resumoPago = await page.evaluate(() => document.querySelector('[data-abrir-multi="relatorioFiltroPago"] span').textContent.trim());
@@ -1563,7 +1615,7 @@ async function main() {
   await page.evaluate(async () => {
     const fb = await import('./firebase-init.mock.js');
     const uid = window.__mock.uidPorEmail('ana@example.com');
-    await fb.updateDoc(fb.doc(fb.db, 'edicoes', '2027-1', 'inscricoes', uid), { totalPago: 115 });
+    await fb.setDoc(fb.doc(fb.db, 'edicoes', '2027-1', 'financeiro', uid), { totalPago: 115 }, { merge: true });
   });
   await page.waitForTimeout(500);
 
@@ -1574,7 +1626,7 @@ async function main() {
   await page.evaluate(async () => {
     const fb = await import('./firebase-init.mock.js');
     const uid = window.__mock.uidPorEmail('ana@example.com');
-    await fb.updateDoc(fb.doc(fb.db, 'edicoes', '2027-1', 'inscricoes', uid), { formaPagamento: 'tresVezes', totalPago: 83.33 * 3 });
+    await fb.setDoc(fb.doc(fb.db, 'edicoes', '2027-1', 'financeiro', uid), { formaPagamento: 'tresVezes', totalPago: 83.33 * 3 }, { merge: true });
   });
   await page.waitForTimeout(700);
   html = await appHtml(page);
@@ -1590,7 +1642,7 @@ async function main() {
   await page.evaluate(async () => {
     const fb = await import('./firebase-init.mock.js');
     const uid = window.__mock.uidPorEmail('ana@example.com');
-    await fb.updateDoc(fb.doc(fb.db, 'edicoes', '2027-1', 'inscricoes', uid), { totalPago: '150,00' });
+    await fb.setDoc(fb.doc(fb.db, 'edicoes', '2027-1', 'financeiro', uid), { totalPago: '150,00' }, { merge: true });
   });
   await page.waitForTimeout(700);
   html = await appHtml(page);
@@ -1619,7 +1671,7 @@ async function main() {
   await page.evaluate(async () => {
     const fb = await import('./firebase-init.mock.js');
     const uid = window.__mock.uidPorEmail('ana@example.com');
-    await fb.updateDoc(fb.doc(fb.db, 'edicoes', '2027-1', 'inscricoes', uid), { formaPagamento: 'tresVezes', totalPago: 83.33 * 2 });
+    await fb.setDoc(fb.doc(fb.db, 'edicoes', '2027-1', 'financeiro', uid), { formaPagamento: 'tresVezes', totalPago: 83.33 * 2 }, { merge: true });
     // prazos das duas primeiras parcelas já vencidos, a terceira no futuro
     await fb.setDoc(fb.doc(fb.db, 'edicoes', '2027-1', 'config', 'precos'), {
       avista: { valor: 210, prazos: ['2026-12-01'] },
@@ -1645,7 +1697,7 @@ async function main() {
   await page.evaluate(async () => {
     const fb = await import('./firebase-init.mock.js');
     const uid = window.__mock.uidPorEmail('ana@example.com');
-    await fb.updateDoc(fb.doc(fb.db, 'edicoes', '2027-1', 'inscricoes', uid), { formaPagamento: 'duasVezes', totalPago: 500 });
+    await fb.setDoc(fb.doc(fb.db, 'edicoes', '2027-1', 'financeiro', uid), { formaPagamento: 'duasVezes', totalPago: 500 }, { merge: true });
     const col = fb.collection(fb.db, 'edicoes', '2027-1', 'pagamentos');
     await fb.addDoc(col, { uid, data: '2026-09-10', valor: '150,00', pix: 'legado' });
   });
@@ -1671,7 +1723,7 @@ async function main() {
     for (const d of snap.docs) {
       if (d.data().pix === 'legado') await fb.deleteDoc(fb.doc(fb.db, 'edicoes', '2027-1', 'pagamentos', d.id));
     }
-    await fb.updateDoc(fb.doc(fb.db, 'edicoes', '2027-1', 'inscricoes', uid), { formaPagamento: 'duasVezes', totalPago: 115 });
+    await fb.setDoc(fb.doc(fb.db, 'edicoes', '2027-1', 'financeiro', uid), { formaPagamento: 'duasVezes', totalPago: 115 }, { merge: true });
     await fb.setDoc(fb.doc(fb.db, 'edicoes', '2027-1', 'config', 'precos'), {
       tresVezes: { valor: 250, prazos: ['', '', ''] },
     }, { merge: true });
@@ -1682,7 +1734,7 @@ async function main() {
   await page.evaluate(async () => {
     const fb = await import('./firebase-init.mock.js');
     const uid = window.__mock.uidPorEmail('ana@example.com');
-    await fb.updateDoc(fb.doc(fb.db, 'edicoes', '2027-1', 'inscricoes', uid), { formaPagamento: 'duasVezes', totalPago: 115 });
+    await fb.setDoc(fb.doc(fb.db, 'edicoes', '2027-1', 'financeiro', uid), { formaPagamento: 'duasVezes', totalPago: 115 }, { merge: true });
   });
   await page.waitForTimeout(600);
 
@@ -1949,7 +2001,7 @@ async function main() {
     const uid = window.__mock.uidPorEmail('ana@example.com');
     const s = window.__mock.dumpStore();
     return {
-      total: s['edicoes/2027-1/inscricoes'][uid].totalPago,
+      total: s['edicoes/2027-1/financeiro'][uid].totalPago,
       lancamentos: Object.values(s['edicoes/2027-1/pagamentos'] || {}).filter(p => p.uid === uid).length,
     };
   });
@@ -1967,7 +2019,7 @@ async function main() {
     const uid = window.__mock.uidPorEmail('ana@example.com');
     const s = window.__mock.dumpStore();
     return {
-      total: s['edicoes/2027-1/inscricoes'][uid].totalPago,
+      total: s['edicoes/2027-1/financeiro'][uid].totalPago,
       lancamentos: Object.values(s['edicoes/2027-1/pagamentos'] || {}).filter(p => p.uid === uid).length,
     };
   });
@@ -2523,6 +2575,45 @@ async function main() {
   }));
   ok('A opção que volta a existir não ressuscita o filtro antigo', aposVoltar.resumo === 'Todos');
   ok('E a tabela continua mostrando todo mundo', aposVoltar.linhas === 5);
+
+  // ---- exportação do repertório pela área do batuqueiro ----
+  // Mesmo gerador do painel admin, mas sem o que é assunto da organização:
+  // uma aba só, sem resumo e sem música em rascunho.
+  await page.evaluate(async () => {
+    const fb = await import('./firebase-init.mock.js');
+    const col = fb.collection(fb.db, 'edicoes', '2027-1', 'musicas');
+    await fb.addDoc(col, { nome: 'Segredo do Admin', tom: '', cantor: '', set: 2, ordem: 20, rascunho: true });
+  });
+  await page.waitForTimeout(900);
+  // o filtro da tela não pode mudar o conteúdo da planilha
+  await marcar('repFiltroSet', '1');
+  await fecharFiltro();
+  const [baixadoBat] = await Promise.all([
+    page.waitForEvent('download'),
+    page.click('#btn-exportar-repertorio-batuqueiro'),
+  ]);
+  const caminhoBat = '/tmp/teste-repertorio-batuqueiro.xlsx';
+  await baixadoBat.saveAs(caminhoBat);
+  ok('O batuqueiro também baixa o repertório em .xlsx', baixadoBat.suggestedFilename().endsWith('.xlsx'));
+  ok('O arquivo é um pacote válido', zipValido(caminhoBat));
+  const livroBat = parteDoXlsx(caminhoBat, 'xl/workbook.xml');
+  ok('Na área do batuqueiro sai só a aba do repertório, sem resumo',
+     livroBat.includes('name="Repertório"') && !livroBat.includes('name="Resumo"'));
+  const folhaBat = parteDoXlsx(caminhoBat, 'xl/worksheets/sheet1.xml');
+  ok('Com as mesmas colunas da tela, inclusive se a música é nova',
+     folhaBat.includes('Nova no bloco?') && folhaBat.includes('Ensaiada em'));
+  ok('Sem a coluna de rascunho, que é assunto da organização', !folhaBat.includes('>Situação<'));
+  ok('Música em rascunho não vai na planilha do batuqueiro', !folhaBat.includes('Segredo do Admin'));
+  ok('E o filtro ligado na tela não corta a planilha',
+     folhaBat.includes('Ventania') && folhaBat.includes('Volta do Zeca'));
+  await limparFiltro('repFiltroSet');
+  await page.evaluate(async () => {
+    const fb = await import('./firebase-init.mock.js');
+    const snap = await fb.getDocs(fb.collection(fb.db, 'edicoes', '2027-1', 'musicas'));
+    const alvo = snap.docs.find(d => d.data().nome === 'Segredo do Admin');
+    if (alvo) await fb.deleteDoc(fb.doc(fb.db, 'edicoes', '2027-1', 'musicas', alvo.id));
+  });
+  await page.waitForTimeout(900);
   await page.evaluate(async () => {
     const fb = await import('./firebase-init.mock.js');
     const snap = await fb.getDocs(fb.collection(fb.db, 'edicoes', '2027-1', 'musicas'));
@@ -2560,9 +2651,13 @@ async function main() {
   ok('Com as músicas', Object.keys(bkp.edicoes['2027-1'].musicas).length === 2);
   ok('Com as presenças já marcadas', Object.keys(bkp.edicoes['2027-1'].presencas).length > 0);
   ok('E com os valores da anuidade', bkp.edicoes['2027-1'].config.precos.duasVezes.valor === 230);
-  // O valor já pago mora na inscrição, então o financeiro consolidado é salvo
-  // mesmo sem os comprovantes individuais.
-  ok('O total pago de cada pessoa é preservado', bkp.edicoes['2027-1'].inscricoes[uids.ana].totalPago === 125);
+  // O dinheiro mora fora da inscrição, em área restrita. O backup precisa levar
+  // essa coleção junto: sem ela, restaurar devolveria a bateria inteira com
+  // anuidade zerada e sem saber quem é isento.
+  ok('O financeiro restrito entra no backup', !!bkp.edicoes['2027-1'].financeiro);
+  ok('O total pago de cada pessoa é preservado', bkp.edicoes['2027-1'].financeiro[uids.ana].totalPago === 125);
+  ok('E o dinheiro não ficou para trás na inscrição, que todo mundo lê',
+     !numero(bkp.edicoes['2027-1'].inscricoes[uids.ana].totalPago));
   ok('O arquivo avisa que carrega dado pessoal', bkp.aviso.includes('dados pessoais'));
   // Os comprovantes entram no backup: são o único dado que não dá para
   // reconstruir depois, e as regras já deixam a organização lê-los.
@@ -3477,6 +3572,165 @@ async function main() {
   ok('E o contato continua aparecendo normalmente para o dono', html.includes('97777-1111'));
 
   await logout(page);
+
+  // ============================================================
+  console.log('\n== 29d. Separar o dinheiro que estava dentro da inscrição ==');
+  // Mesma situação do contato, uma camada adiante: forma de pagamento, valor
+  // pago e isenção nasceram dentro da inscrição, que QUALQUER pessoa logada lê.
+  await login(page, 'pedro@example.com');
+  await page.waitForTimeout(600);
+  const eidImportada = await page.evaluate(() => {
+    const s = window.__mock.dumpStore();
+    const chave = Object.keys(s).find(k => /^edicoes\/.+\/inscricoes$/.test(k) && Object.keys(s[k]).length);
+    return chave.split('/')[1];
+  });
+  ok('A importação do formato antigo já grava o dinheiro na área restrita',
+     await page.evaluate(eid => {
+       const s = window.__mock.dumpStore();
+       const uid = window.__mock.uidPorEmail('pedro@example.com');
+       const fin = (s[`edicoes/${eid}/financeiro`] || {})[uid];
+       return !!fin && Number(fin.totalPago) === 210;
+     }, eidImportada));
+
+  // volta ao estado anterior à separação: dinheiro dentro da inscrição
+  await page.evaluate(async (eid) => {
+    const fb = await import('./firebase-init.mock.js');
+    const uid = window.__mock.uidPorEmail('pedro@example.com');
+    await fb.deleteDoc(fb.doc(fb.db, 'edicoes', eid, 'financeiro', uid));
+    await fb.deleteDoc(fb.doc(fb.db, 'edicoes', eid, 'financeiro', 'legado2'));
+    await fb.updateDoc(fb.doc(fb.db, 'edicoes', eid, 'inscricoes', uid), {
+      formaPagamento: 'avista', totalPago: 210, isentoManual: false,
+    });
+    await fb.updateDoc(fb.doc(fb.db, 'edicoes', eid, 'inscricoes', 'legado2'), {
+      formaPagamento: null, totalPago: 0, isentoManual: true,
+    });
+  }, eidImportada);
+  await page.waitForTimeout(800);
+  await page.click('#btn-goto-admin');
+  await page.waitForTimeout(500);
+  html = await appHtml(page);
+  ok('Antes de separar, o site ainda lê o dinheiro de dentro da inscrição', html.includes('210'));
+  ok('O painel avisa que há dado de pagamento em área de leitura geral',
+     html.includes('Dados de pagamento de 2 inscrições'));
+
+  await page.click('#btn-separar-financeiro');
+  await page.waitForTimeout(900);
+  const aposFinanceiro = await page.evaluate(eid => {
+    const s = window.__mock.dumpStore();
+    const uid = window.__mock.uidPorEmail('pedro@example.com');
+    return {
+      inscricao: s[`edicoes/${eid}/inscricoes`][uid],
+      financeiro: (s[`edicoes/${eid}/financeiro`] || {})[uid],
+      fredFin: (s[`edicoes/${eid}/financeiro`] || {}).legado2,
+      fredInsc: s[`edicoes/${eid}/inscricoes`].legado2,
+    };
+  }, eidImportada);
+  ok('O valor pago saiu da inscrição que todo mundo lê', !numero(aposFinanceiro.inscricao.totalPago));
+  ok('A forma de pagamento também', !aposFinanceiro.inscricao.formaPagamento);
+  ok('E a isenção também', aposFinanceiro.fredInsc.isentoManual !== true);
+  ok('O valor foi parar na área restrita, inteiro', numero(aposFinanceiro.financeiro.totalPago) === 210);
+  ok('Com a forma de pagamento junto', aposFinanceiro.financeiro.formaPagamento === 'avista');
+  ok('A isenção virou decisão registrada da organização', aposFinanceiro.fredFin.isencaoManual === 'isento');
+  // O risco da operação era justamente perder o que não é dinheiro.
+  ok('Nada mais da inscrição foi perdido no caminho',
+     aposFinanceiro.inscricao.posicao === 'Tamborim' && aposFinanceiro.inscricao.camisa === 'M');
+  html = await appHtml(page);
+  ok('Feita a separação, o aviso some do painel', !html.includes('Dados de pagamento de'));
+  ok('E o total continua na tela, igual ao de antes', html.includes('210'));
+  await page.click('#btn-separar-financeiro').catch(() => {});
+  await page.waitForTimeout(300);
+
+  // ---- isenção em três estados ----
+  await page.click('#btn-goto-posicoes');
+  await page.waitForTimeout(400);
+  await page.evaluate(async (eid) => {
+    const fb = await import('./firebase-init.mock.js');
+    const snap = await fb.getDocs(fb.collection(fb.db, 'edicoes', eid, 'posicoes'));
+    const tamborim = snap.docs.find(d => d.data().nome === 'Tamborim');
+    await fb.updateDoc(fb.doc(fb.db, 'edicoes', eid, 'posicoes', tamborim.id), { isenta: true });
+  }, eidImportada);
+  await page.waitForTimeout(700);
+  await page.click('#btn-back-admin');
+  await page.waitForTimeout(300);
+  await page.click('#btn-goto-pessoas');
+  await page.waitForTimeout(400);
+  const uidPedro = await page.evaluate(() => window.__mock.uidPorEmail('pedro@example.com'));
+  await page.click(`[data-edit-user="${uidPedro}"]`);
+  await page.waitForTimeout(300);
+  const opcoesIsencao = await page.evaluate(id => [...document.querySelectorAll(`#ae-isento-${id} option`)].map(o => o.value), uidPedro);
+  ok('A isenção tem três estados no painel: automático, isenta e paga',
+     opcoesIsencao.length === 3 && opcoesIsencao.includes('') && opcoesIsencao.includes('isento') && opcoesIsencao.includes('naoIsento'));
+  html = await appHtml(page);
+  ok('No automático, a função isenta já isenta a pessoa', html.includes('hoje isenta'));
+
+  await page.selectOption(`#ae-isento-${uidPedro}`, 'naoIsento');
+  await page.click(`[data-admin-edit-form="${uidPedro}"] button[type=submit]`);
+  await page.waitForTimeout(700);
+  const gravouNaoIsento = await page.evaluate(eid => {
+    const s = window.__mock.dumpStore();
+    const uid = window.__mock.uidPorEmail('pedro@example.com');
+    return s[`edicoes/${eid}/financeiro`][uid].isencaoManual;
+  }, eidImportada);
+  ok('O admin consegue cobrar quem está numa função isenta', gravouNaoIsento === 'naoIsento');
+  ok('E a decisão vai para a área restrita, não para a inscrição',
+     await page.evaluate(eid => {
+       const s = window.__mock.dumpStore();
+       const uid = window.__mock.uidPorEmail('pedro@example.com');
+       return s[`edicoes/${eid}/inscricoes`][uid].isentoManual !== true;
+     }, eidImportada));
+  await page.click('#btn-back-admin2');
+  await page.waitForTimeout(300);
+  await page.click('#btn-goto-relatorio');
+  await page.waitForTimeout(500);
+  html = await appHtml(page);
+  ok('No relatório ela deixa de aparecer como isenta', !/Tamborim[\s\S]{0,200}Isenta/.test(html));
+
+  await page.click('#btn-back-admin3').catch(async () => { await page.click('#btn-goto-admin'); });
+  await page.waitForTimeout(400);
+  await page.click('#btn-goto-pessoas');
+  await page.waitForTimeout(400);
+  await page.click(`[data-edit-user="${uidPedro}"]`);
+  await page.waitForTimeout(300);
+  await page.selectOption(`#ae-isento-${uidPedro}`, '');
+  await page.click(`[data-admin-edit-form="${uidPedro}"] button[type=submit]`);
+  await page.waitForTimeout(700);
+  ok('Voltando para automático, a regra do site manda de novo',
+     await page.evaluate(eid => {
+       const s = window.__mock.dumpStore();
+       const uid = window.__mock.uidPorEmail('pedro@example.com');
+       return s[`edicoes/${eid}/financeiro`][uid].isencaoManual === null;
+     }, eidImportada));
+  await logout(page);
+
+  // ---- o batuqueiro comum não lê o dinheiro dos outros ----
+  const negadasAntesFin = await page.evaluate(() => window.__mock.leiturasNegadas());
+  // Cadastro novo, sem acesso admin, criado aqui mesmo: os usuários anteriores
+  // foram refeitos pelos testes de migração e nem todos ainda entram.
+  await registrar(page, { email: 'zeca.teste@example.com', nome: 'Zeca', sobrenome: 'Teste', posicao: 'Caixa', camisa: 'M' });
+  await page.waitForTimeout(900);
+  const negadasDepoisFin = await page.evaluate(() => window.__mock.leiturasNegadas());
+  ok('Quem não é admin não tenta ler o financeiro da bateria inteira',
+     negadasDepoisFin === negadasAntesFin);
+  // E o caminho feliz: o próprio dono continua lendo o PRÓPRIO dinheiro, que é
+  // o outro lado da mesma regra — restringir sem quebrar quem tem direito.
+  await page.click('#plan-picker .plan-pill[data-plano="avista"]').catch(() => {});
+  await page.waitForTimeout(500);
+  await page.click('#btn-toggle-addpay');
+  await page.waitForTimeout(200);
+  await page.fill('#pay-valor', '37');
+  await page.fill('#pay-pix', 'pagamento do zeca');
+  await page.click('#btn-save-pay');
+  await page.waitForTimeout(700);
+  const vePropio = await appHtml(page);
+  ok('O dono continua vendo o próprio pagamento depois da separação', vePropio.includes('37,00'));
+  ok('E ele foi gravado na área restrita, não na inscrição', await page.evaluate(eid => {
+    const s = window.__mock.dumpStore();
+    const uid = window.__mock.uidPorEmail('zeca.teste@example.com');
+    const insc = s[`edicoes/${eid}/inscricoes`][uid] || {};
+    const fin = (s[`edicoes/${eid}/financeiro`] || {})[uid] || {};
+    return Number(fin.totalPago) === 37 && !Number(insc.totalPago);
+  }, eidImportada));
+  await logout(page).catch(() => {});
 
   console.log(`\n=== RESULTADO: ${pass} passaram, ${fail} falharam ===`);
   if (fail) { failures.forEach(f => console.log('  - ' + f)); }

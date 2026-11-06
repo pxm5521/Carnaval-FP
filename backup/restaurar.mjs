@@ -64,7 +64,7 @@ enfileirar("pessoas", backup.pessoas);
 enfileirar("contatos", backup.contatos);
 Object.entries(backup.edicoes || {}).forEach(([eid, ed]) => {
   escritas.push([`edicoes/${eid}`, doJSON(ed.dados)]);
-  ["inscricoes", "posicoes", "ensaios", "musicas", "config", "pagamentos", "presencas"]
+  ["inscricoes", "financeiro", "posicoes", "ensaios", "musicas", "config", "pagamentos", "presencas"]
     .forEach(sub => enfileirar(`edicoes/${eid}/${sub}`, ed[sub]));
 });
 Object.entries(backup.legado || {}).forEach(([nome, docs]) => enfileirar(nome, docs));

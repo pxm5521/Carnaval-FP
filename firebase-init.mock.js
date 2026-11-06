@@ -187,8 +187,9 @@ export async function getDoc(docRef) {
    A ÚNICA REGRA DE SEGURANÇA QUE O MOCK REPRODUZ
    ------------------------------------------------------------
    O mock não é um simulador de firestore.rules — os testes exercitam a lógica
-   do app, não o servidor. As exceções são /contatos e /pagamentos, porque nesses
-   dois o cumprimento da regra depende de o APP fazer a leitura certa: um
+   do app, não o servidor. As exceções são /contatos, /financeiro e /pagamentos,
+   porque nesses três o cumprimento da regra depende de o APP fazer a leitura
+   certa: um
    batuqueiro comum lê o próprio contato (doc) mas não lista a coleção, e só
    consegue ler pagamentos filtrando pelo próprio uid. Se o app pedisse mais que
    isso, contra o Firestore de verdade viraria erro de permissão em produção — e
@@ -211,6 +212,16 @@ function podeLer(ref) {
 
   // /contatos: cada um lê o próprio; a listagem inteira exige admin.
   if (ref.name === "contatos") {
+    if (ehAdminNoMock()) return true;
+    if (ref.__type === "doc") return !!u && ref.id === u.uid;
+    return false;
+  }
+
+  // /financeiro: dinheiro e isenção de cada pessoa no carnaval. Mesmo desenho
+  // do contato — cada um lê o próprio documento, e só o admin lista a coleção.
+  // Se o app pedisse a coleção para um batuqueiro comum, contra o Firestore de
+  // verdade viraria erro de permissão em produção e nenhum outro teste pegaria.
+  if (ref.name.endsWith("/financeiro")) {
     if (ehAdminNoMock()) return true;
     if (ref.__type === "doc") return !!u && ref.id === u.uid;
     return false;
