@@ -1634,6 +1634,93 @@ function viewConfirmarInscricao(u) {
 }
 
 /* ============================================================
+   PRESENÇA POR NAIPE
+   ------------------------------------------------------------
+   A conta que a organização usa para saber que naipe precisa de puxada de
+   orelha. O que decide tudo aqui é o UNIVERSO de cada naipe: ele é formado por
+   quem está inscrito no carnaval E respondeu que vai tocar — não pela lista de
+   cadastrados. Contar a lista inteira faria um naipe com muita gente que já
+   avisou que não vem parecer pior do que é, e a conversa com o naipe começaria
+   por um número errado.
+
+   Duas medidas, porque uma esconde a outra: a média de presença pode estar
+   razoável com metade do naipe faltando sempre, desde que a outra metade vá a
+   tudo. Por isso entra também quantos NUNCA apareceram.
+   ============================================================ */
+function estatisticasDePresenca() {
+  const ativos = vaoTocarNaEdicao();
+  const ensaios = ensaiosCache;
+  const naipeDe = p => (p.posicao || "").trim() || SEM_POSICAO;
+  const esteve = (p, e) => !!(presencasCache[p.id] && presencasCache[p.id][e.id]);
+  const linha = (chave, gente) => {
+    const total = gente.length;
+    const porEnsaio = ensaios.map(e => {
+      const presentes = gente.filter(p => esteve(p, e)).length;
+      return { id: e.id, rotulo: ensaioLabel(e), presentes, pct: total ? presentes / total : null };
+    });
+    const somaPresencas = porEnsaio.reduce((soma, x) => soma + x.presentes, 0);
+    const nunca = gente.filter(p => !ensaios.some(e => esteve(p, e))).length;
+    return {
+      chave, rotulo: rotuloDaPosicao(chave), total, porEnsaio, nunca,
+      // Média ponderada pelo tamanho do naipe, que é a mesma coisa que a média
+      // dos percentuais dos ensaios (o denominador não muda de um para o outro).
+      media: total && ensaios.length ? somaPresencas / (total * ensaios.length) : null,
+      pctNunca: total ? nunca / total : null,
+    };
+  };
+  const naipes = [...new Set(ativos.map(naipeDe))]
+    .map(n => linha(n, ativos.filter(p => naipeDe(p) === n)))
+    .sort((a, b) => a.rotulo.localeCompare(b.rotulo, "pt-BR", { sensitivity: "base" }));
+  return { ensaios, naipes, geral: linha("__geral__", ativos), ativos };
+}
+
+const pctTexto = v => (v === null || v === undefined ? "—" : Math.round(v * 100) + "%");
+
+function boxPresencaPorNaipe() {
+  const { ensaios, naipes, geral } = estatisticasDePresenca();
+  if (!ensaios.length || !naipes.length) return "";
+  // O destaque é relativo à própria bateria, não a uma nota de corte inventada:
+  // naipe abaixo da média do bloco é o que interessa numa conversa de naipe.
+  const abaixoDaMedia = n => geral.media !== null && n.media !== null && n.media < geral.media;
+  const linhaHtml = (n, ehGeral) => `
+    <tr class="${ehGeral ? "presenca-total-row" : ""}">
+      <td class="name-cell">${ehGeral ? "<b>Bateria inteira</b>" : esc(n.rotulo)}</td>
+      <td class="center">${n.total}</td>
+      ${n.porEnsaio.map(x => `<td class="center">${pctTexto(x.pct)}</td>`).join("")}
+      <td class="center">${ehGeral || !abaixoDaMedia(n)
+        ? `<b>${pctTexto(n.media)}</b>`
+        : `<span class="badge badge-warning" title="Abaixo da média da bateria (${pctTexto(geral.media)})">${pctTexto(n.media)}</span>`}</td>
+      <td class="center">${n.nunca === 0
+        ? `<span class="hint">ninguém</span>`
+        : `<span class="badge badge-critical" title="${n.nunca} de ${n.total} nunca apareceram">${pctTexto(n.pctNunca)}</span>`}</td>
+    </tr>`;
+  return `
+    <div class="card">
+      <div class="card-head">
+        <div>
+          <h2>Presença por naipe</h2>
+          <p class="card-sub" style="margin-bottom:0">Percentual de cada naipe em cada ensaio deste carnaval. A conta é sobre quem está inscrito e respondeu que vai tocar — ${geral.total} pessoa${geral.total === 1 ? "" : "s"}. Quem avisou que não vai tocar fica fora, para o naipe não parecer pior do que é.</p>
+        </div>
+        ${souAdmin() ? `<button class="btn-secondary btn-sm" id="btn-exportar-presenca-xlsx" title="Baixa a matriz de presença e os percentuais por naipe, com as contas em fórmulas">Baixar Excel (.xlsx)</button>` : ""}
+      </div>
+      <div class="table-scroll">
+        <table>
+          <thead><tr>
+            <th>Naipe</th>
+            <th class="center" title="Inscritos no naipe que responderam que vão tocar">Ativos</th>
+            ${ensaios.map(e => `<th class="center">${ensaioLabel(e)}</th>`).join("")}
+            <th class="center">Média</th>
+            <th class="center" title="Quanto do naipe não apareceu em nenhum ensaio">Nunca foi</th>
+          </tr></thead>
+          <tbody>${naipes.map(n => linhaHtml(n, false)).join("")}</tbody>
+          <tfoot>${linhaHtml(geral, true)}</tfoot>
+        </table>
+      </div>
+      <p class="hint" style="margin-top:10px;">A média destacada em amarelo é a de um naipe abaixo da média da bateria. A coluna <b>Nunca foi</b> existe porque a média esconde esse caso: metade do naipe indo a tudo e a outra metade não indo a nada dá a mesma média de todo mundo indo à metade dos ensaios — e são problemas diferentes. Os filtros acima valem para a tabela de presença; esta tabela é sempre o carnaval inteiro.</p>
+    </div>`;
+}
+
+/* ============================================================
    VIEW: BATUQUEIRO
    ============================================================ */
 function viewBatuqueiro() {
@@ -1745,6 +1832,9 @@ function viewBatuqueiro() {
       <div class="legend"><span><i style="background:var(--good)"></i>Presente</span><span><i style="background:var(--critical)"></i>Ausente</span></div>`;
       })()}
     </div>
+
+    <!-- BOX 3b: PRESENÇA POR NAIPE -->
+    ${boxPresencaPorNaipe()}
 
     <!-- BOX 4: REPERTÓRIO ENSAIADO -->
     ${(() => {
@@ -3024,6 +3114,118 @@ function exportarRepertorioXLSX() {
   ]);
   baixarArquivo(`${nomeBase}.xlsx`, arquivo);
   showToast(`Planilha do repertório baixada (${linhas.length} músicas).`);
+}
+
+/* ============================================================
+   EXPORTAÇÃO DA PRESENÇA (matriz + percentual por naipe)
+   ------------------------------------------------------------
+   Reproduz, com os dados do site, a planilha que a organização já usava: uma
+   aba com a matriz de presença pessoa × ensaio e outra com o percentual por
+   naipe. Como no resumo do repertório, a segunda aba é SÓ fórmula.
+
+   Um detalhe de desenho, e é o que a planilha original tinha de mais cuidadoso:
+   a aba da matriz leva TODOS os inscritos, com a coluna "Vai tocar", e cada
+   fórmula filtra por ela. O universo fica à vista e auditável dentro do
+   arquivo, em vez de ser uma decisão escondida na exportação — quem abrir
+   consegue conferir, e mudar de ideia sobre quem conta é mexer na fórmula, não
+   pedir outro arquivo.
+   ============================================================ */
+function exportarPresencaXLSX() {
+  const ed = edicaoCtx();
+  const ensaios = ensaiosCache;
+  const pessoas = batuqueirosDaEdicao();
+  if (!ensaios.length) { alert("Este carnaval ainda não tem ensaios cadastrados."); return; }
+  if (!pessoas.length) { alert("Este carnaval ainda não tem ninguém inscrito."); return; }
+
+  const PRIMEIRA = 5;
+  const ULTIMA = PRIMEIRA + pessoas.length - 1;
+  const COL_NAIPE = "A", COL_VAITOCAR = "C";
+  const primeiroEnsaio = 4;                                   // coluna D
+  const colTotal = colunaLetra(primeiroEnsaio + ensaios.length);
+  const ativos = pessoas.filter(p => !naoVaiTocar(p)).length;
+
+  const cabecalho = ["Naipe", "Batuqueiro", "Vai tocar", ...ensaios.map(e => ensaioLabel(e)), "Presenças"];
+  const matriz = [
+    Object.assign([{ t: `Presença — ${edicaoLabel(ed)}`, s: E.titulo }], { altura: 34 }),
+    Object.assign([{ t: `${pessoas.length} inscritos · ${ativos} responderam que vão tocar · ${ensaios.length} ensaio${ensaios.length === 1 ? "" : "s"} · gerado em ${dateBR(hojeISO())} · a aba "Percentual por naipe" calcula sozinha a partir desta`, s: E.subtitulo }], { altura: 20 }),
+    [],
+    Object.assign(cabecalho.map(c => ({ t: c, s: E.cabecalho })), { altura: 26 }),
+  ];
+  pessoas.forEach((p, i) => {
+    const zebra = i % 2 === 1;
+    const texto = zebra ? E.textoZebra : E.texto;
+    const centro = zebra ? E.centroZebra : E.centro;
+    const linha = i + PRIMEIRA;
+    matriz.push([
+      { t: rotuloDaPosicao((p.posicao || "").trim() || SEM_POSICAO), s: texto },
+      { t: fullName(p), s: texto },
+      // "Sim", "Não" ou vazio para quem nunca respondeu: o vazio é informação,
+      // e transformá-lo em "Não" faria a planilha afirmar o que ninguém disse.
+      { t: respostaVaiTocar(p), s: centro },
+      ...ensaios.map(e => ({ n: presencasCache[p.id] && presencasCache[p.id][e.id] ? 1 : 0, s: centro })),
+      { f: `SUM(${colunaLetra(primeiroEnsaio)}${linha}:${colunaLetra(primeiroEnsaio + ensaios.length - 1)}${linha})`, s: E.numero },
+    ]);
+  });
+
+  // ---- aba 2: percentual por naipe, só fórmulas ----
+  const faixa = letra => `'Presença'!$${letra}$${PRIMEIRA}:$${letra}$${ULTIMA}`;
+  const colunaDoEnsaio = j => colunaLetra(primeiroEnsaio + j);
+  const naipes = [...new Set(pessoas.map(p => rotuloDaPosicao((p.posicao || "").trim() || SEM_POSICAO)))]
+    .sort((a, b) => a.localeCompare(b, "pt-BR", { sensitivity: "base" }));
+
+  const cabecalhoPct = ["Naipe", "Ativos", ...ensaios.map(e => ensaioLabel(e)), "Média", "Não foi a nenhum"];
+  const resumo = [
+    Object.assign([{ t: `Percentual de presença por naipe — ${edicaoLabel(ed)}`, s: E.titulo }], { altura: 34 }),
+    Object.assign([{ t: 'Tudo aqui é fórmula sobre a aba "Presença". O universo de cada naipe é quem respondeu que VAI TOCAR: é o que a coluna "Vai tocar" decide, dentro de cada fórmula.', s: E.subtitulo }], { altura: 20 }),
+    [],
+    Object.assign(cabecalhoPct.map(c => ({ t: c, s: E.cabecalho })), { altura: 26 }),
+  ];
+  const colPrimeiroPct = colunaLetra(3);                       // C
+  const colUltimoPct = colunaLetra(2 + ensaios.length);
+  naipes.forEach(nome => {
+    const r = resumo.length + 1;
+    resumo.push([
+      { t: nome, s: E.texto },
+      { f: `COUNTIFS(${faixa(COL_NAIPE)},$A${r},${faixa(COL_VAITOCAR)},"Sim")`, s: E.numero },
+      ...ensaios.map((_, j) => ({
+        f: `IF($B${r}=0,"",SUMIFS('Presença'!${colunaDoEnsaio(j)}$${PRIMEIRA}:${colunaDoEnsaio(j)}$${ULTIMA},${faixa(COL_NAIPE)},$A${r},${faixa(COL_VAITOCAR)},"Sim")/$B${r})`,
+        s: E.percentual,
+      })),
+      { f: `IF($B${r}=0,"",AVERAGE(${colPrimeiroPct}${r}:${colUltimoPct}${r}))`, s: E.percentual },
+      { f: `IF($B${r}=0,"",COUNTIFS(${faixa(COL_NAIPE)},$A${r},${faixa(COL_VAITOCAR)},"Sim",${faixa(colTotal)},0)/$B${r})`, s: E.percentual },
+    ]);
+  });
+  const rGeral = resumo.length + 1;
+  resumo.push([
+    { t: "Bateria inteira", s: E.totalRotulo },
+    { f: `COUNTIF(${faixa(COL_VAITOCAR)},"Sim")`, s: E.totalNumero },
+    ...ensaios.map((_, j) => ({
+      f: `IF($B${rGeral}=0,"",SUMIFS('Presença'!${colunaDoEnsaio(j)}$${PRIMEIRA}:${colunaDoEnsaio(j)}$${ULTIMA},${faixa(COL_VAITOCAR)},"Sim")/$B${rGeral})`,
+      s: E.totalPercentual,
+    })),
+    { f: `IF($B${rGeral}=0,"",AVERAGE(${colPrimeiroPct}${rGeral}:${colUltimoPct}${rGeral}))`, s: E.totalPercentual },
+    { f: `IF($B${rGeral}=0,"",COUNTIFS(${faixa(COL_VAITOCAR)},"Sim",${faixa(colTotal)},0)/$B${rGeral})`, s: E.totalPercentual },
+  ]);
+  const nomeBase = `presenca-${(edicaoLabel(ed) || "carnaval").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "")}-${hojeISO()}`;
+  const arquivo = montarXLSX([
+    {
+      nome: "Presença",
+      larguras: [20, 30, 11, ...ensaios.map(() => 13), 12],
+      congelarEm: 4,
+      autofiltro: `A4:${colTotal}${ULTIMA}`,
+      merges: [`A1:${colTotal}1`, `A2:${colTotal}2`],
+      linhas: matriz,
+    },
+    {
+      nome: "Percentual por naipe",
+      larguras: [24, 10, ...ensaios.map(() => 13), 11, 18],
+      congelarEm: 4,
+      merges: [`A1:${colunaLetra(cabecalhoPct.length)}1`, `A2:${colunaLetra(cabecalhoPct.length)}2`],
+      linhas: resumo,
+    },
+  ]);
+  baixarArquivo(`${nomeBase}.xlsx`, arquivo);
+  showToast(`Planilha de presença baixada (${pessoas.length} inscritos, ${ensaios.length} ensaios).`);
 }
 
 /* ============================================================
@@ -5635,6 +5837,7 @@ function wireEvents() {
     render();
   });
 
+  on("#btn-exportar-presenca-xlsx", "click", exportarPresencaXLSX);
   on("#presenca-limpar-filtros", "click", () => {
     session.presencaFiltro = []; session.presencaEnsaioFiltro = []; session.multiAberto = null;
     render();

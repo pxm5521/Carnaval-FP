@@ -278,6 +278,21 @@ No Windows, **Agendador de Tarefas** → Criar Tarefa Básica → semanal → In
 
 **Quem pode marcar presença nos ensaios?** Só admins e quem recebeu esse acesso individualmente. Todo mundo vê a tabela de presença de todos os ensaios (como uma "lista de chamada" coletiva, só para consulta), mas só marca SIM/NÃO quem tiver permissão. Para dar esse acesso a alguém que não é admin: painel admin → Cadastros → editar a pessoa → marcar "Pode marcar presença nos ensaios (de qualquer batuqueiro) sem ser admin".
 
+**Como vejo que naipe está faltando aos ensaios?** Logo abaixo da tabela de presença há o quadro **"Presença por naipe"**: uma linha por naipe, o percentual em cada ensaio, a média do naipe e quanto dele **nunca foi a nenhum ensaio**. A última linha é a bateria inteira. Todo mundo vê o quadro; o botão **"Baixar Excel (.xlsx)"** aparece só para a organização.
+
+O que decide os números é o **universo** de cada naipe: ele é formado por quem está inscrito no carnaval **e respondeu que vai tocar**. Quem avisou que não vai tocar fica fora da conta, nos dois lados da divisão — contar a lista inteira faria um naipe com muita gente que já avisou que não vem parecer pior do que é, e a conversa com o naipe começaria por um número errado. Naipe que ficou sem ninguém ativo some do quadro, em vez de aparecer zerado.
+
+> **Por que duas medidas e não só a média.** A média pode estar razoável com metade do naipe faltando sempre, desde que a outra metade vá a tudo: 50% de média é tanto "todo mundo vai à metade dos ensaios" quanto "metade do naipe nunca apareceu". São problemas diferentes e pedem conversas diferentes, por isso a coluna **Nunca foi** fica ao lado da média. A média de um naipe abaixo da média da bateria vem destacada em amarelo — a comparação é com o próprio bloco, não com uma nota de corte inventada.
+
+O quadro é sempre o carnaval inteiro: os filtros acima valem para a tabela de presença, não para ele.
+
+**O que vem na planilha de presença?** Duas abas, no mesmo desenho da planilha que a organização já usava:
+
+- **Presença** — a matriz: uma linha por inscrito, com naipe, nome, a coluna **"Vai tocar"**, 1 ou 0 em cada ensaio e o total de presenças.
+- **Percentual por naipe** — os percentuais, todos em fórmula.
+
+A matriz leva **todos os inscritos**, inclusive quem respondeu que não vai tocar, e cada fórmula da segunda aba filtra pela coluna "Vai tocar". É de propósito: assim o universo fica à vista e auditável dentro do arquivo, em vez de ser uma decisão escondida na hora de exportar. Quem abrir confere a conta, e mudar de ideia sobre quem entra é mexer na fórmula — não pedir outro arquivo.
+
 **E se eu esquecer minha senha?** Na tela de login há um link "Esqueci minha senha", que envia um e-mail de redefinição pelo próprio Firebase.
 
 **Um batuqueiro pode adulterar o próprio valor pago?** Tecnicamente sim, e é uma limitação conhecida de um site sem servidor próprio: o total pago fica no cadastro da pessoa naquele carnaval, e as regras precisam deixar ela mesma gravar ali (é o que acontece quando ela registra um pagamento). Alguém com conhecimento técnico conseguiria escrever um valor diferente por fora do site.

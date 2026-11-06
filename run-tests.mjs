@@ -2359,6 +2359,118 @@ async function main() {
   await page.click('#presenca-limpar-filtros');
   await page.waitForTimeout(400);
 
+  console.log('\n== 19a. Presença por naipe: percentual, universo e exportação ==');
+  // A conta que decide conversa de naipe. O universo é quem respondeu que VAI
+  // TOCAR — quem avisou que não vem não pode puxar a média do naipe para baixo.
+  const lerPorNaipe = () => page.evaluate(() => {
+    const h = [...document.querySelectorAll('h2')].find(x => x.textContent.includes('Presença por naipe'));
+    if (!h) return null;
+    const card = h.closest('.card');
+    const linha = tr => [...tr.querySelectorAll('td')].map(td => td.textContent.trim());
+    return {
+      cabecalho: [...card.querySelectorAll('thead th')].map(t => t.textContent.trim()),
+      naipes: [...card.querySelectorAll('tbody tr')].map(linha),
+      geral: [...card.querySelectorAll('tfoot tr')].map(linha)[0],
+      temBotaoExcel: !!card.querySelector('#btn-exportar-presenca-xlsx'),
+    };
+  });
+  let porNaipe = await lerPorNaipe();
+  ok('A tela de presença mostra o percentual por naipe', !!porNaipe && porNaipe.naipes.length > 0);
+  ok('Com uma coluna de ativos, uma por ensaio, média e "nunca foi"',
+     porNaipe.cabecalho[0] === 'Naipe' && porNaipe.cabecalho[1] === 'Ativos'
+     && porNaipe.cabecalho[porNaipe.cabecalho.length - 2] === 'Média'
+     && porNaipe.cabecalho[porNaipe.cabecalho.length - 1] === 'Nunca foi');
+  ok('E uma linha com a bateria inteira', !!porNaipe.geral && porNaipe.geral[0].includes('Bateria inteira'));
+
+  const repiqueAntes = porNaipe.naipes.find(l => l[0] === 'Repique');
+  ok('O naipe do Repique tem 1 ativo (só a Duda)', repiqueAntes && repiqueAntes[1] === '1');
+  ok('E 100% no ensaio em que ela foi marcada', repiqueAntes.includes('100%'));
+
+  // alguém do Repique avisa que NÃO vai tocar: não pode entrar no universo
+  await page.evaluate(async () => {
+    const fb = await import('./firebase-init.mock.js');
+    const uid = window.__mock.uidPorEmail('bruno@example.com');
+    await fb.updateDoc(fb.doc(fb.db, 'edicoes', '2027-1', 'inscricoes', uid), { posicao: 'Repique', vaiTocar: 'Não' });
+  });
+  await page.waitForTimeout(800);
+  porNaipe = await lerPorNaipe();
+  const repiqueDepois = porNaipe.naipes.find(l => l[0] === 'Repique');
+  ok('Quem avisa que não vai tocar fica fora do universo do naipe', repiqueDepois[1] === '1');
+  ok('E não derruba o percentual do naipe', repiqueDepois.includes('100%'));
+
+  // o mesmo, agora dizendo que vai tocar e nunca tendo ido: aí conta
+  await page.evaluate(async () => {
+    const fb = await import('./firebase-init.mock.js');
+    const uid = window.__mock.uidPorEmail('bruno@example.com');
+    await fb.updateDoc(fb.doc(fb.db, 'edicoes', '2027-1', 'inscricoes', uid), { vaiTocar: 'Sim' });
+  });
+  await page.waitForTimeout(800);
+  porNaipe = await lerPorNaipe();
+  const repiqueComBruno = porNaipe.naipes.find(l => l[0] === 'Repique');
+  ok('Quem vai tocar entra no universo na hora', repiqueComBruno[1] === '2');
+  ok('E quem nunca apareceu puxa a média para baixo', repiqueComBruno.includes('50%'));
+  ok('A coluna "nunca foi" mostra a metade do naipe que não apareceu',
+     repiqueComBruno[repiqueComBruno.length - 1] === '50%');
+
+  ok('O botão de Excel aparece para a organização', porNaipe.temBotaoExcel);
+
+  // Carla é a única Voz: dizendo que não vai tocar, o naipe fica sem universo e
+  // sai da tabela — mostrar "0%" para um naipe que não existe neste carnaval
+  // seria pior do que não mostrar.
+  await page.evaluate(async () => {
+    const fb = await import('./firebase-init.mock.js');
+    const uid = window.__mock.uidPorEmail('carla@example.com');
+    await fb.updateDoc(fb.doc(fb.db, 'edicoes', '2027-1', 'inscricoes', uid), { vaiTocar: 'Não' });
+  });
+  await page.waitForTimeout(800);
+  porNaipe = await lerPorNaipe();
+  ok('Naipe que ficou sem ninguém ativo sai da tabela', !porNaipe.naipes.some(l => l[0] === 'Voz'));
+
+  const [planilhaPresenca] = await Promise.all([
+    page.waitForEvent('download'),
+    page.click('#btn-exportar-presenca-xlsx'),
+  ]);
+  const caminhoPresenca = '/tmp/teste-presenca.xlsx';
+  await planilhaPresenca.saveAs(caminhoPresenca);
+  ok('O arquivo é um pacote válido', zipValido(caminhoPresenca));
+  const livroPresenca = parteDoXlsx(caminhoPresenca, 'xl/workbook.xml');
+  ok('Com as duas abas da planilha que a organização já usava',
+     livroPresenca.includes('name="Presença"') && livroPresenca.includes('name="Percentual por naipe"'));
+  const matrizXml = parteDoXlsx(caminhoPresenca, 'xl/worksheets/sheet1.xml');
+  ok('A matriz leva a coluna que define o universo', matrizXml.includes('Vai tocar'));
+  ok('E leva TODO MUNDO, inclusive quem respondeu que não vai tocar — o universo fica auditável',
+     matrizXml.includes('Carla') && matrizXml.includes('>Não<'));
+  const pctXml = parteDoXlsx(caminhoPresenca, 'xl/worksheets/sheet2.xml');
+  ok('O percentual por naipe é fórmula, não número gravado',
+     pctXml.includes("SUMIFS('Presença'!") && pctXml.includes("COUNTIFS('Presença'!"));
+  // Não basta a palavra aparecer em algum lugar: TODA soma de presença tem de
+  // trazer o critério do universo, senão uma das linhas conta gente que avisou
+  // que não vem e ninguém percebe olhando o resultado.
+  const somas = pctXml.match(/SUMIFS\([^<)]*\)/g) || [];
+  ok('E cada fórmula de presença filtra pelo universo de quem vai tocar',
+     somas.length >= 2 && somas.every(f => f.includes('&quot;Sim&quot;')));
+  ok('Nenhum percentual sai digitado como número solto',
+     !/<c [^>]*><v>\d/.test(pctXml.split('<sheetData>')[1].split('</sheetData>')[0]));
+
+  // devolve a Carla ao estado anterior, para as seções seguintes
+  await page.evaluate(async () => {
+    const fb = await import('./firebase-init.mock.js');
+    const uid = window.__mock.uidPorEmail('carla@example.com');
+    await fb.updateDoc(fb.doc(fb.db, 'edicoes', '2027-1', 'inscricoes', uid), { vaiTocar: 'Sim' });
+  });
+  await page.waitForTimeout(700);
+
+  // e o batuqueiro comum vê a tabela, mas não o botão de exportar
+  await logout(page);
+  await login(page, 'duda@example.com');
+  await page.waitForTimeout(800);
+  const porNaipeDuda = await lerPorNaipe();
+  ok('O batuqueiro também vê o percentual por naipe', !!porNaipeDuda && porNaipeDuda.naipes.length > 0);
+  ok('Mas o botão de exportar é só da organização', porNaipeDuda.temBotaoExcel === false);
+  await logout(page);
+  await login(page, 'ana@example.com');
+  await page.waitForTimeout(600);
+
   console.log('\n== 20. Repertório visível para o batuqueiro, com o ensaio em que foi tocada ==');
   html = await appHtml(page);
   ok('Batuqueiro vê a tabela de repertório da edição', html.includes('<h2>Repertório</h2>'));
