@@ -2429,6 +2429,52 @@ async function main() {
   ok('A coluna "nunca foi" mostra a metade do naipe que não apareceu',
      repiqueComBruno[repiqueComBruno.length - 1] === '50%');
 
+  // ---- ensaio que ainda não aconteceu não entra na conta ----
+  // Sem esta régua, um ensaio marcado para daqui a três semanas entrava no
+  // denominador e derrubava a média de todo mundo no começo da temporada.
+  const colunasAntesDoFuturo = (await lerPorNaipe()).percussao.cabecalho.length;
+  const mediaAntesDoFuturo = (await lerPorNaipe()).percussao.total.slice(-2)[0];
+  const idEnsaioFuturo = await page.evaluate(async () => {
+    const fb = await import('./firebase-init.mock.js');
+    const daquiAUmMes = new Date(Date.now() + 30 * 24 * 3600 * 1000).toISOString().slice(0, 10);
+    const ref = await fb.addDoc(fb.collection(fb.db, 'edicoes', '2027-1', 'ensaios'), { data: daquiAUmMes });
+    return ref.id;
+  });
+  await page.waitForTimeout(900);
+  const comFuturo = await lerPorNaipe();
+  ok('Ensaio ainda por vir não vira coluna na tabela de percentual',
+     comFuturo.percussao.cabecalho.length === colunasAntesDoFuturo);
+  ok('E não derruba a média de ninguém',
+     comFuturo.percussao.total.slice(-2)[0] === mediaAntesDoFuturo);
+  const avisoDeFora = await appHtml(page);
+  ok('A tela diz quantos ensaios entraram na conta e o que ficou de fora',
+     avisoDeFora.includes('já realizado') && avisoDeFora.includes('ainda por vir'));
+  await page.evaluate(async (id) => {
+    const fb = await import('./firebase-init.mock.js');
+    await fb.deleteDoc(fb.doc(fb.db, 'edicoes', '2027-1', 'ensaios', id));
+  }, idEnsaioFuturo);
+  await page.waitForTimeout(900);
+
+  // ensaio que já passou mas ninguém anotou presença também fica de fora:
+  // esquecimento da organização não é falta de 150 pessoas
+  const idEnsaioEsquecido = await page.evaluate(async () => {
+    const fb = await import('./firebase-init.mock.js');
+    const ref = await fb.addDoc(fb.collection(fb.db, 'edicoes', '2027-1', 'ensaios'), { data: '2020-02-01' });
+    return ref.id;
+  });
+  await page.waitForTimeout(900);
+  const comEsquecido = await lerPorNaipe();
+  ok('Ensaio passado sem nenhuma presença anotada não entra na conta',
+     comEsquecido.percussao.cabecalho.length === colunasAntesDoFuturo);
+  ok('E a tela avisa que ele ficou de fora por falta de registro',
+     (await appHtml(page)).includes('sem presença anotada'));
+  await page.evaluate(async (id) => {
+    const fb = await import('./firebase-init.mock.js');
+    await fb.deleteDoc(fb.doc(fb.db, 'edicoes', '2027-1', 'ensaios', id));
+  }, idEnsaioEsquecido);
+  await page.waitForTimeout(900);
+  porNaipe = await lerPorNaipe();
+
   ok('O botão de Excel aparece para a organização', porNaipe.temBotaoExcel);
 
   // Carla é a única Voz: dizendo que não vai tocar, o naipe fica sem universo e
@@ -3915,7 +3961,21 @@ async function main() {
   await login(page, 'pedro@example.com');
   await page.waitForTimeout(700);
   let htmlWiki = await appHtml(page);
-  ok('A área do batuqueiro tem a entrada da WikiBrega', htmlWiki.includes('Abrir a WikiBrega'));
+  // A chamada fica no ALTO da área do batuqueiro: é o que ninguém vem procurar,
+  // então precisa estar no caminho de quem entra para ver pagamento e presença.
+  const posicaoDaFaixa = await page.evaluate(() => {
+    const app = document.getElementById('app');
+    const faixa = app.querySelector('.faixa-wiki');
+    const meusDados = [...app.querySelectorAll('h2')].find(h => h.textContent.includes('Meus dados'));
+    if (!faixa || !meusDados) return null;
+    return { antesDosMeusDados: !!(faixa.compareDocumentPosition(meusDados) & Node.DOCUMENT_POSITION_FOLLOWING) };
+  });
+  ok('A área do batuqueiro tem a entrada da WikiBrega',
+     htmlWiki.includes('WikiBrega') && !!posicaoDaFaixa);
+  ok('E ela aparece antes de "Meus dados", logo que a pessoa entra',
+     !!posicaoDaFaixa && posicaoDaFaixa.antesDosMeusDados);
+  ok('Com a wiki ainda vazia, a faixa convida a escrever a primeira história',
+     htmlWiki.includes('Escrever a primeira história'));
   await page.click('#btn-goto-wiki');
   await page.waitForTimeout(600);
   htmlWiki = await appHtml(page);
@@ -4018,7 +4078,9 @@ async function main() {
   ok('Quem não subiu a foto não vê o botão de remover dela', !htmlWiki.includes('data-remover-midia'));
   await page.click('#btn-wiki-editar');
   await page.waitForTimeout(400);
-  await page.fill('#wiki-texto', 'O bloco nasceu num ensaio de quintal em 2011, na casa da Dona Zilda.');
+  // texto propositalmente longo: é o que prova que a lista mostra o verbete
+  // inteiro, e não um resumo que por acaso coube
+  await page.fill('#wiki-texto', 'O bloco nasceu num ensaio de quintal em 2011, na casa da Dona Zilda. Eram seis pessoas, dois surdos emprestados e uma caixa que vivia desafinando, e quando entrou a música que deu nome ao bloco ninguém segurou mais.');
   await page.click('#btn-wiki-salvar');
   await page.waitForTimeout(1000);
   htmlWiki = await appHtml(page);
@@ -4084,9 +4146,26 @@ async function main() {
   ok('Apagado, o comentário some', !htmlWiki.includes('a caixa desafinada era do Tião'));
   ok('E a conversa volta a convidar quem chegar', htmlWiki.includes('ninguém comentou ainda'));
 
-  // busca
+  // ---- a lista mostra o verbete inteiro, não um resumo ----
   await page.click('#btn-wiki-lista');
-  await page.waitForTimeout(600);
+  await page.waitForTimeout(900);
+  const naLista = await page.evaluate(() => {
+    const art = document.querySelector('.wiki-verbete-lista');
+    if (!art) return null;
+    return { texto: art.querySelector('.wiki-texto') ? art.querySelector('.wiki-texto').textContent : '', fotos: art.querySelectorAll('.wiki-foto img').length };
+  });
+  // compara com o que está gravado: o texto da lista tem de ser o texto todo,
+  // não um resumo que por acaso coube
+  const textoGravado = await page.evaluate(id => {
+    const s = window.__mock.dumpStore();
+    const v = s.wiki[id] || Object.values(s.wiki)[0];
+    return (v.texto || '').replace(/\s+/g, ' ').trim();
+  }, verbeteId);
+  ok('A lista mostra o texto inteiro do verbete, sem cortar em reticências',
+     !!naLista && naLista.texto.replace(/\s+/g, ' ').trim() === textoGravado && textoGravado.length > 0);
+  ok('E mostra a foto junto, sem precisar clicar', !!naLista && naLista.fotos >= 1);
+
+  // busca
   await page.fill('#wiki-busca', 'zilda');
   await page.waitForTimeout(500);
   ok('A busca acha o verbete pelo texto, não só pelo título',
@@ -4094,6 +4173,30 @@ async function main() {
   await page.fill('#wiki-busca', 'palavra que não existe');
   await page.waitForTimeout(500);
   ok('E avisa quando nada bate', (await appHtml(page)).includes('Nenhum verbete com esse termo'));
+
+  // ---- a faixa do topo vira chamada do verbete mais recente ----
+  await page.fill('#wiki-busca', '');
+  await page.waitForTimeout(300);
+  await page.click('#btn-wiki-voltar');
+  await page.waitForTimeout(1100);
+  const teaser = await page.evaluate(() => {
+    const t = document.querySelector('.faixa-wiki-teaser');
+    if (!t) return null;
+    return {
+      titulo: t.querySelector('b') ? t.querySelector('b').textContent.trim() : '',
+      trecho: t.querySelector('.faixa-wiki-trecho') ? t.querySelector('.faixa-wiki-trecho').textContent.trim() : '',
+      abre: t.dataset.abrirVerbete || '',
+      foto: !!t.querySelector('.faixa-wiki-foto'),
+    };
+  });
+  ok('A faixa do topo traz o título do verbete mais recente',
+     !!teaser && teaser.titulo.includes('Como nasceu'));
+  ok('Com um trecho do texto, não só o nome', !!teaser && teaser.trecho.includes('quintal'));
+  ok('E a foto do verbete entra como miniatura', !!teaser && teaser.foto);
+  await page.click('.faixa-wiki-teaser');
+  await page.waitForTimeout(900);
+  ok('Clicar no trecho abre aquele verbete direto',
+     (await appHtml(page)).includes('Comentar') && (await appHtml(page)).includes('Como nasceu'));
   await logout(page);
 
   // ============================================================

@@ -166,6 +166,12 @@ const pagsEmVoo = new Set();
 let wikiCache = null;            // null = ainda não carregou
 let wikiAberto = null;           // { id, verbete, midias, versoes } do verbete em tela
 let wikiCarregando = false;
+/* Mídias por verbete, para a LISTA poder mostrar o verbete inteiro — texto e
+   fotos — sem obrigar ninguém a clicar. Carregadas uma vez por verbete e
+   guardadas aqui; a conversa e o histórico continuam sob demanda, porque esses
+   sim só interessam a quem abriu. */
+let wikiMidiasCache = {};
+let wikiMidiasCarregando = false;
 const unsub = { myPessoa: null, pessoas: null, edicoes: null, meuContato: null, contatos: null, wiki: null };
 const unsubEd = { inscricoes: null, posicoes: null, ensaios: null, musicas: null, precos: null, presencas: null, myPagamentos: null };
 let edicaoListenersFor = null;  // id da edição para a qual os listeners acima estão ativos
@@ -414,7 +420,7 @@ onAuthStateChanged(auth, (user) => {
     myPessoa = null; pessoaLoaded = false; myLegado = null; legadoConsultado = false;
     pessoasCache = []; edicoesCache = []; contatosCache = {}; edicoesLoaded = false;
     repertorioHistorico = null; repertorioHistoricoCarregando = false; repertorioHistoricoFalhou = false; musicasDaEdicaoCache = {};
-    wikiCache = null; wikiAberto = null; wikiCarregando = false;
+    wikiCache = null; wikiAberto = null; wikiCarregando = false; wikiMidiasCache = {};
     musicasDeOutrasEdicoesCarregando = false; musicasDeOutrasEdicoesFalhou = false;
     limparCachesDaEdicao();
     if (session.view && !["landing", "login", "register1"].includes(session.view)) session.view = "landing";
@@ -1718,9 +1724,26 @@ function ehNaipeDePercussao(nome) {
   return !FORA_DA_PERCUSSAO_PADRAO.includes(chave);
 }
 
+/* Ensaios que entram na conta: os que JÁ ACONTECERAM e têm presença anotada.
+
+   Ensaio marcado para daqui a três semanas não é falta de ninguém — contá-lo
+   derrubava a média da bateria inteira no começo da temporada, e o naipe levava
+   bronca por ensaio que ainda nem existiu. Ensaio que já passou e está sem
+   nenhum registro também fica de fora: na prática é ensaio que ninguém anotou
+   (ou que não houve), e tratá-lo como "ninguém foi" transformaria esquecimento
+   da organização em falta de 150 pessoas. */
+function ensaiosJaRealizados() {
+  const hoje = hojeISO();
+  return ensaiosCache.filter(e =>
+    (e.data || "") <= hoje && Object.values(presencasCache).some(m => m && m[e.id]));
+}
+
 function estatisticasDePresenca() {
   const ativos = vaoTocarNaEdicao();
-  const ensaios = ensaiosCache;
+  const ensaios = ensaiosJaRealizados();
+  const hoje = hojeISO();
+  const futuros = ensaiosCache.filter(e => (e.data || "") > hoje).length;
+  const semRegistro = ensaiosCache.length - ensaios.length - futuros;
   const naipeDe = p => (p.posicao || "").trim() || SEM_POSICAO;
   const esteve = (p, e) => !!(presencasCache[p.id] && presencasCache[p.id][e.id]);
   const linha = (chave, gente) => {
@@ -1751,13 +1774,13 @@ function estatisticasDePresenca() {
   // outro, que vai a ensaio por motivos diferentes.
   const percussao = ativos.filter(p => ehNaipeDePercussao(naipeDe(p)));
   const apoio = ativos.filter(p => !ehNaipeDePercussao(naipeDe(p)));
-  return { ensaios, percussao: montarGrupo(percussao), apoio: montarGrupo(apoio), ativos };
+  return { ensaios, percussao: montarGrupo(percussao), apoio: montarGrupo(apoio), ativos, futuros, semRegistro };
 }
 
 const pctTexto = v => (v === null || v === undefined ? "—" : Math.round(v * 100) + "%");
 
 function boxPresencaPorNaipe() {
-  const { ensaios, percussao, apoio } = estatisticasDePresenca();
+  const { ensaios, percussao, apoio, futuros, semRegistro } = estatisticasDePresenca();
   if (!ensaios.length || (!percussao.naipes.length && !apoio.naipes.length)) return "";
 
   const tabela = (grupo, titulo, explicacao, rotuloTotal) => {
@@ -1804,7 +1827,7 @@ function boxPresencaPorNaipe() {
       <div class="card-head">
         <div>
           <h2>Presença por naipe</h2>
-          <p class="card-sub" style="margin-bottom:0">Percentual de presença em cada ensaio deste carnaval, separado em quem toca percussão e quem está na bateria com outra função. A conta é sobre quem está inscrito e respondeu que vai tocar; quem avisou que não vai fica fora, para o naipe não parecer pior do que é.</p>
+          <p class="card-sub" style="margin-bottom:0">Percentual de presença nos <b>${ensaios.length} ensaio${ensaios.length === 1 ? "" : "s"} já realizado${ensaios.length === 1 ? "" : "s"}</b>, separado em quem toca percussão e quem está na bateria com outra função. A conta é sobre quem está inscrito e respondeu que vai tocar; quem avisou que não vai fica fora, para o naipe não parecer pior do que é.${futuros || semRegistro ? ` Fora da conta: ${[futuros ? `${futuros} ensaio${futuros === 1 ? "" : "s"} ainda por vir` : "", semRegistro ? `${semRegistro} sem presença anotada` : ""].filter(Boolean).join(" e ")}.` : ""}</p>
         </div>
         ${souAdmin() ? `<button class="btn-secondary btn-sm" id="btn-exportar-presenca-xlsx" title="Baixa a matriz de presença e os percentuais por naipe, com as contas em fórmulas">Baixar Excel (.xlsx)</button>` : ""}
       </div>
@@ -1817,6 +1840,47 @@ function boxPresencaPorNaipe() {
 /* ============================================================
    VIEW: BATUQUEIRO
    ============================================================ */
+/* Chamada curta da WikiBrega, no alto da área do batuqueiro. Uma linha e um
+   botão: ela convive com "Meus dados" e "Pagamento" sem empurrar os dois para
+   baixo da dobra. O texto muda conforme o acervo — wiki vazia pede história,
+   wiki com conteúdo mostra o que mexeram por último, que é o que faz alguém
+   clicar. */
+function faixaWikiBrega() {
+  const lista = wikiCache || [];
+  const recente = lista.length
+    ? lista.slice().sort((a, b) => dataDoCarimbo(b.atualizadoEm) - dataDoCarimbo(a.atualizadoEm))[0]
+    : null;
+  // Só a mídia do verbete em destaque: uma leitura, não uma por verbete do
+  // acervo inteiro numa tela que todo mundo abre o tempo todo.
+  if (recente) carregarMidiasDe([recente.id]);
+  const foto = recente ? (wikiMidiasCache[recente.id] || []).find(m => m.tipo === "imagem") : null;
+
+  if (!recente) {
+    return `
+    <div class="faixa-wiki">
+      <div class="faixa-wiki-texto">
+        <b>WikiBrega</b>
+        <span>A enciclopédia do bloco: de onde veio o nome, a história das músicas, o ensaio que virou lenda. Qualquer um escreve, qualquer um corrige.</span>
+      </div>
+      <button class="btn-secondary btn-sm" id="btn-goto-wiki">Escrever a primeira história</button>
+    </div>`;
+  }
+  // O teaser é o verbete mais recente, com o começo do texto e a foto: é ele
+  // que faz a pessoa clicar. "WikiBrega · 3 verbetes" não desperta nada.
+  return `
+    <div class="faixa-wiki">
+      <button class="faixa-wiki-teaser" data-abrir-verbete="${recente.id}" title="Abrir este verbete">
+        ${foto ? `<img class="faixa-wiki-foto" src="${esc(foto.url)}" alt="" loading="lazy">` : ""}
+        <span class="faixa-wiki-texto">
+          <span class="faixa-wiki-etiqueta">WikiBrega · ${lista.length} ${lista.length === 1 ? "verbete" : "verbetes"}</span>
+          <b>${esc(recente.titulo || "(sem título)")}</b>
+          <span class="faixa-wiki-trecho">${esc(resumoDoVerbete(recente, 220)) || "Verbete ainda em branco — abra e conte a história."}</span>
+        </span>
+      </button>
+      <button class="btn-secondary btn-sm" id="btn-goto-wiki">Abrir a WikiBrega</button>
+    </div>`;
+}
+
 function viewBatuqueiro() {
   const u = perfilMesclado();
   const ed = edicaoCtx();
@@ -1858,6 +1922,11 @@ function viewBatuqueiro() {
   ${headerBar(u)}
   <div class="wrap">
     ${bannerEdicao(ed)}
+
+    <!-- FAIXA DA WIKIBREGA: fica no alto porque é o que a pessoa não vem
+         procurar. Pagamento e presença ela abre por obrigação; a história do
+         bloco só é lida se estiver no caminho. -->
+    ${faixaWikiBrega()}
 
     <div class="two-col">
       <!-- BOX 1: MEUS DADOS -->
@@ -1929,19 +1998,6 @@ function viewBatuqueiro() {
 
     <!-- BOX 3b: PRESENÇA POR NAIPE -->
     ${boxPresencaPorNaipe()}
-
-    <!-- BOX 3c: WIKIBREGA -->
-    <div class="card">
-      <div class="card-head">
-        <div>
-          <h2>WikiBrega</h2>
-          <p class="card-sub" style="margin-bottom:0">${wikiCache && wikiCache.length
-            ? `${wikiCache.length} verbete${wikiCache.length === 1 ? "" : "s"} escritos pela bateria. ${esc(((wikiCache.slice().sort((a, b) => dataDoCarimbo(b.atualizadoEm) - dataDoCarimbo(a.atualizadoEm))[0] || {}).titulo) || "")} foi o último a mexer.`
-            : "A enciclopédia do bloco: de onde veio o nome, a história de cada música, o ensaio que virou lenda. Qualquer pessoa da bateria escreve e corrige."}</p>
-        </div>
-        <button class="btn-secondary btn-sm" id="btn-goto-wiki">Abrir a WikiBrega</button>
-      </div>
-    </div>
 
     <!-- BOX 4: REPERTÓRIO ENSAIADO -->
     ${(() => {
@@ -2507,6 +2563,33 @@ function resumoDoVerbete(v, limite = 180) {
   return t.length > limite ? t.slice(0, limite).trimEnd() + "…" : t;
 }
 
+/* Busca as mídias dos verbetes que ainda não têm, para a lista mostrar as
+   fotos junto do texto. Uma leitura por verbete novo, e só uma vez. */
+async function carregarMidiasDe(ids) {
+  // Sai antes de qualquer coisa quando já está tudo em cache: esta função é
+  // chamada de dentro do render, e render -> leitura -> render que chama a
+  // leitura de novo é laço infinito.
+  if (wikiMidiasCarregando) return;
+  const faltando = [...new Set(ids)].filter(id => id && !wikiMidiasCache[id]);
+  if (!faltando.length) return;
+  wikiMidiasCarregando = true;
+  try {
+    const resultados = await Promise.all(faltando.map(id => getDocs(P.midias(id)).catch(() => null)));
+    resultados.forEach((snap, i) => {
+      wikiMidiasCache[faltando[i]] = snap
+        ? snap.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => String(a.em || "").localeCompare(String(b.em || "")))
+        : [];
+    });
+  } finally {
+    wikiMidiasCarregando = false;
+    renderExterno();
+  }
+}
+function carregarMidiasDaLista() {
+  if (!wikiCache) return;
+  carregarMidiasDe(wikiCache.map(v => v.id));
+}
+
 /* Carrega o verbete aberto (mídias e versões) sob demanda. */
 async function carregarVerbete(id) {
   if (wikiCarregando) return;
@@ -2526,6 +2609,7 @@ async function carregarVerbete(id) {
       comentarios: comSnap.docs.map(d => ({ id: d.id, ...d.data() }))
         .sort((a, b) => dataDoCarimbo(a.em) - dataDoCarimbo(b.em)),
     };
+    wikiMidiasCache[id] = wikiAberto.midias;
   } catch (err) {
     console.warn("verbete", err);
     wikiAberto = { id, midias: [], versoes: [], comentarios: [], erro: friendlyFirestoreError(err) };
@@ -2536,6 +2620,7 @@ async function carregarVerbete(id) {
 
 function viewWiki(u) {
   const lista = wikiCache || [];
+  if (lista.length) carregarMidiasDaLista();
   const busca = (session.wikiBusca || "").trim().toLowerCase();
   const filtrados = busca
     ? lista.filter(v => `${v.titulo || ""} ${v.texto || ""}`.toLowerCase().includes(busca))
@@ -2570,12 +2655,23 @@ function viewWiki(u) {
       </div>
       ${ordenados.length === 0 ? `<p class="hint">Nenhum verbete com esse termo.</p>` : ""}
       <div class="wiki-lista">
-        ${ordenados.map(v => `
-          <button class="wiki-item" data-abrir-verbete="${v.id}">
-            <span class="wiki-item-titulo">${esc(v.titulo || "(sem título)")}</span>
-            <span class="wiki-item-resumo">${esc(resumoDoVerbete(v))}</span>
-            <span class="wiki-item-pe">${v.atualizadoEm ? `atualizado em ${esc(dataHoraBRdoCarimbo(v.atualizadoEm))}` : ""}${v.atualizadoPor ? ` por ${esc(nomeDeUid(v.atualizadoPor))}` : ""}</span>
-          </button>`).join("")}
+        ${ordenados.map(v => {
+          // O verbete sai INTEIRO aqui, texto e fotos. Lista de títulos com
+          // resumo cortado é a forma mais segura de ninguém ler: a pessoa entra
+          // para ver pagamento, passa os olhos e vai embora. Se a história
+          // estiver aberta na frente dela, ela lê sem decidir ler.
+          const midias = wikiMidiasCache[v.id] || [];
+          return `
+          <article class="wiki-verbete-lista">
+            <h3>${esc(v.titulo || "(sem título)")}</h3>
+            <p class="wiki-item-pe">${v.atualizadoEm ? `atualizado em ${esc(dataHoraBRdoCarimbo(v.atualizadoEm))}` : ""}${v.atualizadoPor ? ` por ${esc(nomeDeUid(v.atualizadoPor))}` : ""}</p>
+            <div class="wiki-texto">${v.texto ? wikiTextoHtml(v.texto) : `<p class="hint">Este verbete ainda está vazio. Abra e conte a história.</p>`}</div>
+            ${galeriaHtml(midias.filter(m => m.tipo === "imagem"), midias.filter(m => m.tipo === "audio"), false)}
+            <div class="wiki-verbete-pe">
+              <button class="btn-secondary btn-sm" data-abrir-verbete="${v.id}">Comentar, editar ou ver o histórico</button>
+            </div>
+          </article>`;
+        }).join("")}
       </div>` : ""}
     </div>
   </div>`;
@@ -2671,27 +2767,7 @@ function bocaDeMidia(v, imagens, audios) {
         <h3>Fotos e áudios</h3>
         <span class="hint">${imagens.length + audios.length === 0 ? "nenhum ainda" : `${imagens.length} foto${imagens.length === 1 ? "" : "s"} · ${audios.length} áudio${audios.length === 1 ? "" : "s"}`}</span>
       </div>
-      ${imagens.length ? `
-      <div class="wiki-galeria">
-        ${imagens.map(m => `
-          <figure class="wiki-foto">
-            <img src="${esc(m.url)}" alt="${esc(m.legenda || "Foto do verbete")}" loading="lazy">
-            <figcaption>
-              ${esc(m.legenda || "")}
-              <span class="muted-sm">${esc(nomeDeUid(m.por))}</span>
-              ${podeApagarMidia(m) ? `<button class="btn-ghost btn-sm" data-remover-midia="${m.id}">Remover</button>` : ""}
-            </figcaption>
-          </figure>`).join("")}
-      </div>` : ""}
-      ${audios.length ? `
-      <div class="wiki-audios">
-        ${audios.map(m => `
-          <div class="wiki-audio">
-            <div class="wiki-audio-cab"><b>${esc(m.legenda || "Áudio")}</b><span class="muted-sm">${esc(nomeDeUid(m.por))}</span>
-              ${podeApagarMidia(m) ? `<button class="btn-ghost btn-sm" data-remover-midia="${m.id}">Remover</button>` : ""}</div>
-            <audio controls preload="none" src="${esc(m.url)}"></audio>
-          </div>`).join("")}
-      </div>` : ""}
+      ${galeriaHtml(imagens, audios, true)}
       <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin-top:10px;">
         <input type="file" id="wiki-arquivo" accept="image/*,audio/*" ${session.wikiSubindo ? "disabled" : ""}>
         <input type="text" id="wiki-legenda" placeholder="Legenda (opcional)" style="flex:1; min-width:160px;" ${session.wikiSubindo ? "disabled" : ""}>
@@ -2702,6 +2778,36 @@ function bocaDeMidia(v, imagens, audios) {
 }
 function podeApagarMidia(m) {
   return souAdmin() || (fbUser && m.por === fbUser.uid);
+}
+
+/* As fotos e os áudios em si. A mesma peça serve na lista (sem os botões de
+   remover, que ali seriam um clique errado esperando acontecer) e no verbete
+   aberto. */
+function galeriaHtml(imagens, audios, comRemover) {
+  const remover = m => (comRemover && podeApagarMidia(m)
+    ? `<button class="btn-ghost btn-sm" data-remover-midia="${m.id}">Remover</button>` : "");
+  return `
+      ${imagens.length ? `
+      <div class="wiki-galeria">
+        ${imagens.map(m => `
+          <figure class="wiki-foto">
+            <img src="${esc(m.url)}" alt="${esc(m.legenda || "Foto do verbete")}" loading="lazy">
+            <figcaption>
+              ${esc(m.legenda || "")}
+              <span class="muted-sm">${esc(nomeDeUid(m.por))}</span>
+              ${remover(m)}
+            </figcaption>
+          </figure>`).join("")}
+      </div>` : ""}
+      ${audios.length ? `
+      <div class="wiki-audios">
+        ${audios.map(m => `
+          <div class="wiki-audio">
+            <div class="wiki-audio-cab"><b>${esc(m.legenda || "Áudio")}</b><span class="muted-sm">${esc(nomeDeUid(m.por))}</span>
+              ${remover(m)}</div>
+            <audio controls preload="none" src="${esc(m.url)}"></audio>
+          </div>`).join("")}
+      </div>` : ""}`;
 }
 
 /* Comentários do verbete.
@@ -3564,9 +3670,17 @@ function exportarRepertorioXLSX() {
    ============================================================ */
 function exportarPresencaXLSX() {
   const ed = edicaoCtx();
-  const ensaios = ensaiosCache;
+  // Mesma régua da tela: só ensaio que já aconteceu e tem presença anotada.
+  // Planilha e tela discordando sobre a mesma conta é pior do que as duas
+  // erradas — ninguém saberia em qual acreditar.
+  const ensaios = ensaiosJaRealizados();
   const pessoas = batuqueirosDaEdicao();
-  if (!ensaios.length) { alert("Este carnaval ainda não tem ensaios cadastrados."); return; }
+  if (!ensaios.length) {
+    alert(ensaiosCache.length
+      ? "Nenhum ensaio deste carnaval já aconteceu com presença anotada. A planilha sairia com todas as colunas zeradas."
+      : "Este carnaval ainda não tem ensaios cadastrados.");
+    return;
+  }
   if (!pessoas.length) { alert("Este carnaval ainda não tem ninguém inscrito."); return; }
 
   const PRIMEIRA = 5;
@@ -3581,7 +3695,7 @@ function exportarPresencaXLSX() {
   const cabecalho = ["Naipe", "Grupo", "Batuqueiro", "Vai tocar", ...ensaios.map(e => ensaioLabel(e)), "Presenças"];
   const matriz = [
     Object.assign([{ t: `Presença — ${edicaoLabel(ed)}`, s: E.titulo }], { altura: 34 }),
-    Object.assign([{ t: `${pessoas.length} inscritos · ${ativos} responderam que vão tocar · ${ensaios.length} ensaio${ensaios.length === 1 ? "" : "s"} · gerado em ${dateBR(hojeISO())} · a aba "Percentual por naipe" calcula sozinha a partir desta`, s: E.subtitulo }], { altura: 20 }),
+    Object.assign([{ t: `${pessoas.length} inscritos · ${ativos} responderam que vão tocar · ${ensaios.length} ensaio${ensaios.length === 1 ? "" : "s"} já realizado${ensaios.length === 1 ? "" : "s"} (ensaio por vir ou sem presença anotada fica fora da conta) · gerado em ${dateBR(hojeISO())} · a aba "Percentual por naipe" calcula sozinha a partir desta`, s: E.subtitulo }], { altura: 20 }),
     [],
     Object.assign(cabecalho.map(c => ({ t: c, s: E.cabecalho })), { altura: 26 }),
   ];
