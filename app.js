@@ -216,6 +216,7 @@ const session = {
   wikiHistoricoAberto: false,
   wikiSalvando: false,
   wikiSubindo: false,         // upload de mídia em andamento
+  wikiProgresso: "",          // "2 de 5" enquanto sobe um lote de fotos
   wikiComentando: false,
   wikiComentarioDraft: "",
   historico: null,            // carregado sob demanda em "Meu histórico"
@@ -2491,6 +2492,7 @@ function headerBar(u) {
      igual na tela. Sem isso, 150 pessoas enchem os 5 GB gratuitos em uma
      temporada, e o que era gratuito vira conta no fim do mês.
    ============================================================ */
+const MAX_ARQUIVOS_POR_VEZ = 20;
 const MAX_MB_IMAGEM = 8;
 const MAX_MB_AUDIO = 15;
 const LADO_MAX_FOTO = 1600;
@@ -2769,11 +2771,11 @@ function bocaDeMidia(v, imagens, audios) {
       </div>
       ${galeriaHtml(imagens, audios, true)}
       <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin-top:10px;">
-        <input type="file" id="wiki-arquivo" accept="image/*,audio/*" ${session.wikiSubindo ? "disabled" : ""}>
-        <input type="text" id="wiki-legenda" placeholder="Legenda (opcional)" style="flex:1; min-width:160px;" ${session.wikiSubindo ? "disabled" : ""}>
-        <button class="btn-secondary btn-sm" id="btn-wiki-subir" ${session.wikiSubindo ? "disabled" : ""}>${session.wikiSubindo ? "Enviando..." : "Enviar"}</button>
+        <input type="file" id="wiki-arquivo" accept="image/*,audio/*" multiple ${session.wikiSubindo ? "disabled" : ""}>
+        <input type="text" id="wiki-legenda" placeholder="Legenda (opcional, vale para todas)" style="flex:1; min-width:160px;" ${session.wikiSubindo ? "disabled" : ""}>
+        <button class="btn-secondary btn-sm" id="btn-wiki-subir" ${session.wikiSubindo ? "disabled" : ""}>${session.wikiSubindo ? `Enviando ${esc(session.wikiProgresso || "")}...` : "Enviar"}</button>
       </div>
-      <p class="hint">Foto até ${MAX_MB_IMAGEM} MB e áudio até ${MAX_MB_AUDIO} MB. As fotos são reduzidas no seu próprio celular antes de subir (lado maior de ${LADO_MAX_FOTO} pixels), para não estourar o espaço do bloco nem gastar sua internet. <b>Vídeo não sobe aqui</b>: suba no YouTube ou no Drive e cole o link no texto.</p>
+      <p class="hint">Dá para escolher <b>várias fotos de uma vez</b> (até ${MAX_ARQUIVOS_POR_VEZ} por envio) — no celular, segure o dedo numa foto e marque as outras. A legenda, se preenchida, vale para todas do envio. Foto até ${MAX_MB_IMAGEM} MB e áudio até ${MAX_MB_AUDIO} MB; as fotos são reduzidas no seu próprio aparelho antes de subir (lado maior de ${LADO_MAX_FOTO} pixels), para não estourar o espaço do bloco nem gastar sua internet. <b>Vídeo não sobe aqui</b>: suba no YouTube ou no Drive e cole o link no texto.</p>
     </div>`;
 }
 function podeApagarMidia(m) {
@@ -6304,38 +6306,66 @@ function wireEvents() {
     if (session.wikiSubindo) return;
     const id = session.wikiId;
     const campo = $("#wiki-arquivo");
-    const file = campo && campo.files && campo.files[0];
-    if (!id || !file) { alert("Escolha uma foto ou um áudio primeiro."); return; }
-    const ehImagem = file.type.startsWith("image/");
-    const ehAudio = file.type.startsWith("audio/");
-    if (!ehImagem && !ehAudio) { alert("Só dá para enviar foto ou áudio por aqui. Vídeo: suba no YouTube ou no Drive e cole o link no texto do verbete."); return; }
-    const legenda = ($("#wiki-legenda") ? $("#wiki-legenda").value : "").trim().slice(0, 200);
-    session.wikiSubindo = true; render();
-    try {
-      const pronto = ehImagem ? await reduzirImagem(file) : file;
-      const limite = (ehImagem ? MAX_MB_IMAGEM : MAX_MB_AUDIO) * 1024 * 1024;
-      if (pronto.size > limite) {
-        throw new Error(`O arquivo tem ${(pronto.size / 1024 / 1024).toFixed(1)} MB e o limite é ${ehImagem ? MAX_MB_IMAGEM : MAX_MB_AUDIO} MB.`);
-      }
-      // O uid entra no CAMINHO porque a regra do Storage não consegue consultar
-      // o banco: é pelo caminho que ela sabe quem pode apagar o arquivo depois.
-      const nomeLimpo = file.name.replace(/[^a-zA-Z0-9.\-_]/g, "_").slice(-60);
-      const caminho = `wiki/${id}/${fbUser.uid}/${Date.now()}-${nomeLimpo}`;
-      const alvo = storageRef(storage, caminho);
-      await uploadBytes(alvo, pronto, { contentType: pronto.type });
-      const url = await getDownloadURL(alvo);
-      await addDoc(P.midias(id), {
-        tipo: ehImagem ? "imagem" : "audio",
-        url, caminho, legenda, por: fbUser.uid, em: serverTimestamp(),
-      });
-      if (campo) campo.value = "";
-      if ($("#wiki-legenda")) $("#wiki-legenda").value = "";
-      wikiAberto = null;
-      showToast(ehImagem ? "Foto enviada." : "Áudio enviado.");
-    } catch (err) {
-      alert("Não consegui enviar: " + (err && err.message ? err.message : friendlyFirestoreError(err)));
+    const escolhidos = campo && campo.files ? [...campo.files] : [];
+    if (!id || !escolhidos.length) { alert("Escolha uma foto ou um áudio primeiro."); return; }
+    if (escolhidos.length > MAX_ARQUIVOS_POR_VEZ) {
+      alert(`São ${escolhidos.length} arquivos de uma vez, e o limite por envio é ${MAX_ARQUIVOS_POR_VEZ}.\n\nMande em levas: o navegador do celular costuma travar com lote grande, e assim você vê o que já subiu em vez de perder tudo no meio.`);
+      return;
     }
+    const legenda = ($("#wiki-legenda") ? $("#wiki-legenda").value : "").trim().slice(0, 200);
+
+    // Um a um, em ordem: assim a barra de progresso diz a verdade, uma foto
+    // ruim no meio não derruba as outras, e o que já subiu fica subido. Em
+    // paralelo seria mais rápido no wi-fi e pior em tudo o mais.
+    session.wikiSubindo = true;
+    session.wikiProgresso = `1 de ${escolhidos.length}`;
+    render();
+    const recusados = [];
+    let enviados = 0;
+    for (let i = 0; i < escolhidos.length; i++) {
+      const file = escolhidos[i];
+      session.wikiProgresso = `${i + 1} de ${escolhidos.length}`;
+      if (escolhidos.length > 1) render();
+      const ehImagem = file.type.startsWith("image/");
+      const ehAudio = file.type.startsWith("audio/");
+      if (!ehImagem && !ehAudio) { recusados.push(`${file.name}: não é foto nem áudio`); continue; }
+      try {
+        const pronto = ehImagem ? await reduzirImagem(file) : file;
+        const limite = (ehImagem ? MAX_MB_IMAGEM : MAX_MB_AUDIO) * 1024 * 1024;
+        if (pronto.size > limite) {
+          recusados.push(`${file.name}: ${(pronto.size / 1024 / 1024).toFixed(1)} MB, acima do limite de ${ehImagem ? MAX_MB_IMAGEM : MAX_MB_AUDIO} MB`);
+          continue;
+        }
+        // O uid entra no CAMINHO porque a regra do Storage não consegue
+        // consultar o banco: é pelo caminho que ela sabe quem pode apagar o
+        // arquivo depois.
+        const nomeLimpo = file.name.replace(/[^a-zA-Z0-9.\-_]/g, "_").slice(-60);
+        const caminho = `wiki/${id}/${fbUser.uid}/${Date.now()}-${i}-${nomeLimpo}`;
+        const alvo = storageRef(storage, caminho);
+        await uploadBytes(alvo, pronto, { contentType: pronto.type });
+        const url = await getDownloadURL(alvo);
+        await addDoc(P.midias(id), {
+          tipo: ehImagem ? "imagem" : "audio",
+          url, caminho, legenda, por: fbUser.uid, em: serverTimestamp(),
+        });
+        enviados++;
+      } catch (err) {
+        recusados.push(`${file.name}: ${err && err.message ? err.message : friendlyFirestoreError(err)}`);
+      }
+    }
+    if (campo) campo.value = "";
+    if ($("#wiki-legenda")) $("#wiki-legenda").value = "";
+    wikiAberto = null;
+    wikiMidiasCache[id] = undefined;
     session.wikiSubindo = false;
+    session.wikiProgresso = "";
+    // O que subiu, subiu — o aviso é sobre o que ficou de fora, com o nome do
+    // arquivo, para a pessoa saber qual repetir em vez de mandar tudo de novo.
+    if (recusados.length) {
+      alert(`${enviados ? `${enviados} ${enviados === 1 ? "arquivo entrou" : "arquivos entraram"} no verbete.` : "Nenhum arquivo entrou."}\n\nFicaram de fora:\n${recusados.join("\n")}`);
+    } else if (enviados) {
+      showToast(enviados === 1 ? "Arquivo enviado." : `${enviados} arquivos enviados.`);
+    }
     render();
   });
 

@@ -4063,6 +4063,51 @@ async function main() {
   const aposPdf = await page.evaluate(() => window.__mock.arquivosDoStorage());
   ok('Arquivo que não é foto nem áudio é recusado', aposPdf.length === 1);
 
+  // ---- várias fotos de uma vez ----
+  // Quem volta de um ensaio tem 15 fotos no celular, não uma. Mandar uma a uma
+  // é o tipo de atrito que faz a pessoa desistir e não subir nenhuma.
+  ok('O campo de arquivo aceita seleção múltipla',
+     await page.evaluate(() => document.querySelector('#wiki-arquivo').multiple === true));
+  await page.evaluate(() => {
+    const input = document.querySelector('#wiki-arquivo');
+    const dt = new DataTransfer();
+    // o arquivo inválido vai no MEIO do lote de propósito: é assim que se
+    // descobre se um problema derruba o que vinha depois dele
+    dt.items.add(new File([new Uint8Array(1024)], 'ensaio-1.jpg', { type: 'image/jpeg' }));
+    dt.items.add(new File([new Uint8Array(256)], 'lista.pdf', { type: 'application/pdf' }));
+    dt.items.add(new File([new Uint8Array(1024)], 'ensaio-2.jpg', { type: 'image/jpeg' }));
+    dt.items.add(new File([new Uint8Array(2048)], 'virada.mp3', { type: 'audio/mpeg' }));
+    input.files = dt.files;
+  });
+  await page.fill('#wiki-legenda', 'Ensaio de novembro');
+  await page.click('#btn-wiki-subir');
+  await page.waitForTimeout(2500);
+  const aposLote = await page.evaluate(() => window.__mock.arquivosDoStorage());
+  ok('Três arquivos válidos sobem de uma vez', aposLote.length === 1 + 3);
+  const galeria = await appHtml(page);
+  ok('As duas fotos novas aparecem na galeria',
+     (galeria.match(/Ensaio de novembro/g) || []).length >= 3);
+  ok('E o áudio do lote também', galeria.includes('<audio'));
+  ok('A legenda do envio vale para todos os arquivos do lote', await page.evaluate(() => {
+    const s = window.__mock.dumpStore();
+    const chave = Object.keys(s).find(k => k.startsWith('wiki/') && k.endsWith('/midias'));
+    const doLote = Object.values(s[chave]).filter(m => m.legenda === 'Ensaio de novembro');
+    return doLote.length === 3;
+  }));
+  ok('O arquivo inválido do meio do lote não impede os outros de subir',
+     aposLote.filter(a => a.caminho.includes('lista.pdf')).length === 0);
+  // limpa as mídias do lote, para as contagens das seções seguintes
+  await page.evaluate(async () => {
+    const fb = await import('./firebase-init.mock.js');
+    const s = window.__mock.dumpStore();
+    const chave = Object.keys(s).find(k => k.startsWith('wiki/') && k.endsWith('/midias'));
+    const vid = chave.split('/')[1];
+    for (const [id, m] of Object.entries(s[chave])) {
+      if (m.legenda === 'Ensaio de novembro') await fb.deleteDoc(fb.doc(fb.db, 'wiki', vid, 'midias', id));
+    }
+  });
+  await page.waitForTimeout(800);
+
   // outra pessoa edita o mesmo verbete: é wiki, pode
   await logout(page);
   await registrar(page, { email: 'wiki.outro@example.com', nome: 'Zeca', sobrenome: 'Wiki', posicao: 'Caixa', camisa: 'M' });

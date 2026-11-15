@@ -328,7 +328,9 @@ Na prática: alguém comenta "a caixa desafinada era do Tião, não do Zeca"; qu
 
 > **Comentário não é editável, só apagável.** É fala de uma pessoa, com o nome dela em cima; deixar alterar depois permitiria reescrever o que alguém disse sem ninguém ver. Para corrigir, comenta-se de novo, ou corrige-se o texto do verbete.
 
-**E as fotos, áudios e vídeos?** Foto e áudio sobem direto no verbete, se o Storage estiver ligado (passo 1.3b). Três limites, cada um por um motivo:
+**E as fotos, áudios e vídeos?** Foto e áudio sobem direto no verbete, se o Storage estiver ligado (passo 1.3b). **Dá para escolher várias fotos de uma vez** — até 20 por envio; no celular, segure o dedo numa foto e marque as outras. Elas sobem uma a uma, com o contador mostrando onde está ("Enviando 3 de 7"), e a legenda preenchida vale para todas daquele envio.
+
+Se um arquivo do meio do lote for recusado (tipo errado, tamanho acima do limite), **os outros continuam subindo** e no fim aparece a lista do que ficou de fora, com o nome de cada arquivo — assim você repete só o que faltou em vez de mandar tudo de novo. Três limites, cada um por um motivo:
 
 - **Tipo**: só imagem e áudio. Um bucket que aceita qualquer arquivo vira hospedagem grátis de arquivo alheio, e a conta é do bloco.
 - **Tamanho**: 8 MB por foto, 15 MB por áudio — conferido no navegador e **de novo na regra do Storage**, porque checagem só no navegador não protege nada.
