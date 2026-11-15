@@ -48,6 +48,21 @@ O arquivo `firestore.rules` (incluído neste pacote) já contém as regras corre
 3. Abra o arquivo `firestore.rules` deste pacote, copie todo o conteúdo e cole no editor do Firebase.
 4. Clique em **"Publicar"**.
 
+### 1.3b — Ligar o armazenamento de fotos e áudios (necessário só para a WikiBrega)
+
+A WikiBrega guarda fotos e áudios no **Cloud Storage for Firebase**, e ele **exige o plano Blaze** (pague conforme o uso, com cartão cadastrado). Isso não é uma escolha do site: desde setembro de 2024, o Firebase não libera o Storage no plano gratuito Spark. O Blaze mantém uma faixa sem custo, e o uso de um bloco de carnaval cabe dentro dela com folga — o que muda é que passa a existir a possibilidade de conta se algo sair do controle, e é por isso que o teto de gasto abaixo não é opcional.
+
+**Se você não quiser ligar o Blaze**, o resto do site funciona igual: a WikiBrega continua aceitando texto e link (YouTube, Drive, Instagram), só não aceita upload de arquivo.
+
+1. **Firebase Console → ícone de engrenagem → Uso e faturamento → Detalhes e configurações → Modificar plano → Blaze.** Cadastre o cartão.
+2. **Defina um orçamento com alerta**, no mesmo lugar ("Definir um orçamento"): coloque um valor baixo (R$ 20, por exemplo) e marque os alertas por e-mail. O alerta avisa; ele **não corta** o serviço sozinho.
+3. **Firebase Console → Build → Storage → Começar.** Aceite as regras provisórias (você as substitui no passo seguinte) e escolha a região `southamerica-east1` (São Paulo) se o console oferecer — menos latência para a bateria.
+4. **Storage → aba "Regras"**: apague o que estiver lá, cole todo o conteúdo do arquivo **`storage.rules`** deste pacote e clique em **Publicar**.
+
+> **São duas regras diferentes.** `firestore.rules` (passo 1.3) protege o banco; `storage.rules` protege os arquivos. Publicar uma e esquecer a outra é o erro clássico — e o sintoma é "foto não sobe" ou, pior, foto subindo sem limite de tamanho.
+
+> **O que o teto de gasto não cobre.** Orçamento no Google Cloud é aviso, não trava. Se quiser garantia de custo zero, a saída é não ligar o Blaze. Com o Blaze ligado e os limites deste pacote (foto reduzida para 1600px antes de subir, teto de 8 MB por foto e 15 MB por áudio, e só quem tem cadastro no site consegue ler ou escrever), um acervo de alguns milhares de fotos fica dentro da faixa gratuita.
+
 ### 1.4 — Criar o app Web e pegar as chaves de configuração
 
 1. Na página inicial do projeto (ícone de engrenagem ⚙️ → **"Configurações do projeto"**), role até **"Seus apps"**.
@@ -74,7 +89,7 @@ pelos valores reais copiados do Firebase. Salve o arquivo. (Essas chaves não s�
 ## Parte 2 — Colocar o código no GitHub
 
 1. Crie um repositório novo em [github.com/new](https://github.com/new) — por exemplo `carnaval-fogo-e-paixao`. Pode ser privado ou público.
-2. Suba todos os arquivos desta pasta (`index.html`, `app.js`, `styles.css`, `firebase-init.js`, `firestore.rules`, `repertorio-historico.json`, `_headers`, `_redirects`, e opcionalmente `test.html` e `firebase-init.mock.js`) para o repositório. A pasta `backup` não precisa ir para o site — ela roda no seu computador; se subir, o `.gitignore` que está lá dentro é o que impede a chave de serviço de ir junto. Os arquivos `_headers` e `_redirects` começam com underline e são lidos pelo Netlify — se a interface do GitHub esconder eles, arraste assim mesmo, que sobem. O jeito mais simples é pela própria interface do GitHub: **"Add file" → "Upload files"**, arrastar todos os arquivos, e clicar em **"Commit changes"**.
+2. Suba todos os arquivos desta pasta (`index.html`, `app.js`, `styles.css`, `firebase-init.js`, `firestore.rules`, `storage.rules`, `repertorio-historico.json`, `_headers`, `_redirects`, e opcionalmente `test.html` e `firebase-init.mock.js`) para o repositório. A pasta `backup` não precisa ir para o site — ela roda no seu computador; se subir, o `.gitignore` que está lá dentro é o que impede a chave de serviço de ir junto. Os arquivos `_headers` e `_redirects` começam com underline e são lidos pelo Netlify — se a interface do GitHub esconder eles, arraste assim mesmo, que sobem. O jeito mais simples é pela própria interface do GitHub: **"Add file" → "Upload files"**, arrastar todos os arquivos, e clicar em **"Commit changes"**.
 
 ---
 
@@ -278,7 +293,9 @@ No Windows, **Agendador de Tarefas** → Criar Tarefa Básica → semanal → In
 
 **Quem pode marcar presença nos ensaios?** Só admins e quem recebeu esse acesso individualmente. Todo mundo vê a tabela de presença de todos os ensaios (como uma "lista de chamada" coletiva, só para consulta), mas só marca SIM/NÃO quem tiver permissão. Para dar esse acesso a alguém que não é admin: painel admin → Cadastros → editar a pessoa → marcar "Pode marcar presença nos ensaios (de qualquer batuqueiro) sem ser admin".
 
-**Como vejo que naipe está faltando aos ensaios?** Logo abaixo da tabela de presença há o quadro **"Presença por naipe"**: uma linha por naipe, o percentual em cada ensaio, a média do naipe e quanto dele **nunca foi a nenhum ensaio**. A última linha é a bateria inteira. Todo mundo vê o quadro; o botão **"Baixar Excel (.xlsx)"** aparece só para a organização.
+**Como vejo que naipe está faltando aos ensaios?** Logo abaixo da tabela de presença há o quadro **"Presença por naipe"**, em **duas tabelas**: uma com os **naipes de percussão** — a presença da bateria tocando, que é o número que interessa — e outra com **apoio, voz e outras funções**, que vão a ensaio por motivos diferentes e têm régua própria. Cada tabela traz uma linha por posição, o percentual em cada ensaio, a média, quanto do grupo **nunca foi a nenhum ensaio** e o total do próprio grupo. Não há total misturando os dois. Todo mundo vê o quadro; o botão **"Baixar Excel (.xlsx)"** aparece só para a organização.
+
+**Quem decide o que é naipe de percussão?** Cada posição carrega essa marcação: **Painel admin → Posições → "Toca percussão"**. Desmarcando, a posição passa para a tabela de apoio na hora. Posições cadastradas antes dessa marcação existir caem na tabela certa por uma lista de nomes conhecidos — Apoio, Breguete/Bregato, Diretor (de bateria), Guitarra, Metal/Metais, Harmonia, Mestre, Princesa/Rainha, Produção, Voz e "Outro" ficam fora da percussão; o resto entra. Quem ainda não escolheu posição também fica fora. A lista é só o ponto de partida: assim que você salvar a tela de Posições, vale a marcação gravada, e uma posição nova entra como percussão até você dizer o contrário.
 
 O que decide os números é o **universo** de cada naipe: ele é formado por quem está inscrito no carnaval **e respondeu que vai tocar**. Quem avisou que não vai tocar fica fora da conta, nos dois lados da divisão — contar a lista inteira faria um naipe com muita gente que já avisou que não vem parecer pior do que é, e a conversa com o naipe começaria por um número errado. Naipe que ficou sem ninguém ativo some do quadro, em vez de aparecer zerado.
 
@@ -288,10 +305,36 @@ O quadro é sempre o carnaval inteiro: os filtros acima valem para a tabela de p
 
 **O que vem na planilha de presença?** Duas abas, no mesmo desenho da planilha que a organização já usava:
 
-- **Presença** — a matriz: uma linha por inscrito, com naipe, nome, a coluna **"Vai tocar"**, 1 ou 0 em cada ensaio e o total de presenças.
-- **Percentual por naipe** — os percentuais, todos em fórmula.
+- **Presença** — a matriz: uma linha por inscrito, com naipe, a coluna **"Grupo"** (Percussão ou Apoio), nome, a coluna **"Vai tocar"**, 1 ou 0 em cada ensaio e o total de presenças.
+- **Percentual por naipe** — os percentuais, todos em fórmula, nos mesmos dois blocos da tela, cada um com o seu total.
 
-A matriz leva **todos os inscritos**, inclusive quem respondeu que não vai tocar, e cada fórmula da segunda aba filtra pela coluna "Vai tocar". É de propósito: assim o universo fica à vista e auditável dentro do arquivo, em vez de ser uma decisão escondida na hora de exportar. Quem abrir confere a conta, e mudar de ideia sobre quem entra é mexer na fórmula — não pedir outro arquivo.
+A matriz leva **todos os inscritos**, inclusive quem respondeu que não vai tocar, e cada fórmula da segunda aba filtra pelas colunas "Vai tocar" e "Grupo". É de propósito: assim o universo fica à vista e auditável dentro do arquivo, em vez de ser uma decisão escondida na hora de exportar. Quem abrir confere a conta, e mudar de ideia sobre quem entra é mexer na fórmula — não pedir outro arquivo.
+
+**O que é a WikiBrega?** Uma enciclopédia do bloco, dentro do site: **Área do batuqueiro → Abrir a WikiBrega**. Qualquer pessoa com cadastro cria um verbete (de onde veio o nome do bloco, a história de uma música, o ensaio que virou lenda) e **corrige o que já existe** — é wiki, não mural de recados.
+
+O que torna isso seguro não é travar a edição, é guardar o que havia antes: **cada gravação arquiva a versão anterior**, com autor e hora, e a organização restaura com um clique em "Ver o histórico de alterações". Em um bloco de 150 pessoas, o risco real não é vandalismo; é alguém apagar sem querer a história que outro escreveu e não ter como voltar. Só a organização remove um verbete inteiro ou restaura uma versão antiga.
+
+O texto é guardado e exibido **como texto**, nunca como HTML: um verbete é escrito por qualquer pessoa logada e vai para a tela de todo mundo, então interpretar marcação ali seria abrir a porta para código no meio da história do bloco. Links viram links clicáveis, e só eles. Parágrafos são separados por linha em branco.
+
+**E quem não se sente à vontade para mexer no texto dos outros?** Comenta. Embaixo de cada verbete existe a **Conversa**: qualquer pessoa da bateria escreve, fica assinado e com data, e some do site quando o autor (ou a organização) apaga.
+
+A divisão é de propósito, e é a mesma que a Wikipédia usa há vinte anos: **o verbete é a versão consolidada, a conversa é onde as pessoas acrescentam e discordam**. Quase ninguém edita o texto de outra pessoa — parece atrevimento, e a maioria não se sente à vontade. Comentar, todo mundo comenta. Sem o verbete, a história se espalha por quarenta comentários e ninguém sabe o que é consenso; sem a conversa, a página nasce morta e fica no primeiro parágrafo para sempre.
+
+Na prática: alguém comenta "a caixa desafinada era do Tião, não do Zeca"; quando isso virar consenso, qualquer um edita o texto do verbete e incorpora. O comentário pode ficar ou ser apagado — o que vale como história é o que está no texto.
+
+> **Comentário não é editável, só apagável.** É fala de uma pessoa, com o nome dela em cima; deixar alterar depois permitiria reescrever o que alguém disse sem ninguém ver. Para corrigir, comenta-se de novo, ou corrige-se o texto do verbete.
+
+**E as fotos, áudios e vídeos?** Foto e áudio sobem direto no verbete, se o Storage estiver ligado (passo 1.3b). Três limites, cada um por um motivo:
+
+- **Tipo**: só imagem e áudio. Um bucket que aceita qualquer arquivo vira hospedagem grátis de arquivo alheio, e a conta é do bloco.
+- **Tamanho**: 8 MB por foto, 15 MB por áudio — conferido no navegador e **de novo na regra do Storage**, porque checagem só no navegador não protege nada.
+- **Dimensão**: a foto é reduzida no próprio celular antes de subir (lado maior de 1600 pixels). Uma foto de celular tem 4 a 8 MB; a mesma com 1600px tem cerca de 300 KB e aparece igual na tela. Sem isso, uma temporada de ensaios enche os 5 GB gratuitos.
+
+**Vídeo não sobe**, de propósito: é o que faz a conta sair do zero, e o YouTube faz isso de graça e melhor. Suba lá (ou no Drive) e cole o link no texto do verbete.
+
+> **Quem apaga o quê.** Cada pessoa remove as fotos e áudios que subiu, e a organização remove qualquer um. Há uma diferença técnica que vale saber: quando a organização remove a foto de outra pessoa, ela **some do site na hora**, mas o arquivo continua no armazenamento — regra de Storage não consegue consultar o banco para saber quem é admin, então só quem subiu consegue apagar o arquivo de verdade. Para apagar mesmo: Firebase Console → Storage → pasta `wiki/` → localize e apague. Na prática isso quase nunca é necessário; vale para o caso de alguém subir algo que não pode ficar nem guardado.
+
+> **Foto de gente é dado pessoal.** O acervo só é visível para quem tem cadastro no site, e o aviso de privacidade no rodapé fala disso. Ainda assim, combine com a bateria: quem não quiser aparecer pede para remover, e a organização remove. Se houver menor de idade na bateria, trate foto dele como assunto dos responsáveis, não do bloco.
 
 **E se eu esquecer minha senha?** Na tela de login há um link "Esqueci minha senha", que envia um e-mail de redefinição pelo próprio Firebase.
 

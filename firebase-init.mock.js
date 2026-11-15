@@ -291,6 +291,45 @@ export function writeBatch(_db) {
   };
 }
 
+/* ------------------------------------------------------------
+   MOCK DO STORAGE (fotos e áudios da WikiBrega)
+   ------------------------------------------------------------
+   Guarda os arquivos em memória e devolve uma URL falsa, no mesmo formato da
+   de verdade. Reproduz as duas regras que o app precisa respeitar e que só
+   apareceriam em produção: o tipo e o tamanho do arquivo, e o fato de que só
+   quem subiu consegue apagar (o uid está no caminho, porque regra de Storage
+   não consulta o Firestore). Ver storage.rules.
+   ------------------------------------------------------------ */
+const arquivosStorage = new Map();   // caminho -> { tamanho, tipo, uid }
+export const storage = { __mockStorage: true };
+export function storageRef(_storage, caminho) { return { __type: "storageRef", caminho }; }
+export async function uploadBytes(ref, dados, meta) {
+  const tipo = (meta && meta.contentType) || (dados && dados.type) || "";
+  const tamanho = (dados && dados.size) || 0;
+  const u = auth.currentUser;
+  if (!u) throw erroDeStorage("storage/unauthorized", "precisa estar logado");
+  const ehImagem = tipo.startsWith("image/"), ehAudio = tipo.startsWith("audio/");
+  if (!ehImagem && !ehAudio) throw erroDeStorage("storage/unauthorized", "tipo de arquivo não permitido");
+  if (ehImagem && tamanho > 8 * 1024 * 1024) throw erroDeStorage("storage/unauthorized", "imagem acima do limite");
+  if (tamanho > 15 * 1024 * 1024) throw erroDeStorage("storage/unauthorized", "arquivo acima do limite");
+  const dono = String(ref.caminho || "").split("/")[2];
+  if (dono !== u.uid) throw erroDeStorage("storage/unauthorized", "caminho de outra pessoa");
+  arquivosStorage.set(ref.caminho, { tamanho, tipo, uid: u.uid });
+  return { ref };
+}
+export async function getDownloadURL(ref) {
+  if (!arquivosStorage.has(ref.caminho)) throw erroDeStorage("storage/object-not-found", "arquivo não existe");
+  return `https://firebasestorage.googleapis.com/v0/b/mock/o/${encodeURIComponent(ref.caminho)}?alt=media&token=mock`;
+}
+export async function deleteObject(ref) {
+  const u = auth.currentUser;
+  const info = arquivosStorage.get(ref.caminho);
+  if (!info) throw erroDeStorage("storage/object-not-found", "arquivo não existe");
+  if (!u || info.uid !== u.uid) throw erroDeStorage("storage/unauthorized", "só quem subiu pode apagar");
+  arquivosStorage.delete(ref.caminho);
+}
+function erroDeStorage(code, msg) { const e = new Error(msg); e.code = code; return e; }
+
 export function increment(n) { return { __increment: n }; }
 export function serverTimestamp() { return { __serverTimestamp: true }; }
 
@@ -335,6 +374,7 @@ if (typeof window !== "undefined") {
         notifyCollection(nomeColecao);
       });
     },
+    arquivosDoStorage() { return [...arquivosStorage.entries()].map(([caminho, info]) => ({ caminho, ...info })); },
     uidPorEmail(email) {
       const u = authUsersByEmail.get(email.toLowerCase());
       return u ? u.uid : null;

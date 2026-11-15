@@ -2367,22 +2367,39 @@ async function main() {
     if (!h) return null;
     const card = h.closest('.card');
     const linha = tr => [...tr.querySelectorAll('td')].map(td => td.textContent.trim());
+    const blocos = [...card.querySelectorAll('.set-bloco')].map(b => ({
+      titulo: b.querySelector('h3').textContent.trim(),
+      cabecalho: [...b.querySelectorAll('thead th')].map(t => t.textContent.trim()),
+      naipes: [...b.querySelectorAll('tbody tr')].map(linha),
+      total: [...b.querySelectorAll('tfoot tr')].map(linha)[0],
+    }));
     return {
-      cabecalho: [...card.querySelectorAll('thead th')].map(t => t.textContent.trim()),
-      naipes: [...card.querySelectorAll('tbody tr')].map(linha),
-      geral: [...card.querySelectorAll('tfoot tr')].map(linha)[0],
+      blocos,
+      percussao: blocos.find(b => b.titulo.includes('percussão')) || null,
+      apoio: blocos.find(b => b.titulo.includes('Apoio')) || null,
       temBotaoExcel: !!card.querySelector('#btn-exportar-presenca-xlsx'),
     };
   });
   let porNaipe = await lerPorNaipe();
-  ok('A tela de presença mostra o percentual por naipe', !!porNaipe && porNaipe.naipes.length > 0);
+  ok('A tela de presença mostra o percentual por naipe', !!porNaipe && !!porNaipe.percussao);
+  ok('São duas tabelas: quem toca percussão e quem tem outra função',
+     !!porNaipe.percussao && !!porNaipe.apoio);
   ok('Com uma coluna de ativos, uma por ensaio, média e "nunca foi"',
-     porNaipe.cabecalho[0] === 'Naipe' && porNaipe.cabecalho[1] === 'Ativos'
-     && porNaipe.cabecalho[porNaipe.cabecalho.length - 2] === 'Média'
-     && porNaipe.cabecalho[porNaipe.cabecalho.length - 1] === 'Nunca foi');
-  ok('E uma linha com a bateria inteira', !!porNaipe.geral && porNaipe.geral[0].includes('Bateria inteira'));
+     porNaipe.percussao.cabecalho[0] === 'Posição' && porNaipe.percussao.cabecalho[1] === 'Ativos'
+     && porNaipe.percussao.cabecalho[porNaipe.percussao.cabecalho.length - 2] === 'Média'
+     && porNaipe.percussao.cabecalho[porNaipe.percussao.cabecalho.length - 1] === 'Nunca foi');
+  ok('Cada tabela tem o total do próprio grupo, não um total misturado',
+     !!porNaipe.percussao && !!porNaipe.apoio
+     && porNaipe.percussao.total[0].includes('Percussão') && porNaipe.apoio.total[0].includes('Apoio'));
+  // Voz é função de apoio: não pode entrar na conta de quem toca.
+  ok('A Voz vai para a tabela de apoio, não para a da percussão',
+     !!porNaipe.apoio && porNaipe.apoio.naipes.some(l => l[0] === 'Voz')
+     && !porNaipe.percussao.naipes.some(l => l[0] === 'Voz'));
+  ok('E o total da percussão não conta quem está no apoio',
+     !!porNaipe.apoio && Number(porNaipe.percussao.total[1]) + Number(porNaipe.apoio.total[1]) >= 2
+     && !porNaipe.percussao.naipes.some(l => l[0] === 'Apoio'));
 
-  const repiqueAntes = porNaipe.naipes.find(l => l[0] === 'Repique');
+  const repiqueAntes = porNaipe.percussao.naipes.find(l => l[0] === 'Repique');
   ok('O naipe do Repique tem 1 ativo (só a Duda)', repiqueAntes && repiqueAntes[1] === '1');
   ok('E 100% no ensaio em que ela foi marcada', repiqueAntes.includes('100%'));
 
@@ -2394,7 +2411,7 @@ async function main() {
   });
   await page.waitForTimeout(800);
   porNaipe = await lerPorNaipe();
-  const repiqueDepois = porNaipe.naipes.find(l => l[0] === 'Repique');
+  const repiqueDepois = porNaipe.percussao.naipes.find(l => l[0] === 'Repique');
   ok('Quem avisa que não vai tocar fica fora do universo do naipe', repiqueDepois[1] === '1');
   ok('E não derruba o percentual do naipe', repiqueDepois.includes('100%'));
 
@@ -2406,7 +2423,7 @@ async function main() {
   });
   await page.waitForTimeout(800);
   porNaipe = await lerPorNaipe();
-  const repiqueComBruno = porNaipe.naipes.find(l => l[0] === 'Repique');
+  const repiqueComBruno = porNaipe.percussao.naipes.find(l => l[0] === 'Repique');
   ok('Quem vai tocar entra no universo na hora', repiqueComBruno[1] === '2');
   ok('E quem nunca apareceu puxa a média para baixo', repiqueComBruno.includes('50%'));
   ok('A coluna "nunca foi" mostra a metade do naipe que não apareceu',
@@ -2424,7 +2441,8 @@ async function main() {
   });
   await page.waitForTimeout(800);
   porNaipe = await lerPorNaipe();
-  ok('Naipe que ficou sem ninguém ativo sai da tabela', !porNaipe.naipes.some(l => l[0] === 'Voz'));
+  ok('Naipe que ficou sem ninguém ativo sai da tabela',
+     !porNaipe.apoio || !porNaipe.apoio.naipes.some(l => l[0] === 'Voz'));
 
   const [planilhaPresenca] = await Promise.all([
     page.waitForEvent('download'),
@@ -2440,7 +2458,12 @@ async function main() {
   ok('A matriz leva a coluna que define o universo', matrizXml.includes('Vai tocar'));
   ok('E leva TODO MUNDO, inclusive quem respondeu que não vai tocar — o universo fica auditável',
      matrizXml.includes('Carla') && matrizXml.includes('>Não<'));
+  ok('A matriz traz a coluna de grupo, que separa percussão de apoio',
+     matrizXml.includes('>Grupo<') && matrizXml.includes('>Percussão<') && matrizXml.includes('>Apoio<'));
   const pctXml = parteDoXlsx(caminhoPresenca, 'xl/worksheets/sheet2.xml');
+  ok('A planilha traz os dois blocos, com total próprio cada um',
+     pctXml.includes('Naipes de percussão') && pctXml.includes('Percussão — total')
+     && pctXml.includes('Apoio — total'));
   ok('O percentual por naipe é fórmula, não número gravado',
      pctXml.includes("SUMIFS('Presença'!") && pctXml.includes("COUNTIFS('Presença'!"));
   // Não basta a palavra aparecer em algum lugar: TODA soma de presença tem de
@@ -2452,6 +2475,27 @@ async function main() {
   ok('Nenhum percentual sai digitado como número solto',
      !/<c [^>]*><v>\d/.test(pctXml.split('<sheetData>')[1].split('</sheetData>')[0]));
 
+  // A separação não é uma lista fixa no código: cada posição carrega a marcação,
+  // e mudá-la no painel move a posição de tabela.
+  await page.evaluate(async () => {
+    const fb = await import('./firebase-init.mock.js');
+    const snap = await fb.getDocs(fb.collection(fb.db, 'edicoes', '2027-1', 'posicoes'));
+    const alvo = snap.docs.find(d => d.data().nome === 'Repique');
+    await fb.updateDoc(fb.doc(fb.db, 'edicoes', '2027-1', 'posicoes', alvo.id), { percussao: false });
+  });
+  await page.waitForTimeout(800);
+  const aposMarcar = await lerPorNaipe();
+  ok('Desmarcar "toca percussão" move a posição para a tabela de apoio',
+     !!aposMarcar.apoio && aposMarcar.apoio.naipes.some(l => l[0] === 'Repique')
+     && !aposMarcar.percussao.naipes.some(l => l[0] === 'Repique'));
+  await page.evaluate(async () => {
+    const fb = await import('./firebase-init.mock.js');
+    const snap = await fb.getDocs(fb.collection(fb.db, 'edicoes', '2027-1', 'posicoes'));
+    const alvo = snap.docs.find(d => d.data().nome === 'Repique');
+    await fb.updateDoc(fb.doc(fb.db, 'edicoes', '2027-1', 'posicoes', alvo.id), { percussao: true });
+  });
+  await page.waitForTimeout(700);
+
   // devolve a Carla ao estado anterior, para as seções seguintes
   await page.evaluate(async () => {
     const fb = await import('./firebase-init.mock.js');
@@ -2460,12 +2504,34 @@ async function main() {
   });
   await page.waitForTimeout(700);
 
+  // Carnaval criado antes desta mudança: a posição não tem marcação nenhuma
+  // gravada, e quem decide é a lista padrão pelo nome. Sem ela, Voz e Produção
+  // entrariam na conta de quem toca.
+  await page.evaluate(async () => {
+    const fb = await import('./firebase-init.mock.js');
+    const snap = await fb.getDocs(fb.collection(fb.db, 'edicoes', '2027-1', 'posicoes'));
+    const alvo = snap.docs.find(d => d.data().nome === 'Voz');
+    await fb.updateDoc(fb.doc(fb.db, 'edicoes', '2027-1', 'posicoes', alvo.id), { percussao: null });
+  });
+  await page.waitForTimeout(800);
+  const semMarcacao = await lerPorNaipe();
+  ok('Posição sem marcação gravada cai na tabela certa pelo nome',
+     !!semMarcacao.apoio && semMarcacao.apoio.naipes.some(l => l[0] === 'Voz')
+     && !semMarcacao.percussao.naipes.some(l => l[0] === 'Voz'));
+  await page.evaluate(async () => {
+    const fb = await import('./firebase-init.mock.js');
+    const snap = await fb.getDocs(fb.collection(fb.db, 'edicoes', '2027-1', 'posicoes'));
+    const alvo = snap.docs.find(d => d.data().nome === 'Voz');
+    await fb.updateDoc(fb.doc(fb.db, 'edicoes', '2027-1', 'posicoes', alvo.id), { percussao: false });
+  });
+  await page.waitForTimeout(700);
+
   // e o batuqueiro comum vê a tabela, mas não o botão de exportar
   await logout(page);
   await login(page, 'duda@example.com');
   await page.waitForTimeout(800);
   const porNaipeDuda = await lerPorNaipe();
-  ok('O batuqueiro também vê o percentual por naipe', !!porNaipeDuda && porNaipeDuda.naipes.length > 0);
+  ok('O batuqueiro também vê o percentual por naipe', !!porNaipeDuda && !!porNaipeDuda.percussao);
   ok('Mas o botão de exportar é só da organização', porNaipeDuda.temBotaoExcel === false);
   await logout(page);
   await login(page, 'ana@example.com');
@@ -3843,6 +3909,321 @@ async function main() {
     return Number(fin.totalPago) === 37 && !Number(insc.totalPago);
   }, eidImportada));
   await logout(page).catch(() => {});
+
+  // ============================================================
+  console.log('\n== 30. WikiBrega: verbetes, histórico de versões e mídia ==');
+  await login(page, 'pedro@example.com');
+  await page.waitForTimeout(700);
+  let htmlWiki = await appHtml(page);
+  ok('A área do batuqueiro tem a entrada da WikiBrega', htmlWiki.includes('Abrir a WikiBrega'));
+  await page.click('#btn-goto-wiki');
+  await page.waitForTimeout(600);
+  htmlWiki = await appHtml(page);
+  ok('Vazia, a wiki explica para que serve em vez de mostrar tabela em branco',
+     htmlWiki.includes('ainda está em branco'));
+
+  respostaPrompt = 'Como nasceu o Fogo e Paixão';
+  await page.click('#btn-wiki-novo');
+  await page.waitForTimeout(900);
+  ok('Criar um verbete abre direto no modo de edição', !!(await page.$('#wiki-texto')));
+  await page.fill('#wiki-texto', 'O bloco nasceu num ensaio de quintal em 2011.\n\nA primeira música foi Ventania.');
+  await page.click('#btn-wiki-salvar');
+  await page.waitForTimeout(900);
+  htmlWiki = await appHtml(page);
+  ok('O texto salvo aparece no verbete', htmlWiki.includes('ensaio de quintal'));
+  ok('E os parágrafos viram parágrafos', htmlWiki.includes('<p>A primeira música foi Ventania.</p>'));
+  const verbeteId = await page.evaluate(() => Object.keys(window.__mock.dumpStore().wiki || {})[0]);
+  ok('O verbete foi gravado com o autor', await page.evaluate(id => {
+    const v = window.__mock.dumpStore().wiki[id];
+    return v.criadoPor === window.__mock.uidPorEmail('pedro@example.com') && v.atualizadoPor === v.criadoPor;
+  }, verbeteId));
+
+  // texto é texto: HTML digitado por qualquer pessoa da bateria não pode virar HTML
+  await page.click('#btn-wiki-editar');
+  await page.waitForTimeout(400);
+  await page.fill('#wiki-texto', 'Tentativa <img src=x onerror="window.__invadiuWiki=1"> e um link https://exemplo.com/foto');
+  await page.click('#btn-wiki-salvar');
+  await page.waitForTimeout(900);
+  htmlWiki = await appHtml(page);
+  ok('HTML escrito no verbete não vira HTML na tela', htmlWiki.includes('&lt;img src=x'));
+  ok('E o script embutido não roda', await page.evaluate(() => !window.__invadiuWiki));
+  ok('Link escrito no texto vira link clicável, com rel seguro',
+     htmlWiki.includes('rel="noopener noreferrer"') && htmlWiki.includes('https://exemplo.com/foto'));
+
+  // histórico: a versão anterior fica guardada e dá para voltar
+  await page.click('#btn-wiki-historico');
+  await page.waitForTimeout(700);
+  const versoes = await page.evaluate(() => {
+    const h = [...document.querySelectorAll('h2, h3')].find(x => x.textContent.includes('Como nasceu'));
+    return [...document.querySelectorAll('tbody tr')].map(tr => tr.textContent.trim());
+  });
+  ok('O histórico guarda a versão anterior', versoes.some(t => t.includes('Como nasceu')));
+  ok('E diz quem fez a alteração', versoes.some(t => t.includes('Pedro')));
+  await page.click('[data-restaurar-versao]');
+  await page.waitForTimeout(1000);
+  htmlWiki = await appHtml(page);
+  ok('Restaurar devolve o texto antigo', htmlWiki.includes('ensaio de quintal'));
+  const dumpVersoes = await page.evaluate(id => {
+    const s = window.__mock.dumpStore();
+    const chave = Object.keys(s).find(k => k.startsWith('wiki/') && k.endsWith('/versoes'));
+    return { chave, qtd: chave ? Object.keys(s[chave]).length : 0, textos: chave ? Object.values(s[chave]).map(v => (v.texto || '').slice(0, 30)) : [] };
+  }, verbeteId);
+  // 3 versões: o verbete vazio recém-criado, o primeiro texto e o texto que
+  // estava no ar quando a restauração aconteceu — nenhuma gravação se perde.
+  ok('E o texto que estava no ar vira mais uma versão, em vez de sumir',
+     dumpVersoes.qtd === 3 && dumpVersoes.textos.some(t => t.includes('Tentativa')));
+
+  // foto: sobe, aparece e fica num caminho que identifica quem subiu
+  await page.evaluate(() => {
+    const input = document.querySelector('#wiki-arquivo');
+    const dt = new DataTransfer();
+    dt.items.add(new File([new Uint8Array(1024)], 'ensaio.jpg', { type: 'image/jpeg' }));
+    input.files = dt.files;
+  });
+  await page.fill('#wiki-legenda', 'Ensaio no quintal');
+  await page.click('#btn-wiki-subir');
+  await page.waitForTimeout(1200);
+  htmlWiki = await appHtml(page);
+  ok('A foto aparece na galeria do verbete', htmlWiki.includes('Ensaio no quintal') && htmlWiki.includes('<img'));
+  const arquivos = await page.evaluate(() => window.__mock.arquivosDoStorage());
+  const uidPedroWiki = await page.evaluate(() => window.__mock.uidPorEmail('pedro@example.com'));
+  ok('O arquivo subiu para o armazenamento', arquivos.length === 1);
+  ok('Com o uid de quem subiu no caminho — é o que permite apagar depois',
+     arquivos[0].caminho.includes(`/${uidPedroWiki}/`));
+
+  // tipo proibido não sobe
+  await page.evaluate(() => {
+    const input = document.querySelector('#wiki-arquivo');
+    const dt = new DataTransfer();
+    dt.items.add(new File([new Uint8Array(512)], 'contrato.pdf', { type: 'application/pdf' }));
+    input.files = dt.files;
+  });
+  await page.click('#btn-wiki-subir');
+  await page.waitForTimeout(900);
+  const aposPdf = await page.evaluate(() => window.__mock.arquivosDoStorage());
+  ok('Arquivo que não é foto nem áudio é recusado', aposPdf.length === 1);
+
+  // outra pessoa edita o mesmo verbete: é wiki, pode
+  await logout(page);
+  await registrar(page, { email: 'wiki.outro@example.com', nome: 'Zeca', sobrenome: 'Wiki', posicao: 'Caixa', camisa: 'M' });
+  await page.waitForTimeout(900);
+  await page.click('#btn-goto-wiki');
+  await page.waitForTimeout(600);
+  await page.click('[data-abrir-verbete]');
+  await page.waitForTimeout(800);
+  ok('Quem não escreveu o verbete também pode editar', !!(await page.$('#btn-wiki-editar')));
+  htmlWiki = await appHtml(page);
+  ok('Mas só a organização remove o verbete', !htmlWiki.includes('Remover verbete'));
+  ok('E só a organização restaura uma versão antiga', !htmlWiki.includes('data-restaurar-versao'));
+  ok('Quem não subiu a foto não vê o botão de remover dela', !htmlWiki.includes('data-remover-midia'));
+  await page.click('#btn-wiki-editar');
+  await page.waitForTimeout(400);
+  await page.fill('#wiki-texto', 'O bloco nasceu num ensaio de quintal em 2011, na casa da Dona Zilda.');
+  await page.click('#btn-wiki-salvar');
+  await page.waitForTimeout(1000);
+  htmlWiki = await appHtml(page);
+  ok('A correção de outra pessoa entra normalmente', htmlWiki.includes('Dona Zilda'));
+  ok('E a autoria original continua registrada', await page.evaluate(id => {
+    const v = window.__mock.dumpStore().wiki[id];
+    return v.criadoPor === window.__mock.uidPorEmail('pedro@example.com')
+      && v.atualizadoPor === window.__mock.uidPorEmail('wiki.outro@example.com');
+  }, verbeteId));
+
+  // ---- conversa embaixo do verbete ----
+  ok('O verbete tem espaço de conversa', (await appHtml(page)).includes('Conversa'));
+  await page.fill('#wiki-comentario', 'Eu lembro que a caixa desafinada era do Tião. <b>negrito</b> não vira negrito aqui.');
+  await page.click('#btn-wiki-comentar');
+  await page.waitForTimeout(1000);
+  htmlWiki = await appHtml(page);
+  ok('O comentário aparece embaixo do verbete', htmlWiki.includes('a caixa desafinada era do Tião'));
+  ok('Assinado por quem escreveu', htmlWiki.includes('Zeca Wiki'));
+  ok('E comentário também é texto, não HTML', htmlWiki.includes('&lt;b&gt;negrito'));
+  ok('O comentário foi gravado com o autor', await page.evaluate(() => {
+    const s = window.__mock.dumpStore();
+    const chave = Object.keys(s).find(k => k.startsWith('wiki/') && k.endsWith('/comentarios'));
+    const c = Object.values(s[chave])[0];
+    return c.por === window.__mock.uidPorEmail('wiki.outro@example.com') && !!c.em;
+  }));
+  ok('Quem comentou pode apagar o próprio comentário', htmlWiki.includes('data-remover-comentario'));
+
+  // o comentário não altera o texto do verbete: são coisas diferentes, e é
+  // justamente essa separação que evita a história virar uma thread.
+  const corpoDoVerbete = await page.evaluate(() => {
+    const el = document.querySelector('.wiki-texto');
+    return el ? el.textContent : '';
+  });
+  ok('E o texto do verbete continua sendo o texto do verbete',
+     corpoDoVerbete.includes('Dona Zilda') && !corpoDoVerbete.includes('caixa desafinada'));
+
+  // terceiro batuqueiro: lê a conversa, mas não apaga a fala dos outros
+  await logout(page);
+  await registrar(page, { email: 'wiki.terceiro@example.com', nome: 'Tião', sobrenome: 'Terceiro', posicao: 'Caixa', camisa: 'M' });
+  await page.waitForTimeout(900);
+  await page.click('#btn-goto-wiki');
+  await page.waitForTimeout(600);
+  await page.click('[data-abrir-verbete]');
+  await page.waitForTimeout(900);
+  htmlWiki = await appHtml(page);
+  ok('Quem não é a organização enxerga a conversa', htmlWiki.includes('a caixa desafinada era do Tião'));
+  ok('Mas não apaga comentário de outra pessoa', !htmlWiki.includes('data-remover-comentario'));
+
+  // outra pessoa não apaga comentário alheio; a organização apaga
+  await logout(page);
+  await login(page, 'pedro@example.com');
+  await page.waitForTimeout(700);
+  await page.click('#btn-goto-wiki');
+  await page.waitForTimeout(600);
+  await page.click('[data-abrir-verbete]');
+  await page.waitForTimeout(900);
+  htmlWiki = await appHtml(page);
+  ok('A organização enxerga o comentário dos outros', htmlWiki.includes('a caixa desafinada era do Tião'));
+  ok('E pode apagar qualquer um', htmlWiki.includes('data-remover-comentario'));
+  await page.click('[data-remover-comentario]');
+  await page.waitForTimeout(1000);
+  htmlWiki = await appHtml(page);
+  ok('Apagado, o comentário some', !htmlWiki.includes('a caixa desafinada era do Tião'));
+  ok('E a conversa volta a convidar quem chegar', htmlWiki.includes('ninguém comentou ainda'));
+
+  // busca
+  await page.click('#btn-wiki-lista');
+  await page.waitForTimeout(600);
+  await page.fill('#wiki-busca', 'zilda');
+  await page.waitForTimeout(500);
+  ok('A busca acha o verbete pelo texto, não só pelo título',
+     (await page.evaluate(() => document.querySelectorAll('[data-abrir-verbete]').length)) === 1);
+  await page.fill('#wiki-busca', 'palavra que não existe');
+  await page.waitForTimeout(500);
+  ok('E avisa quando nada bate', (await appHtml(page)).includes('Nenhum verbete com esse termo'));
+  await logout(page);
+
+  // ============================================================
+  console.log('\n== 30a. Varredura: defeitos encontrados na revisão da WikiBrega ==');
+  await login(page, 'pedro@example.com');
+  await page.waitForTimeout(700);
+  await page.click('#btn-goto-wiki');
+  await page.waitForTimeout(600);
+  await page.click('[data-abrir-verbete]');
+  await page.waitForTimeout(900);
+
+  // 1) rascunho de comentário não pode seguir a pessoa para outro verbete
+  await page.fill('#wiki-comentario', 'COMENTARIO PELA METADE');
+  await page.waitForTimeout(200);
+  respostaPrompt = 'Outro verbete qualquer';
+  await page.click('#btn-wiki-lista');
+  await page.waitForTimeout(500);
+  await page.click('#btn-wiki-novo');
+  await page.waitForTimeout(900);
+  await page.click('#btn-wiki-salvar');
+  await page.waitForTimeout(800);
+  const rascunhoNoOutro = await page.evaluate(() => {
+    const t = document.querySelector('#wiki-comentario');
+    return t ? t.value : null;
+  });
+  ok('Comentário pela metade não segue para outro verbete', rascunhoNoOutro === '');
+
+  // 2) apagar o verbete não pode deixar histórico e conversa órfãos no banco
+  await page.click('#btn-wiki-editar');
+  await page.waitForTimeout(400);
+  await page.fill('#wiki-texto', 'Texto só para gerar uma versão no histórico.');
+  await page.click('#btn-wiki-salvar');
+  await page.waitForTimeout(900);
+  await page.fill('#wiki-comentario', 'Comentário que vai junto com o verbete');
+  await page.click('#btn-wiki-comentar');
+  await page.waitForTimeout(900);
+  const idDescartavel = await page.evaluate(() => {
+    const s = window.__mock.dumpStore();
+    return Object.entries(s.wiki).find(([, v]) => v.titulo === 'Outro verbete qualquer')[0];
+  });
+  const antesDeApagar = await page.evaluate(id => {
+    const s = window.__mock.dumpStore();
+    return {
+      versoes: Object.keys(s[`wiki/${id}/versoes`] || {}).length,
+      comentarios: Object.keys(s[`wiki/${id}/comentarios`] || {}).length,
+    };
+  }, idDescartavel);
+  ok('O verbete de teste tem histórico e conversa antes de ser apagado',
+     antesDeApagar.versoes > 0 && antesDeApagar.comentarios > 0);
+  await page.click('#btn-wiki-editar');
+  await page.waitForTimeout(400);
+  await page.click('#btn-wiki-remover');
+  await page.waitForTimeout(1200);
+  const depoisDeApagar = await page.evaluate(id => {
+    const s = window.__mock.dumpStore();
+    return {
+      verbete: !!(s.wiki || {})[id],
+      versoes: Object.keys(s[`wiki/${id}/versoes`] || {}).length,
+      comentarios: Object.keys(s[`wiki/${id}/comentarios`] || {}).length,
+      midias: Object.keys(s[`wiki/${id}/midias`] || {}).length,
+    };
+  }, idDescartavel);
+  ok('Apagado o verbete, o histórico some com ele', depoisDeApagar.versoes === 0);
+  ok('A conversa também', depoisDeApagar.comentarios === 0);
+  ok('E as referências de mídia também', depoisDeApagar.midias === 0);
+  ok('O verbete em si sai da lista', depoisDeApagar.verbete === false);
+
+  // 3) aparelho compartilhado: nada do que a pessoa anterior digitou pode
+  //    aparecer para a seguinte
+  await page.click('[data-abrir-verbete]');
+  await page.waitForTimeout(800);
+  await page.fill('#wiki-comentario', 'SEGREDO DO PEDRO');
+  // a busca também é estado de sessão: num aparelho compartilhado, ela contava
+  // para a pessoa seguinte o que a anterior estava procurando
+  await page.click('#btn-wiki-lista');
+  await page.waitForTimeout(500);
+  await page.fill('#wiki-busca', 'zilda');
+  await page.waitForTimeout(400);
+  await page.click('[data-abrir-verbete]');
+  await page.waitForTimeout(800);
+  await page.click('#btn-wiki-editar');
+  await page.waitForTimeout(400);
+  await page.fill('#wiki-texto', 'RASCUNHO QUE O PEDRO NAO SALVOU');
+  await page.waitForTimeout(200);
+  await logout(page);
+  await login(page, 'wiki.outro@example.com');
+  await page.waitForTimeout(900);
+  await page.click('#btn-goto-wiki');
+  await page.waitForTimeout(700);
+  await page.click('[data-abrir-verbete]');
+  await page.waitForTimeout(900);
+  const heranca = await page.evaluate(() => ({
+    comentario: (document.querySelector('#wiki-comentario') || {}).value,
+    editando: !!document.querySelector('#wiki-texto'),
+    textoNaTela: document.getElementById('app').innerHTML,
+  }));
+  ok('Quem entra depois não herda o comentário da pessoa anterior', heranca.comentario === '');
+  ok('Nem cai no modo de edição com o rascunho dela', heranca.editando === false);
+  ok('E o texto não salvo da pessoa anterior não aparece em lugar nenhum',
+     !heranca.textoNaTela.includes('RASCUNHO QUE O PEDRO NAO SALVOU'));
+  await page.click('#btn-wiki-lista');
+  await page.waitForTimeout(600);
+  const buscaHerdada = await page.evaluate(() => {
+    const el = document.querySelector('#wiki-busca');
+    return el ? el.value : '(sem campo)';
+  });
+  ok('Nem a busca que a pessoa anterior tinha deixado escrita', buscaHerdada === '');
+  await logout(page);
+
+  // 4) a wiki não depende de carnaval aberto: ela atravessa as temporadas
+  await login(page, 'pedro@example.com');
+  await page.waitForTimeout(700);
+  await page.evaluate(async () => {
+    const fb = await import('./firebase-init.mock.js');
+    const snap = await fb.getDocs(fb.collection(fb.db, 'edicoes'));
+    for (const d of snap.docs) {
+      if (d.data().status === 'aberta') await fb.updateDoc(fb.doc(fb.db, 'edicoes', d.id), { status: 'encerrada' });
+    }
+  });
+  await page.waitForTimeout(1200);
+  const semCarnaval = await appHtml(page);
+  ok('Sem carnaval aberto, o site explica a situação em vez de ficar em branco',
+     semCarnaval.includes('Inscrições fechadas no momento') || semCarnaval.includes('Você não participou desta edição')
+     || semCarnaval.includes('fica como registro histórico') || semCarnaval.includes('Carnaval'));
+  ok('E ainda assim dá para abrir a WikiBrega', semCarnaval.includes('Abrir a WikiBrega'));
+  await page.click('#btn-goto-wiki');
+  await page.waitForTimeout(800);
+  ok('A WikiBrega abre entre uma temporada e outra',
+     (await appHtml(page)).includes('A enciclopédia do bloco'));
+  await logout(page);
 
   console.log(`\n=== RESULTADO: ${pass} passaram, ${fail} falharam ===`);
   if (fail) { failures.forEach(f => console.log('  - ' + f)); }

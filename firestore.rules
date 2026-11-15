@@ -162,6 +162,82 @@ service cloud.firestore {
       allow delete: if isAdmin();
     }
 
+    // ---------- WikiBrega (a enciclopédia do bloco) ----------
+    // Wiki de verdade: qualquer pessoa com cadastro escreve e corrige qualquer
+    // verbete. O que segura isso não é travar a edição — é o histórico: cada
+    // gravação arquiva a versão anterior em /versoes, que ninguém pode alterar
+    // depois. Assim um apagão acidental (ou proposital) sempre tem volta, e
+    // fica registrado quem fez.
+    //
+    // A lista de campos é barreira, não organização: sem ela, dava para gravar
+    // qualquer coisa num documento que o site inteiro lê.
+    match /wiki/{id} {
+      function camposDoVerbete() {
+        return request.resource.data.keys().hasOnly([
+          'titulo', 'texto', 'criadoPor', 'criadoEm', 'atualizadoPor', 'atualizadoEm'
+        ]);
+      }
+      function tamanhoOk() {
+        return request.resource.data.titulo is string
+          && request.resource.data.titulo.size() > 0
+          && request.resource.data.titulo.size() <= 120
+          && request.resource.data.texto is string
+          && request.resource.data.texto.size() <= 20000;
+      }
+
+      allow read: if isSignedIn();
+      // quem cria assina o próprio nome: criadoPor não pode ser o uid de outra
+      // pessoa, senão daria para escrever em nome de alguém.
+      allow create: if isSignedIn() && camposDoVerbete() && tamanhoOk()
+        && request.resource.data.criadoPor == request.auth.uid
+        && request.resource.data.atualizadoPor == request.auth.uid;
+      // qualquer um edita, mas a autoria original não pode ser reescrita e a
+      // última alteração tem de sair no nome de quem está editando.
+      allow update: if isSignedIn() && camposDoVerbete() && tamanhoOk()
+        && request.resource.data.criadoPor == resource.data.criadoPor
+        && request.resource.data.criadoEm == resource.data.criadoEm
+        && request.resource.data.atualizadoPor == request.auth.uid;
+      allow delete: if isAdmin();
+
+      // Histórico. Só cresce: alterar uma versão arquivada destruiria a única
+      // prova do que havia antes.
+      match /versoes/{vid} {
+        allow read: if isSignedIn();
+        allow create: if isSignedIn() && request.resource.data.keys().hasOnly(['titulo', 'texto', 'por', 'em']);
+        allow update: if false;
+        allow delete: if isAdmin();
+      }
+
+      // Conversa embaixo do verbete. Comentário NÃO é editável, só apagável:
+      // é fala de uma pessoa, com o nome dela em cima. Deixar alterar depois
+      // permitiria reescrever o que alguém disse sem ninguém ver — e o texto do
+      // verbete, logo acima, é o lugar certo para consolidar o que ficou claro.
+      match /comentarios/{cid} {
+        allow read: if isSignedIn();
+        allow create: if isSignedIn()
+          && request.resource.data.keys().hasOnly(['texto', 'por', 'em'])
+          && request.resource.data.por == request.auth.uid
+          && request.resource.data.texto is string
+          && request.resource.data.texto.size() > 0
+          && request.resource.data.texto.size() <= 2000;
+        allow update: if false;
+        allow delete: if isAdmin() || resource.data.por == request.auth.uid;
+      }
+
+      // Fotos e áudios. O documento guarda só a referência; o arquivo mora no
+      // Storage, com regra própria (storage.rules). Quem subiu pode remover o
+      // que subiu; a organização remove qualquer um.
+      match /midias/{mid} {
+        allow read: if isSignedIn();
+        allow create: if isSignedIn()
+          && request.resource.data.keys().hasOnly(['tipo', 'url', 'caminho', 'legenda', 'por', 'em'])
+          && request.resource.data.por == request.auth.uid
+          && (request.resource.data.tipo == 'imagem' || request.resource.data.tipo == 'audio');
+        allow update: if false;
+        allow delete: if isAdmin() || resource.data.por == request.auth.uid;
+      }
+    }
+
     // ---------- repertório histórico (anos anteriores ao site) ----------
     // Só nome de música e em que anos tocou — nenhum dado pessoal. Qualquer
     // pessoa logada lê (é o histórico da bateria, e ela também vê o repertório

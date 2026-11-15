@@ -33,6 +33,15 @@ import {
   increment,
   serverTimestamp,
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+// Storage entra só por causa da WikiBrega (fotos e áudios dos verbetes). Ele
+// exige o plano Blaze no Firebase — ver SETUP.md, inclusive o teto de gasto.
+import {
+  getStorage,
+  ref as storageRef,
+  uploadBytes,
+  getDownloadURL,
+  deleteObject,
+} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-storage.js";
 
 const firebaseConfig = {
   apiKey: "AIzaSyBH-i32SpHulQzxZEvdtqsJM-Hmz3H7VGs",
@@ -46,6 +55,7 @@ const firebaseConfig = {
 const app = initializeApp(firebaseConfig);
 export const auth = getAuth(app);
 export const db = getFirestore(app);
+export const storage = getStorage(app);
 
 export {
   createUserWithEmailAndPassword,
@@ -68,4 +78,8 @@ export {
   writeBatch,
   increment,
   serverTimestamp,
+  storageRef,
+  uploadBytes,
+  getDownloadURL,
+  deleteObject,
 };

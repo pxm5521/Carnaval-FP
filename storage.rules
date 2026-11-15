@@ -1,0 +1,47 @@
+rules_version = '2';
+
+// ============================================================
+// REGRAS DO ARMAZENAMENTO (fotos e áudios da WikiBrega)
+// ------------------------------------------------------------
+// Publique estas regras no Firebase Console → Storage → Regras. Elas são
+// SEPARADAS das regras do Firestore (firestore.rules) e precisam ser publicadas
+// à parte — publicar uma e esquecer a outra é o erro clássico aqui.
+//
+// Uma limitação que explica o desenho: regra de Storage NÃO consegue consultar
+// o Firestore, então ela não tem como saber quem é admin. Por isso o uid de
+// quem subiu entra no CAMINHO do arquivo: é o que permite dizer "só quem subiu
+// apaga". Quando a organização tira uma foto de outra pessoa do verbete, a foto
+// some do site (o registro no Firestore é apagado) e o arquivo fica no bucket
+// até alguém apagar pelo Console. Fica escrito no SETUP.md.
+// ============================================================
+service firebase.storage {
+  match /b/{bucket}/o {
+
+    match /wiki/{verbete}/{uid}/{arquivo} {
+      function logado() { return request.auth != null; }
+
+      // O acervo é do bloco: só quem tem cadastro vê.
+      allow read: if logado();
+
+      // Tamanho e tipo são checados AQUI, não só no navegador: a checagem do
+      // navegador vale para o uso normal, e esta vale para quem abrir o console.
+      allow create: if logado()
+        && request.resource.size <= 15 * 1024 * 1024
+        && (
+          (request.resource.contentType.matches('image/.*') && request.resource.size <= 8 * 1024 * 1024)
+          || request.resource.contentType.matches('audio/.*')
+        );
+
+      // Arquivo subido não se altera — trocar o conteúdo por baixo de uma
+      // legenda que já está no ar é exatamente o que não pode acontecer.
+      allow update: if false;
+      allow delete: if logado() && request.auth.uid == uid;
+    }
+
+    // Qualquer outro caminho fica fechado. Sem esta linha, um bucket novo
+    // responde pela regra padrão do projeto, que não é necessariamente esta.
+    match /{tudo=**} {
+      allow read, write: if false;
+    }
+  }
+}
