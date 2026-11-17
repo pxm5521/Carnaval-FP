@@ -2687,6 +2687,55 @@ async function main() {
   ok('O link do vídeo não usa a cor de alerta do site',
      rgbVideo.length >= 3 && Number(rgbVideo[2]) > Number(rgbVideo[0]));
 
+  // ---- tela de vídeos ----
+  // A lista de vídeos é usada noutra hora que não a do repertório: a pessoa
+  // senta para estudar o arranjo e não quer caçar as azuis entre 40 linhas.
+  ok('A área do batuqueiro tem o botão Vídeos', !!(await page.$('[data-ir-videos]')));
+  await page.click('.card-head [data-ir-videos]');
+  await page.waitForTimeout(800);
+  let htmlVideos = await appHtml(page);
+  ok('A tela de vídeos abre', htmlVideos.includes('Vídeos dos arranjos'));
+  ok('Com o aviso da regência, inteiro',
+     htmlVideos.includes('ORIENTATIVOS e não definitivos')
+     && htmlVideos.includes('OLHO E CONFIA NO MESTRE'));
+  const cartoesVideo = await page.evaluate(() => [...document.querySelectorAll('.video-card')].map(a => ({
+    href: a.getAttribute('href'),
+    target: a.getAttribute('target'),
+    rel: a.getAttribute('rel'),
+    texto: a.textContent.trim(),
+    temMiniatura: /i\.ytimg\.com/.test(a.querySelector('.video-thumb').getAttribute('style') || ''),
+  })));
+  ok('Mostra só as músicas que têm vídeo', cartoesVideo.length === 1);
+  ok('Apontando para o vídeo da música', cartoesVideo[0].href === 'https://youtu.be/abc123XYZ');
+  ok('E abre o YouTube em outra aba, com rel seguro',
+     cartoesVideo[0].target === '_blank' && cartoesVideo[0].rel.includes('noopener'));
+  ok('O cartão diz qual é a música e em que set ela está',
+     cartoesVideo[0].texto.includes('Ventania') && cartoesVideo[0].texto.includes('Set 1'));
+  ok('Com a miniatura do vídeo, para a lista ser reconhecível de relance',
+     cartoesVideo[0].temMiniatura);
+  ok('A miniatura sai do id do vídeo, não de um endereço inventado', await page.evaluate(() => {
+     const t = document.querySelector('.video-thumb');
+     return !!t && (t.getAttribute('style') || '').includes('https://i.ytimg.com/vi/abc123XYZ/mqdefault.jpg');
+  }));
+  ok('E não é <img>, que deixaria ícone de imagem quebrada quando não carregasse',
+     !(await page.$('.video-thumb img')));
+  // a busca da tela não some com o aviso
+  await page.fill('#videos-busca', 'zzzz');
+  await page.waitForTimeout(500);
+  htmlVideos = await appHtml(page);
+  ok('Busca sem resultado não deixa a tela muda',
+     (await page.$$('.video-card')).length === 0 && htmlVideos.includes('Nenhuma música com esse nome'));
+  ok('E o aviso da regência continua na tela', htmlVideos.includes('OLHO E CONFIA NO MESTRE'));
+  await page.fill('#videos-busca', 'venta');
+  await page.waitForTimeout(500);
+  ok('Busca por parte do nome acha a música', (await page.$$('.video-card')).length === 1);
+  await page.fill('#videos-busca', '');
+  await page.waitForTimeout(400);
+  await page.click('#btn-back-videos');
+  await page.waitForTimeout(800);
+  ok('Dá para voltar para a área do batuqueiro',
+     !!(await page.$('#tabela-repertorio-batuqueiro')));
+
   // filtro
   await marcarMulti('repFiltroVideo', 'com');
   await fecharMulti();
@@ -3360,6 +3409,42 @@ async function main() {
   ok('E o catálogo fica com o mesmo link, sem duas verdades', await page.evaluate(id =>
      (window.__mock.dumpStore().repertorioHistorico[id] || {}).video === 'https://youtu.be/corrigido99',
      idVentaniaCatalogo));
+
+  // Música que não está no carnaval em andamento também tem vídeo para estudar:
+  // a tela de vídeos oferece os outros carnavais sob demanda, sem carregar o
+  // catálogo inteiro no celular de quem só quer o repertório do ano.
+  respostaPrompt = 'https://www.youtube.com/watch?v=antigo777';
+  await page.click(`[data-video-hist="${idNoCatalogo}"]`);
+  await page.waitForTimeout(1200);
+  await page.click('#btn-back-admin9');
+  await page.waitForTimeout(300);
+  await page.click('#btn-back-batuqueiro');
+  await page.waitForTimeout(1000);
+  ok('O atalho dos vídeos aparece mesmo num carnaval ainda sem repertório',
+     !!(await page.$('[data-ir-videos]')));
+  await page.click('[data-ir-videos]');
+  await page.waitForTimeout(800);
+  ok('Sem vídeo neste carnaval, a tela explica em vez de ficar em branco',
+     (await appHtml(page)).includes('Nenhuma música do repertório deste carnaval tem vídeo'));
+  await page.click('#btn-videos-todos');
+  await page.waitForTimeout(1500);
+  const deOutrosAnos = await page.evaluate(() => [...document.querySelectorAll('.video-card')]
+    .map(a => ({ texto: a.textContent.trim(), href: a.getAttribute('href') })));
+  ok('Pedindo os outros carnavais, a música do arquivo aparece',
+     deOutrosAnos.some(v => v.href === 'https://www.youtube.com/watch?v=antigo777'));
+  ok('Sob o título que diz de onde ela vem',
+     (await appHtml(page)).includes('De outros carnavais'));
+  await page.click('#btn-videos-todos');
+  await page.waitForTimeout(700);
+  ok('E dá para voltar a ver só o carnaval do momento',
+     (await page.$$('.video-card')).length === 0);
+  await page.click('#btn-back-videos');
+  await page.waitForTimeout(800);
+  // volta para o catálogo, que é onde o resto desta seção trabalha
+  await page.click('#btn-goto-admin');
+  await page.waitForTimeout(400);
+  await page.click('#btn-goto-repertorio-historico');
+  await page.waitForTimeout(900);
 
   // corrigir um nome errado — o caso que motivou a tela
   const idFestival = await page.evaluate(() => {

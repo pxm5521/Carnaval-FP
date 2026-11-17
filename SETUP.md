@@ -428,6 +428,14 @@ Apagar o link apaga em todos também — apagar é decisão, diferente de um cam
 
 **Painel admin → Repertório histórico** tem a coluna **Vídeo**, com o mesmo "+ link do vídeo" / "trocar". É por onde se mexe no link de uma música que não está no carnaval em andamento, e também o caminho mais curto para corrigir a de uma que está.
 
+**A tela de Vídeos.** Na área do batuqueiro há o botão **Vídeos** (na caixa do Repertório, e também como atalho no alto da página, que funciona mesmo antes de o repertório do ano estar montado). Ela reúne só as músicas que têm vídeo, em cartões grandes com a miniatura, o set e a posição, o tom e o cantor(a) — toque no cartão e o YouTube abre em outra aba. Tem busca por nome e um link para **mostrar também as músicas de outros carnavais que têm vídeo**, que só então carrega o catálogo (é leitura grande para quem abriu a tela atrás do repertório do ano).
+
+No alto da tela, fixo e inteiro, está o aviso da regência:
+
+> Esses vídeos, arranjos e formas são ORIENTATIVOS e não definitivos. Pode haver mudanças de acordo com necessidades identificadas pela regência e harmonia. Portanto, como sempre, OLHO E CONFIA NO MESTRE!
+
+Para mudar esse texto, é a constante `AVISO_VIDEOS` no `app.js`.
+
 > **O campo aceita só YouTube** (youtube.com e youtu.be). Não é frescura: um campo de endereço livre, num site que a bateria inteira abre no celular, é um convite a colar qualquer coisa — inclusive link de golpe que chega por grupo de WhatsApp. Se um dia o bloco passar a publicar vídeo em outro lugar, é uma linha de código a mudar.
 
 **Dá para ordenar e filtrar o repertório na área do batuqueiro?** Dá, e vale para qualquer pessoa da bateria, não só para a organização.

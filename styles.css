@@ -435,6 +435,34 @@ td.cel-video a:hover { text-decoration: underline; }
 td.cel-video .link-btn { font-size: 12px; }
 td.cel-video a + .link-btn { margin-left: 8px; }
 td.cel-video .sem-video { color: var(--muted); }
+.nav-rapida { margin: 0 0 14px; }
+/* ---------- tela de vídeos ---------- */
+/* Aviso da regência: alto contraste e no alto da tela, porque a pessoa pode
+   sair daqui achando que o vídeo é a forma definitiva. */
+.aviso-regencia {
+  border: 1px solid var(--warning); border-left-width: 4px; border-radius: 10px;
+  background: color-mix(in srgb, var(--warning) 12%, var(--surface));
+  padding: 12px 14px; margin: 12px 0 18px; font-size: 13.5px; line-height: 1.45;
+}
+.video-grade { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 12px; }
+.video-card {
+  display: flex; gap: 12px; align-items: center; text-decoration: none; color: inherit;
+  border: 1px solid var(--gridline); border-radius: 12px; padding: 10px; background: var(--surface);
+}
+.video-card:hover { border-color: var(--video); background: var(--surface-2); }
+.video-thumb {
+  position: relative; flex: 0 0 auto; width: 104px; height: 68px; border-radius: 8px;
+  overflow: hidden; background: #111; display: flex; align-items: center; justify-content: center;
+}
+.video-thumb { background-size: cover; background-position: center; }
+.video-play {
+  position: absolute; color: #fff; font-size: 20px; line-height: 1;
+  background: rgba(0,0,0,.55); border-radius: 999px; width: 34px; height: 34px;
+  display: flex; align-items: center; justify-content: center; padding-left: 3px;
+}
+.video-texto { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.video-texto b { color: var(--video); font-size: 14px; overflow-wrap: anywhere; }
+.video-texto .muted-sm { color: var(--text-secondary); font-size: 12px; }
 .musica-com-video { color: var(--video); font-weight: 600; text-decoration: none; }
 .musica-com-video:hover { text-decoration: underline; }
 /* A setinha é decoração de CSS, não texto: assim ela não entra no texto da

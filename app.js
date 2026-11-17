@@ -220,6 +220,8 @@ const session = {
   wikiComentando: false,
   wikiComentarioDraft: "",
   wikiFotoAberta: null,       // { verbeteId, midiaId } da foto aberta em tela cheia
+  videosBusca: "",
+  videosTodos: false,         // na tela de vídeos, mostrar também outros carnavais
   historico: null,            // carregado sob demanda em "Meu histórico"
   historicoBusy: false,
   histGeral: null,            // carregado sob demanda no "Histórico geral" do admin
@@ -551,6 +553,8 @@ function limparEstadoDeSessao() {
     emailDigitado: "",
     historico: null,
     historicoBusy: false,
+    videosBusca: "",
+    videosTodos: false,
     histGeral: null,
     histGeralBusy: false,
     histFiltro: "",
@@ -1393,11 +1397,12 @@ function render() {
       html = viewRegister2();
     } else {
       const u = perfilMesclado();
-      const validViews = ["batuqueiro", "historico", "wiki", "wiki-verbete", ...VIEWS_ADMIN];
+      const validViews = ["batuqueiro", "historico", "wiki", "wiki-verbete", "videos", ...VIEWS_ADMIN];
       if (!validViews.includes(session.view)) session.view = "batuqueiro";
       if (VIEWS_ADMIN.includes(session.view) && !souAdmin()) session.view = "batuqueiro";
 
       if (session.view === "historico") html = viewHistorico(u);
+      else if (session.view === "videos") html = viewVideos(u);
       else if (session.view === "wiki") html = viewWiki(u);
       else if (session.view === "wiki-verbete") html = viewVerbete(u);
       else if (session.view === "admin") html = viewAdmin();
@@ -1690,7 +1695,7 @@ function viewConfirmarInscricao(u) {
         </div>
         <button class="btn-primary" style="width:100%" type="submit" ${busy ? "disabled" : ""}>${busy ? "Confirmando..." : "Confirmar minha inscrição"}</button>
       </form>
-      <p style="text-align:center; margin-top:14px;"><button class="link-btn" id="btn-goto-historico">Ver meu histórico de carnavais</button> · <button class="link-btn" id="btn-goto-wiki">Abrir a WikiBrega</button></p>
+      <p style="text-align:center; margin-top:14px;"><button class="link-btn" id="btn-goto-historico">Ver meu histórico de carnavais</button> · <button class="link-btn" data-ir-videos="1">Vídeos dos arranjos</button> · <button class="link-btn" id="btn-goto-wiki">Abrir a WikiBrega</button></p>
     </div>
   </div>`;
 }
@@ -1932,6 +1937,10 @@ function viewBatuqueiro() {
          bloco só é lida se estiver no caminho. -->
     ${faixaWikiBrega()}
 
+    <!-- A caixa do repertório só nasce quando já existe repertório; este atalho
+         não depende dela, senão no começo do ano ninguém chega aos vídeos. -->
+    <p class="nav-rapida"><button class="link-btn" data-ir-videos="1">Vídeos dos arranjos</button></p>
+
     <div class="two-col">
       <!-- BOX 1: MEUS DADOS -->
       <div class="card">
@@ -2072,9 +2081,16 @@ function viewBatuqueiro() {
           // repertório sem nenhum vídeo ela seria uma linha a mais para ler,
           // sobre algo que a pessoa não vê na tela.
           todasLinhas.some(l => l.video)
-            ? ` <b class="legenda-video">Música com o nome em azul tem vídeo do arranjo no YouTube — é só clicar no nome para abrir.</b>`
+            ? ` <b class="legenda-video">Música com o nome em azul tem vídeo do arranjo no YouTube — é só clicar no nome para abrir. O botão <b>Vídeos</b> reúne todas elas numa tela só.</b>`
             : ""}</p></div>
-        <button class="btn-secondary btn-sm" id="btn-exportar-repertorio-batuqueiro" title="Baixa o repertório completo em Excel, na ordem dos sets — o filtro da tela não muda a planilha">Baixar Excel (.xlsx)</button>
+        <div style="display:flex; gap:8px; flex-wrap:wrap;">
+          <!-- Sempre visível, mesmo sem nenhum vídeo neste carnaval: é justamente
+               no começo do ano, com o repertório novo e ainda sem link, que a
+               pessoa quer rever os vídeos dos carnavais anteriores. A tela
+               explica o vazio e oferece os outros anos. -->
+          <button class="btn-primary btn-sm" data-ir-videos="1" title="Abre a lista só com as músicas que têm vídeo do arranjo">Vídeos</button>
+          <button class="btn-secondary btn-sm" id="btn-exportar-repertorio-batuqueiro" title="Baixa o repertório completo em Excel, na ordem dos sets — o filtro da tela não muda a planilha">Baixar Excel (.xlsx)</button>
+        </div>
       </div>
 
       <div class="filter-row">
@@ -2261,6 +2277,121 @@ function linkDeVideoValido(url) {
   if (!permitidos.includes(host)) return null;
   u.protocol = "https:";
   return u.toString();
+}
+
+/* Id do vídeo dentro do endereço do YouTube, nos formatos que a organização
+   cola na prática: youtu.be/ID, watch?v=ID, /shorts/ID e /embed/ID. Serve para
+   montar a miniatura — e, não achando, a tela mostra o cartão sem imagem em vez
+   de pedir uma imagem quebrada ao navegador. */
+function idDoVideoYoutube(url) {
+  const texto = String(url || "").trim();
+  if (!texto) return "";
+  let u;
+  try { u = new URL(texto.startsWith("http") ? texto : `https://${texto}`); } catch { return ""; }
+  const host = u.hostname.toLowerCase().replace(/^www\./, "");
+  let id = "";
+  if (host === "youtu.be") id = u.pathname.slice(1);
+  else if (u.searchParams.get("v")) id = u.searchParams.get("v");
+  else {
+    const m = u.pathname.match(/\/(shorts|embed|v)\/([^/?#]+)/);
+    if (m) id = m[2];
+  }
+  id = (id || "").split("/")[0];
+  return /^[A-Za-z0-9_-]{6,24}$/.test(id) ? id : "";
+}
+function miniaturaDoVideo(url) {
+  const id = idDoVideoYoutube(url);
+  return id ? `https://i.ytimg.com/vi/${id}/mqdefault.jpg` : "";
+}
+
+/* AVISO DA REGÊNCIA. Texto do bloco, exibido inteiro e no alto: é a diferença
+   entre a pessoa estudar o arranjo do vídeo e achar que ele é lei. */
+const AVISO_VIDEOS = "Esses vídeos, arranjos e formas são ORIENTATIVOS e não definitivos. Pode haver mudanças de acordo com necessidades identificadas pela regência e harmonia. Portanto, como sempre, OLHO E CONFIA NO MESTRE!";
+
+/* Tela de vídeos: só as músicas que têm vídeo, em cartões grandes para o dedo
+   no celular. Existe porque a lista de vídeos é usada em outra hora que não a
+   do repertório — a pessoa senta para estudar o arranjo e não quer caçar as
+   azuis no meio de quarenta linhas. */
+function viewVideos(u) {
+  const ed = edicaoCtx();
+  const doCarnaval = linhasDoRepertorio(musicasPublicadas()).filter(l => l.video);
+  const busca = (session.videosBusca || "").trim().toLowerCase();
+
+  // Carnavais anteriores entram só quando pedido: o catálogo inteiro é leitura
+  // grande para abrir uma tela que a maioria usa só com o repertório do ano.
+  let deOutrosAnos = [];
+  if (session.videosTodos) {
+    if (repertorioHistorico === null && !repertorioHistoricoCarregando) {
+      repertorioHistoricoCarregando = true;
+      carregarRepertorioHistorico().then(renderExterno);
+    }
+    const noCarnaval = new Set(doCarnaval.map(l => chaveMusica(l.nome)));
+    deOutrosAnos = (repertorioHistorico || [])
+      .filter(m => (m.video || "").trim() && !noCarnaval.has(chaveMusica(m.nome)))
+      .map(m => ({ id: m.id, nome: m.nome || "", video: (m.video || "").trim(), tom: (m.tom || "").trim(), cantor: (m.cantor || "").trim() }))
+      .sort((a, b) => a.nome.localeCompare(b.nome, "pt-BR", { sensitivity: "base" }));
+  }
+
+  const filtra = lista => lista.filter(l => !busca || l.nome.toLowerCase().includes(busca));
+  const doAno = filtra(doCarnaval);
+  const outros = filtra(deOutrosAnos);
+
+  const cartao = (l, etiqueta) => `
+    <a class="video-card" href="${esc(l.video)}" target="_blank" rel="noopener noreferrer"
+       title="Abrir o vídeo de ${esc(l.nome)} no YouTube">
+      <!-- A miniatura entra como fundo, não como <img>: imagem que não carrega
+           (vídeo apagado, rede do ensaio ruim) deixaria o ícone de imagem
+           quebrada no meio da lista, e a CSP não permite onerror inline para
+           escondê-la. Como fundo, o que sobra é o quadro escuro com o play. -->
+      <span class="video-thumb"${miniaturaDoVideo(l.video)
+        ? ` style="background-image:url('${esc(miniaturaDoVideo(l.video))}')"` : ""}><span class="video-play">&#9654;</span></span>
+      <span class="video-texto">
+        <b>${esc(l.nome)}</b>
+        <span class="muted-sm">${etiqueta}${[l.tom && `Tom ${esc(l.tom)}`, l.cantor && esc(l.cantor)].filter(Boolean).join(" · ")}</span>
+      </span>
+    </a>`;
+
+  return `
+  ${headerBar(u)}
+  <div class="wrap">
+    <p><button class="link-btn" id="btn-back-videos">← Voltar para a área do batuqueiro</button></p>
+    <div class="card">
+      <div class="card-head">
+        <div>
+          <h2>Vídeos dos arranjos</h2>
+          <p class="card-sub" style="margin-bottom:0">${doCarnaval.length} música${doCarnaval.length === 1 ? "" : "s"} do ${esc(edicaoLabel(ed))} com vídeo${doCarnaval.length ? ". Toque no cartão para abrir no YouTube." : ""}</p>
+        </div>
+      </div>
+
+      <div class="aviso-regencia"><b>Atenção:</b> ${esc(AVISO_VIDEOS)}</div>
+
+      ${doCarnaval.length || session.videosTodos ? `
+      <div class="filter-row">
+        <div style="flex:1; min-width:200px;">
+          <label>Buscar música</label>
+          <input type="text" id="videos-busca" value="${esc(session.videosBusca || "")}" placeholder="Digite parte do nome">
+        </div>
+      </div>` : ""}
+
+      ${doAno.length ? `<div class="video-grade">${doAno.map(l => cartao(l, `Set ${l.set} · ${l.pos}ª · `)).join("")}</div>`
+        : `<p class="hint">${doCarnaval.length
+            ? "Nenhuma música com esse nome."
+            : "Nenhuma música do repertório deste carnaval tem vídeo ainda. Quando a organização colar o link de um vídeo, ele aparece aqui."}</p>`}
+
+      <p style="margin-top:16px;">
+        <button class="link-btn" id="btn-videos-todos">${session.videosTodos
+          ? "Mostrar só as músicas deste carnaval"
+          : "Mostrar também as músicas de outros carnavais que têm vídeo"}</button>
+      </p>
+
+      ${session.videosTodos ? (repertorioHistorico === null
+        ? `<p class="hint">Carregando as músicas dos outros carnavais...</p>`
+        : (outros.length
+          ? `<h3 style="margin-top:4px;">De outros carnavais</h3>
+             <div class="video-grade">${outros.map(l => cartao(l, "")).join("")}</div>`
+          : `<p class="hint">Fora deste carnaval, não há outra música com vídeo guardado.</p>`)) : ""}
+    </div>
+  </div>`;
 }
 
 function linhasDoRepertorio(lista) {
@@ -7629,6 +7760,11 @@ function wireEvents() {
   /* Link do vídeo da música. Grava na hora, como o set e a ordem: é um campo
      que se mexe sozinho, e misturá-lo no "Salvar todas as músicas" só criaria
      mais uma chance de perder o que foi colado. */
+  onAll("[data-ir-videos]", "click", () => { session.videosBusca = ""; go("videos"); });
+  on("#btn-back-videos", "click", () => go("batuqueiro"));
+  on("#videos-busca", "input", e => { session.videosBusca = e.target.value; renderExterno(); });
+  on("#btn-videos-todos", "click", () => { session.videosTodos = !session.videosTodos; render(); });
+
   onAll("[data-video-musica]", "click", async el => {
     const id = el.dataset.videoMusica;
     const row = (session.musicasDraft || []).find(m => m.id === id);
