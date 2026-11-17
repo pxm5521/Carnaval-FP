@@ -425,6 +425,16 @@
 .linha-video a:hover { text-decoration: underline; }
 .linha-video .link-btn { font-size: 12px; }
 .linha-video .sem-video { color: var(--muted); }
+/* Dentro da tabela do catálogo a mesma informação NÃO pode usar .linha-video:
+   display:flex numa célula tira ela do layout de tabela, a célula deixa de
+   acompanhar a altura da linha e o botão sobe em relação ao resto da linha.
+   É o mesmo motivo já documentado em td.row-actions. */
+td.cel-video { white-space: nowrap; vertical-align: middle; font-size: 12px; }
+td.cel-video a { color: var(--video); font-weight: 600; text-decoration: none; }
+td.cel-video a:hover { text-decoration: underline; }
+td.cel-video .link-btn { font-size: 12px; }
+td.cel-video a + .link-btn { margin-left: 8px; }
+td.cel-video .sem-video { color: var(--muted); }
 .musica-com-video { color: var(--video); font-weight: 600; text-decoration: none; }
 .musica-com-video:hover { text-decoration: underline; }
 /* A setinha é decoração de CSS, não texto: assim ela não entra no texto da

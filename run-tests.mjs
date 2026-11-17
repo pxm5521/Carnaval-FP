@@ -3305,6 +3305,24 @@ async function main() {
   });
   ok('Cada música do catálogo tem onde pôr o link do vídeo', await page.evaluate(id =>
      !!document.querySelector(`[data-video-hist="${id}"]`), idNoCatalogo));
+  // Célula com display:flex sai do layout da tabela: para de acompanhar a
+  // altura da linha e o botão sobe em relação ao Remover ao lado. Já aconteceu
+  // antes neste site, por isso o alinhamento é medido e não só olhado.
+  const alinhamentoVideo = await page.evaluate(id => {
+    const botao = document.querySelector(`[data-video-hist="${id}"]`);
+    const tr = botao.closest('tr');
+    const remover = tr.querySelector('[data-remove-hist]');
+    const td = botao.closest('td');
+    const centro = el => { const r = el.getBoundingClientRect(); return r.top + r.height / 2; };
+    return {
+      display: getComputedStyle(td).display,
+      diferenca: Math.abs(centro(botao) - centro(remover)),
+    };
+  }, idNoCatalogo);
+  ok('A célula do vídeo continua célula de tabela, não caixa flex',
+     alinhamentoVideo.display === 'table-cell');
+  ok('E o botão do vídeo fica na mesma altura do Remover da linha',
+     alinhamentoVideo.diferenca <= 2);
   respostaPrompt = 'https://vimeo.com/12345';
   await page.click(`[data-video-hist="${idNoCatalogo}"]`);
   await page.waitForTimeout(600);

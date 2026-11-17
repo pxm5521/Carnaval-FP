@@ -5551,7 +5551,7 @@ function viewAdminRepertorioHistorico() {
               return `<tr data-hist-musica="${esc((m.nome || "").toLowerCase())}">
                 <td class="name-cell"><input type="text" class="hist-nome-input" data-hist-id="${m.id}" value="${esc(m.nome)}" style="min-width:220px;"></td>
                 <td class="center"><b>${marcados.length}</b></td>
-                <td class="linha-video">${m.video
+                <td class="cel-video">${m.video
                   ? `<a href="${esc(m.video)}" target="_blank" rel="noopener noreferrer" title="Abrir no YouTube">vídeo &#9654;</a><button class="link-btn" data-video-hist="${m.id}">trocar</button>`
                   : `<button class="link-btn sem-video" data-video-hist="${m.id}">+ link do vídeo</button>`}</td>
                 <td class="row-actions"><button class="btn-ghost btn-sm" data-remove-hist="${m.id}">Remover</button></td>
