@@ -2605,7 +2605,100 @@ async function main() {
   ok('E a numeração do set começa em 1',
      repertorioDoBatuqueiro.linhas[0][0] === '1' && repertorioDoBatuqueiro.linhas[0][1] === '1');
 
+  console.log('\n== 20z. Link do vídeo do arranjo na música ==');
+  // O bloco grava um vídeo por música para o pessoal pegar o arranjo. O link
+  // mora na música, é colado pela organização e vira um clique na área do
+  // batuqueiro.
+  await logout(page);
+  await login(page, 'bruno@example.com');
+  await page.click('#btn-goto-admin');
+  await page.waitForTimeout(300);
+  await page.click('#btn-goto-musicas');
+  await page.waitForTimeout(1200);
+  const idMusicaVideo = await page.evaluate(() => {
+    const inp = [...document.querySelectorAll('.musica-name-input')].find(i => i.value === 'Ventania');
+    return inp ? inp.dataset.musicaId : null;
+  });
+  ok('Cada música tem onde colar o link do vídeo', await page.evaluate(id =>
+     !!document.querySelector(`[data-video-musica="${id}"]`), idMusicaVideo));
+
+  // endereço que não é do YouTube é recusado
+  respostaPrompt = 'https://site-estranho.example.com/video';
+  await page.click(`[data-video-musica="${idMusicaVideo}"]`);
+  await page.waitForTimeout(700);
+  ok('Endereço que não é do YouTube é recusado', await page.evaluate(id => {
+    const m = window.__mock.dumpStore()['edicoes/2027-1/musicas'][id];
+    return !m.video;
+  }, idMusicaVideo));
+
+  respostaPrompt = 'https://youtu.be/abc123XYZ';
+  await page.click(`[data-video-musica="${idMusicaVideo}"]`);
+  await page.waitForTimeout(900);
+  ok('Link do YouTube é aceito e grava na hora', await page.evaluate(id => {
+    const m = window.__mock.dumpStore()['edicoes/2027-1/musicas'][id];
+    return m.video === 'https://youtu.be/abc123XYZ';
+  }, idMusicaVideo));
+  ok('E a linha passa a mostrar que tem vídeo', (await appHtml(page)).includes('vídeo ▶'));
+  await page.click('#btn-back-admin6');
+  await page.waitForTimeout(400);
+  await page.click('#btn-back-batuqueiro');
+  await page.waitForTimeout(1000);
+
+  const linhaComVideo = await page.evaluate(() => {
+    const t = document.querySelector('#tabela-repertorio-batuqueiro');
+    const tr = [...t.querySelectorAll('tbody tr')].find(x => x.textContent.includes('Ventania'));
+    const a = tr ? tr.querySelector('a.musica-com-video') : null;
+    return a ? { href: a.getAttribute('href'), target: a.getAttribute('target'), rel: a.getAttribute('rel') } : null;
+  });
+  ok('Na área do batuqueiro, a música com vídeo vira link', !!linhaComVideo);
+  ok('Que abre em outra aba, com rel seguro',
+     !!linhaComVideo && linhaComVideo.target === '_blank' && linhaComVideo.rel.includes('noopener'));
+  ok('Apontando para o vídeo daquela música',
+     !!linhaComVideo && linhaComVideo.href === 'https://youtu.be/abc123XYZ');
+  const semVideo = await page.evaluate(() => {
+    const t = document.querySelector('#tabela-repertorio-batuqueiro');
+    return [...t.querySelectorAll('tbody tr')].filter(tr => !tr.querySelector('a.musica-com-video')).length;
+  });
+  ok('E a música sem vídeo continua texto simples', semVideo >= 1);
+
+  // a explicação da cor fica no cabeçalho, e só quando existe vídeo no repertório
+  const htmlComVideo = await appHtml(page);
+  ok('O cabeçalho explica o que a cor significa',
+     htmlComVideo.includes('tem vídeo do arranjo no YouTube') && htmlComVideo.includes('clicar no nome'));
+  const corDoLink = await page.evaluate(() => {
+    const a = document.querySelector('a.musica-com-video');
+    return a ? getComputedStyle(a).color : '';
+  });
+  // vermelho no site quer dizer pendência (atraso, ausente, remover): a cor do
+  // vídeo tem de ser outra, e azul é a que ninguém lê como aviso
+  const rgbVideo = corDoLink.match(/\d+/g) || [];
+  ok('O link do vídeo não usa a cor de alerta do site',
+     rgbVideo.length >= 3 && Number(rgbVideo[2]) > Number(rgbVideo[0]));
+
+  // filtro
+  await marcarMulti('repFiltroVideo', 'com');
+  await fecharMulti();
+  const soComVideo = await page.evaluate(() => [...document.querySelectorAll('#tabela-repertorio-batuqueiro tbody tr')]
+    .map(tr => tr.textContent.trim()));
+  ok('Dá para filtrar só as músicas que têm vídeo',
+     soComVideo.length === 1 && soComVideo[0].includes('Ventania'));
+  await limparMulti('repFiltroVideo');
+  await logout(page);
+  await login(page, 'ana@example.com');
+  await page.waitForTimeout(700);
+
   console.log('\n== 20a. Repertório do batuqueiro: ordenar por coluna e filtrar ==');
+  ok('Sem nenhum vídeo no repertório, a explicação da cor não aparece', await page.evaluate(async () => {
+    const fb = await import('./firebase-init.mock.js');
+    const snap = await fb.getDocs(fb.collection(fb.db, 'edicoes', '2027-1', 'musicas'));
+    const comVideo = snap.docs.filter(d => d.data().video);
+    for (const d of comVideo) await fb.updateDoc(fb.doc(fb.db, 'edicoes', '2027-1', 'musicas', d.id), { video: '' });
+    await new Promise(r => setTimeout(r, 700));
+    const semLegenda = !document.getElementById('app').innerHTML.includes('tem vídeo do arranjo');
+    for (const d of comVideo) await fb.updateDoc(fb.doc(fb.db, 'edicoes', '2027-1', 'musicas', d.id), { video: d.data().video });
+    return semLegenda;
+  }));
+  await page.waitForTimeout(800);
   // Repertório de verdade tem dezenas de músicas: quem procura uma específica,
   // ou quer ver o que ainda não foi ensaiado, precisa de outro caminho além da
   // ordem de tocar.
@@ -4135,6 +4228,80 @@ async function main() {
     return v.criadoPor === window.__mock.uidPorEmail('pedro@example.com')
       && v.atualizadoPor === window.__mock.uidPorEmail('wiki.outro@example.com');
   }, verbeteId));
+
+  // ---- foto em tela cheia e download ----
+  // Foto de ensaio em miniatura de 240px não serve para nada: a pessoa quer
+  // ver o rosto de quem está na foto, e às vezes quer guardar a foto.
+  const abriuFoto = await page.evaluate(() => {
+    const b = document.querySelector('[data-ampliar-foto]');
+    if (!b) return 'sem botão';
+    b.click();
+    return 'ok';
+  });
+  await page.waitForTimeout(600);
+  ok('Clicar na foto abre ela em tela cheia', abriuFoto === 'ok' && !!(await page.$('.lightbox img')));
+  ok('Com a legenda e quem subiu embaixo',
+     (await appHtml(page)).includes('Ensaio no quintal'));
+  ok('E um botão de baixar dentro da tela cheia',
+     !!(await page.$('.lightbox [data-baixar-midia]')));
+  await page.keyboard.press('Escape');
+  await page.waitForTimeout(500);
+  ok('Esc fecha a foto', !(await page.$('.lightbox')));
+
+  // segunda foto, para as setas terem para onde ir
+  await page.evaluate(() => {
+    const input = document.querySelector('#wiki-arquivo');
+    const dt = new DataTransfer();
+    dt.items.add(new File([new Uint8Array(900)], 'segunda.jpg', { type: 'image/jpeg' }));
+    input.files = dt.files;
+  });
+  await page.fill('#wiki-legenda', 'Segunda foto');
+  await page.click('#btn-wiki-subir');
+  await page.waitForTimeout(1400);
+  await page.evaluate(() => document.querySelector('[data-ampliar-foto]').click());
+  await page.waitForTimeout(900);
+  const srcDaFoto = () => page.evaluate(() => {
+    const img = document.querySelector('.lightbox img');
+    return img ? img.getAttribute('src') : null;
+  });
+  ok('Com mais de uma foto, aparecem as setas', !!(await page.$('[data-foto-vizinha]')));
+  const antesDaSeta = await srcDaFoto();
+  await page.click('[data-foto-vizinha="1"]');
+  await page.waitForTimeout(700);
+  const depoisDaSeta = await srcDaFoto();
+  ok('A seta troca de foto sem sair da tela cheia',
+     !!antesDaSeta && !!depoisDaSeta && antesDaSeta !== depoisDaSeta);
+  ok('A foto continua aberta depois de usar a seta', !!(await page.$('.lightbox img')));
+  await page.click('.lightbox-fechar');
+  await page.waitForTimeout(400);
+  ok('O X fecha', !(await page.$('.lightbox')));
+
+  // o botão Baixar entrega o arquivo
+  await page.route('**/firebasestorage.googleapis.com/**', route =>
+    route.fulfill({ status: 200, contentType: 'image/jpeg', body: Buffer.from([255, 216, 255, 219, 0, 1]) }));
+  let nomeBaixado = null;
+  try {
+    const [arquivoBaixado] = await Promise.all([
+      page.waitForEvent('download', { timeout: 8000 }),
+      page.click('.wiki-foto [data-baixar-midia]'),
+    ]);
+    nomeBaixado = arquivoBaixado.suggestedFilename();
+  } catch (e) { nomeBaixado = null; }
+  ok('O botão Baixar entrega a foto como arquivo', !!nomeBaixado);
+  ok('Com um nome de arquivo que dá para achar depois',
+     /\.(jpg|jpeg|png)$/i.test(nomeBaixado || ''));
+  await page.unroute('**/firebasestorage.googleapis.com/**');
+  // limpa a foto extra
+  await page.evaluate(async () => {
+    const fb = await import('./firebase-init.mock.js');
+    const s = window.__mock.dumpStore();
+    const chave = Object.keys(s).find(k => k.startsWith('wiki/') && k.endsWith('/midias'));
+    const vid = chave.split('/')[1];
+    for (const [id, m] of Object.entries(s[chave])) {
+      if (m.legenda === 'Segunda foto') await fb.deleteDoc(fb.doc(fb.db, 'wiki', vid, 'midias', id));
+    }
+  });
+  await page.waitForTimeout(800);
 
   // ---- conversa embaixo do verbete ----
   ok('O verbete tem espaço de conversa', (await appHtml(page)).includes('Conversa'));

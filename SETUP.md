@@ -336,6 +336,17 @@ Se um arquivo do meio do lote for recusado (tipo errado, tamanho acima do limite
 - **Tamanho**: 8 MB por foto, 15 MB por áudio — conferido no navegador e **de novo na regra do Storage**, porque checagem só no navegador não protege nada.
 - **Dimensão**: a foto é reduzida no próprio celular antes de subir (lado maior de 1600 pixels). Uma foto de celular tem 4 a 8 MB; a mesma com 1600px tem cerca de 300 KB e aparece igual na tela. Sem isso, uma temporada de ensaios enche os 5 GB gratuitos.
 
+**Clicar na foto abre ela grande.** A miniatura da galeria serve para achar a foto, não para olhar: na tela cheia dá para reconhecer quem está no fundo. Setas passam para a foto seguinte e anterior do mesmo verbete (dá a volta: depois da última vem a primeira), o X ou a tecla **Esc** fecham, e clicar no fundo escuro fecha também — clicar na própria foto, nas setas ou no botão de baixar não fecha. Ao lado de **Remover**, cada foto e cada áudio têm o botão **Baixar**, que salva o arquivo no aparelho com o nome original.
+
+> **Se o download abrir uma aba em vez de salvar.** O arquivo mora no domínio do Storage, e navegador nenhum obedece ao atributo `download` entre domínios — por isso o site busca o arquivo e entrega como download de verdade. Quando o bucket não autoriza essa busca (CORS), o site cai para abrir o arquivo em outra aba e avisa para tocar e segurar (ou botão direito) para salvar. Funciona, só dá um passo a mais. Para fazer o download direto em todos os casos, autorize o domínio do site no bucket, uma vez:
+>
+> ```powershell
+> '[{"origin":["https://carnaval-fp.netlify.app"],"method":["GET"],"responseHeader":["Content-Type"],"maxAgeSeconds":3600}]' | Out-File -Encoding ascii cors.json
+> gcloud storage buckets update gs://carnaval-fp.firebasestorage.app --cors-file=cors.json
+> ```
+>
+> Isso exige o Google Cloud CLI instalado e login na conta do projeto (`gcloud auth login`). É opcional: sem isso o botão continua funcionando pelo caminho da outra aba.
+
 **Vídeo não sobe**, de propósito: é o que faz a conta sair do zero, e o YouTube faz isso de graça e melhor. Suba lá (ou no Drive) e cole o link no texto do verbete.
 
 > **Quem apaga o quê.** Cada pessoa remove as fotos e áudios que subiu, e a organização remove qualquer um. Há uma diferença técnica que vale saber: quando a organização remove a foto de outra pessoa, ela **some do site na hora**, mas o arquivo continua no armazenamento — regra de Storage não consegue consultar o banco para saber quem é admin, então só quem subiu consegue apagar o arquivo de verdade. Para apagar mesmo: Firebase Console → Storage → pasta `wiki/` → localize e apague. Na prática isso quase nunca é necessário; vale para o caso de alguém subir algo que não pode ficar nem guardado.
@@ -403,13 +414,19 @@ As opções de cada filtro são calculadas sobre o que os outros já deixaram pa
 
 **Dá para ver quantas músicas cada cantor(a) canta?** No fim da tela de Repertório há a tabela **"Músicas por cantor(a)"**: uma linha por pessoa, quantas músicas são dela e quais. Quem canta mais aparece primeiro, e as músicas que ainda não têm cantor(a) definido entram agrupadas em **"Sem cantor(a) definido"** — é o jeito rápido de ver o que falta decidir e se o repertório não está pesado demais para uma voz só. A tabela conta o repertório deste carnaval, rascunhos incluídos.
 
+**Como ligo o vídeo do arranjo a cada música?** Em **Painel admin → Repertório / músicas**, embaixo do nome de cada música há **"+ link do vídeo"**. Cole o endereço do vídeo no YouTube e pronto — grava na hora, sem depender do "Salvar todas as músicas". Depois, o link vira **"vídeo ▶"** na mesma linha, com um "trocar" ao lado; para tirar, abra o campo, apague tudo e confirme.
+
+Na **área do batuqueiro**, a música que tem vídeo aparece com o **nome em azul e uma setinha**; clicar abre o YouTube em outra aba. O cabeçalho do box explica isso em uma linha, que só aparece quando existe pelo menos um vídeo no repertório. O azul não é escolha de gosto: vermelho, amarelo e verde já querem dizer outra coisa no site (pendência, atraso, resolvido), e um nome de música em vermelho seria lido como problema. E o filtro **"Vídeo do arranjo"** separa o que já tem vídeo do que ainda falta gravar — serve tanto para o batuqueiro achar o que estudar quanto para a organização ver o que está faltando. A coluna também entra nas duas planilhas do repertório.
+
+> **O campo aceita só YouTube** (youtube.com e youtu.be). Não é frescura: um campo de endereço livre, num site que a bateria inteira abre no celular, é um convite a colar qualquer coisa — inclusive link de golpe que chega por grupo de WhatsApp. Se um dia o bloco passar a publicar vídeo em outro lugar, é uma linha de código a mudar.
+
 **Dá para ordenar e filtrar o repertório na área do batuqueiro?** Dá, e vale para qualquer pessoa da bateria, não só para a organização.
 
 - **Clicar no título de uma coluna** ordena por ela: Música e Cantor(a) em ordem alfabética, Tom idem, Nova? pelas novidades primeiro, Ensaios e "Ensaiada em" pela quantidade de ensaios. Um segundo clique inverte; o terceiro devolve a ordem dos sets.
 - A coluna **Nova?** diz se a música é nova no bloco ou se a bateria já tocou ela em algum carnaval anterior — é a mesma avaliação que a organização vê no painel, inclusive as correções feitas à mão.
 - A coluna **Ensaios** mostra **em quantos ensaios deste carnaval a música já foi tocada**; ao lado, "Ensaiada em" traz as datas. Serve para ver de relance o que está pouco rodado perto do carnaval.
 - O botão **"Baixar Excel (.xlsx)"**, no alto do box, baixa o repertório completo em planilha, na ordem dos sets. O filtro e a ordenação da tela não mudam o arquivo.
-- **Os filtros acima da tabela** filtram por Set, Tom, Cantor(a), "Nova no bloco?", "Quantos ensaios" e por ensaio, cada um aceitando mais de uma opção — inclusive duas que resolvem perguntas frequentes: "Ainda não ensaiada" e "Sem tom definido".
+- **Os filtros acima da tabela** filtram por Set, Tom, Cantor(a), "Nova no bloco?", "Quantos ensaios", "Vídeo do arranjo" e por ensaio, cada um aceitando mais de uma opção — inclusive duas que resolvem perguntas frequentes: "Ainda não ensaiada" e "Sem tom definido".
 - O campo **Buscar música** acha pelo nome, sem precisar percorrer a lista.
 - Um botão **"Limpar e voltar à ordem dos sets"** aparece assim que algo está filtrado ou reordenado.
 

@@ -20,6 +20,10 @@
     --critical-bg:     #fbe7e5;
     --isenta:          #4a3aa7;
     --isenta-bg:       #ece9fb;
+    /* Azul é o único tom do site que ninguém lê como aviso: vermelho vira
+       pendência, amarelo vira atraso, verde vira "já resolvido". Aqui ele diz
+       só uma coisa — isto abre um vídeo. */
+    --video:           #1a6fd4;
     --shadow: 0 1px 2px rgba(11,11,11,0.06), 0 4px 16px rgba(11,11,11,0.06);
   }
   @media (prefers-color-scheme: dark) {
@@ -45,6 +49,7 @@
       --critical-bg:     #3a1414;
       --isenta:          #9085e9;
       --isenta-bg:       #2a2550;
+      --video:           #6aa6f0;
       --shadow: 0 1px 2px rgba(0,0,0,0.4), 0 4px 16px rgba(0,0,0,0.3);
     }
   }
@@ -415,3 +420,48 @@
 .wiki-verbete-lista .wiki-item-pe { margin: 0 0 6px; }
 .wiki-verbete-lista .wiki-texto { margin-top: 8px; }
 .wiki-verbete-pe { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--gridline); }
+.linha-video { margin-top: 4px; font-size: 12px; display: flex; gap: 8px; align-items: center; }
+.linha-video a { color: var(--video); font-weight: 600; text-decoration: none; }
+.linha-video a:hover { text-decoration: underline; }
+.linha-video .link-btn { font-size: 12px; }
+.linha-video .sem-video { color: var(--muted); }
+.musica-com-video { color: var(--video); font-weight: 600; text-decoration: none; }
+.musica-com-video:hover { text-decoration: underline; }
+/* A setinha é decoração de CSS, não texto: assim ela não entra no texto da
+   célula (que o site compara e que a pessoa copia da tabela). */
+.musica-com-video::after { content: " \25B6"; font-size: 10px; vertical-align: middle; }
+.legenda-video { color: var(--video); font-weight: 600; }
+
+/* ---------- foto em tela cheia ---------- */
+.wiki-foto-abrir { display: block; width: 100%; padding: 0; border: 0; background: none; cursor: zoom-in; }
+.lightbox {
+  position: fixed; inset: 0; z-index: 90; background: rgba(0,0,0,.86);
+  display: flex; align-items: center; justify-content: center; padding: 24px;
+}
+.lightbox-caixa { max-width: min(1100px, 94vw); max-height: 92vh; display: flex; flex-direction: column; gap: 10px; }
+.lightbox-caixa img {
+  max-width: 100%; max-height: 76vh; object-fit: contain; border-radius: 10px; background: #111;
+}
+.lightbox-pe {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;
+  color: #fff; font-size: 13.5px;
+  /* fundo próprio: sem ele a legenda cai em cima do texto da página atrás e
+     fica ilegível justamente na foto que ocupa a tela inteira */
+  background: rgba(0,0,0,.6); border-radius: 10px; padding: 8px 12px;
+}
+.lightbox-pe .muted-sm { color: rgba(255,255,255,.7); }
+/* o botão herda o estilo claro do site e sumiria no fundo preto da foto */
+.lightbox-pe button {
+  background: rgba(255,255,255,.16); color: #fff; border: 1px solid rgba(255,255,255,.5);
+}
+.lightbox-pe button:hover { background: rgba(255,255,255,.3); }
+.lightbox-fechar, .lightbox-nav {
+  position: absolute; background: rgba(0,0,0,.5); color: #fff; border: 1px solid rgba(255,255,255,.3);
+  border-radius: 999px; cursor: pointer; line-height: 1;
+}
+.lightbox-fechar { top: 16px; right: 18px; width: 40px; height: 40px; font-size: 26px; }
+.lightbox-nav { top: 50%; transform: translateY(-50%); width: 46px; height: 46px; font-size: 30px; }
+.lightbox-ant { left: 14px; }
+.lightbox-prox { right: 14px; }
+.lightbox-fechar:hover, .lightbox-nav:hover { background: rgba(0,0,0,.8); }
+@media (max-width: 640px) { .lightbox { padding: 10px; } .lightbox-nav { width: 40px; height: 40px; font-size: 26px; } }

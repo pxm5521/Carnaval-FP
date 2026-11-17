@@ -219,6 +219,7 @@ const session = {
   wikiProgresso: "",          // "2 de 5" enquanto sobe um lote de fotos
   wikiComentando: false,
   wikiComentarioDraft: "",
+  wikiFotoAberta: null,       // { verbeteId, midiaId } da foto aberta em tela cheia
   historico: null,            // carregado sob demanda em "Meu histórico"
   historicoBusy: false,
   histGeral: null,            // carregado sob demanda no "Histórico geral" do admin
@@ -241,6 +242,7 @@ const session = {
   repFiltroEnsaio: [],
   repFiltroNova: [],
   repFiltroQtdEnsaios: [],
+  repFiltroVideo: [],
   repOrdemCol: "",
   repOrdemDir: "asc",
   multiAberto: null,
@@ -569,6 +571,7 @@ function limparEstadoDeSessao() {
   repFiltroEnsaio: [],
   repFiltroNova: [],
   repFiltroQtdEnsaios: [],
+  repFiltroVideo: [],
   repOrdemCol: "",
   repOrdemDir: "asc",
   multiAberto: null,
@@ -776,7 +779,7 @@ function limparEstadoDaEdicao() {
   // cantor(a) mudam de um carnaval para o outro.
   session.repBusca = ""; session.repFiltroSet = []; session.repFiltroTom = [];
   session.repFiltroCantor = []; session.repFiltroEnsaio = [];
-  session.repFiltroNova = []; session.repFiltroQtdEnsaios = [];
+  session.repFiltroNova = []; session.repFiltroQtdEnsaios = []; session.repFiltroVideo = [];
   session.repAdminBusca = ""; session.repAdminFiltroSet = []; session.repAdminFiltroNova = [];
   session.repAdminFiltroTom = []; session.repAdminFiltroCantor = []; session.repAdminFiltroStatus = [];
   session.repOrdemCol = ""; session.repOrdemDir = "asc"; session.multiAberto = null;
@@ -2019,6 +2022,7 @@ function viewBatuqueiro() {
         { chave: "repFiltroEnsaio", campos: l => (l.ensaios.length ? l.ensaios : ["nenhum"]) },
         { chave: "repFiltroNova", campos: l => (l.nova ? "nova" : "repetida") },
         { chave: "repFiltroQtdEnsaios", campos: l => String(l.ensaios.length) },
+        { chave: "repFiltroVideo", campos: l => (l.video ? "com" : "sem") },
       ];
       const porBusca = todasLinhas.filter(l => !busca || l.nome.toLowerCase().includes(busca));
       const ordenarRotulos = lista => lista.sort((a, b) => a.rotulo.localeCompare(b.rotulo, "pt-BR", { sensitivity: "base" }));
@@ -2046,6 +2050,7 @@ function viewBatuqueiro() {
       const opcCantor = opcoesDe("repFiltroCantor", v => (v === "sem" ? "Sem cantor(a) definido" : v));
       const opcEnsaio = opcoesDe("repFiltroEnsaio", nomeDoEnsaio);
       const opcNova = opcoesDe("repFiltroNova", v => (v === "nova" ? "Nova no bloco" : "Já tocou antes"));
+      const opcVideo = opcoesDe("repFiltroVideo", v => (v === "com" ? "Com vídeo" : "Sem vídeo"));
       const opcQtdEnsaios = opcoesDe("repFiltroQtdEnsaios",
         v => (v === "0" ? "Nenhum ensaio ainda" : `${v} ensaio${v === "1" ? "" : "s"}`), false)
         .sort((a, b) => Number(a.valor) - Number(b.valor));
@@ -2062,7 +2067,13 @@ function viewBatuqueiro() {
       return `
     <div class="card">
       <div class="card-head">
-        <div><h2>Repertório</h2><p class="card-sub" style="margin-bottom:0">Músicas do ${esc(edicaoLabel(ed))} na ordem dos dois sets, e em quais ensaios cada uma foi tocada. Clique no título de uma coluna para ordenar por ela.</p></div>
+        <div><h2>Repertório</h2><p class="card-sub" style="margin-bottom:0">Músicas do ${esc(edicaoLabel(ed))} na ordem dos dois sets, e em quais ensaios cada uma foi tocada. Clique no título de uma coluna para ordenar por ela.${
+          // A explicação da cor só aparece quando existe o que explicar: num
+          // repertório sem nenhum vídeo ela seria uma linha a mais para ler,
+          // sobre algo que a pessoa não vê na tela.
+          todasLinhas.some(l => l.video)
+            ? ` <b class="legenda-video">Música com o nome em azul tem vídeo do arranjo no YouTube — é só clicar no nome para abrir.</b>`
+            : ""}</p></div>
         <button class="btn-secondary btn-sm" id="btn-exportar-repertorio-batuqueiro" title="Baixa o repertório completo em Excel, na ordem dos sets — o filtro da tela não muda a planilha">Baixar Excel (.xlsx)</button>
       </div>
 
@@ -2077,6 +2088,7 @@ function viewBatuqueiro() {
         ${filtroMulti("repFiltroEnsaio", "Ensaiada em", opcEnsaio, "Qualquer ensaio")}
         ${filtroMulti("repFiltroNova", "Nova no bloco?", opcNova, "Todas")}
         ${filtroMulti("repFiltroQtdEnsaios", "Quantos ensaios", opcQtdEnsaios, "Qualquer quantidade")}
+        ${filtroMulti("repFiltroVideo", "Vídeo do arranjo", opcVideo, "Com e sem")}
         ${(filtrando || ordCol) ? `<div><label>&nbsp;</label><button class="btn-ghost btn-sm" id="rep-limpar">Limpar e voltar à ordem dos sets</button></div>` : ""}
       </div>
 
@@ -2096,7 +2108,9 @@ function viewBatuqueiro() {
             ${linhas.map((l, i) => `<tr data-musica-rep="${l.id}">
                 <td class="center">${(!ordCol && (i === 0 || linhas[i - 1].set !== l.set)) ? `<b>${l.set}</b>` : (ordCol ? l.set : "")}</td>
                 <td class="center">${l.pos}</td>
-                <td class="name-cell">${esc(l.nome)}</td>
+                <td class="name-cell">${l.video
+                  ? `<a class="musica-com-video" href="${esc(l.video)}" target="_blank" rel="noopener noreferrer" aria-label="${esc(l.nome)} — abrir o vídeo no YouTube" title="Abrir o vídeo desta música no YouTube">${esc(l.nome)}</a>`
+                  : esc(l.nome)}</td>
                 <td class="center"><span class="badge ${l.nova ? "badge-isenta" : "badge-good"}">${l.nova ? "Nova" : "Já tocou"}</span></td>
                 <td>${esc(l.tom) || "—"}</td>
                 <td>${esc(l.cantor) || "—"}</td>
@@ -2230,6 +2244,25 @@ function opcaoValida(valor, opcoes) {
    set é calculada aqui, na ordem de execução, e segue com a linha quando a
    tabela é reordenada por outra coluna — senão o número viraria o índice da
    linha e mentiria sobre a ordem de tocar. */
+/* Link de vídeo da música. Só YouTube, de propósito: o campo existe para os
+   vídeos de arranjo que o bloco já publica lá, e um campo de URL livre num site
+   que todo mundo abre no celular é um convite a colar qualquer coisa — inclusive
+   link de golpe. Aceita as formas que o YouTube realmente entrega (youtu.be,
+   youtube.com/watch, /live, /shorts, com ou sem www ou m). */
+function linkDeVideoValido(url) {
+  const texto = String(url || "").trim();
+  if (!texto) return "";
+  let u;
+  try { u = new URL(texto.startsWith("http") ? texto : `https://${texto}`); }
+  catch { return null; }
+  if (u.protocol !== "https:" && u.protocol !== "http:") return null;
+  const host = u.hostname.toLowerCase().replace(/^www\./, "");
+  const permitidos = ["youtube.com", "m.youtube.com", "music.youtube.com", "youtube-nocookie.com", "youtu.be"];
+  if (!permitidos.includes(host)) return null;
+  u.protocol = "https:";
+  return u.toString();
+}
+
 function linhasDoRepertorio(lista) {
   const linhas = [];
   SETS_DO_CARNAVAL.forEach(st => {
@@ -2240,6 +2273,7 @@ function linhasDoRepertorio(lista) {
         tom: (m.tom || "").trim(), cantor: (m.cantor || "").trim(),
         ensaios: datas.map(e => e.id), datas: datas.map(ensaioLabel),
         nova: ehMusicaNova(m),
+        video: (m.video || "").trim(),
       });
     });
   });
@@ -2668,7 +2702,7 @@ function viewWiki(u) {
             <h3>${esc(v.titulo || "(sem título)")}</h3>
             <p class="wiki-item-pe">${v.atualizadoEm ? `atualizado em ${esc(dataHoraBRdoCarimbo(v.atualizadoEm))}` : ""}${v.atualizadoPor ? ` por ${esc(nomeDeUid(v.atualizadoPor))}` : ""}</p>
             <div class="wiki-texto">${v.texto ? wikiTextoHtml(v.texto) : `<p class="hint">Este verbete ainda está vazio. Abra e conte a história.</p>`}</div>
-            ${galeriaHtml(midias.filter(m => m.tipo === "imagem"), midias.filter(m => m.tipo === "audio"), false)}
+            ${galeriaHtml(midias.filter(m => m.tipo === "imagem"), midias.filter(m => m.tipo === "audio"), false, v.id)}
             <div class="wiki-verbete-pe">
               <button class="btn-secondary btn-sm" data-abrir-verbete="${v.id}">Comentar, editar ou ver o histórico</button>
             </div>
@@ -2676,7 +2710,8 @@ function viewWiki(u) {
         }).join("")}
       </div>` : ""}
     </div>
-  </div>`;
+  </div>
+  ${visualizadorDeFoto()}`;
 }
 
 function viewVerbete(u) {
@@ -2756,7 +2791,8 @@ function viewVerbete(u) {
           </div>`}` : ""}
       </div>
     </div>
-  </div>`;
+  </div>
+  ${visualizadorDeFoto()}`;
 }
 
 /* Galeria do verbete: fotos e áudios. Vídeo entra como link no texto, de
@@ -2769,7 +2805,7 @@ function bocaDeMidia(v, imagens, audios) {
         <h3>Fotos e áudios</h3>
         <span class="hint">${imagens.length + audios.length === 0 ? "nenhum ainda" : `${imagens.length} foto${imagens.length === 1 ? "" : "s"} · ${audios.length} áudio${audios.length === 1 ? "" : "s"}`}</span>
       </div>
-      ${galeriaHtml(imagens, audios, true)}
+      ${galeriaHtml(imagens, audios, true, v.id)}
       <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin-top:10px;">
         <input type="file" id="wiki-arquivo" accept="image/*,audio/*" multiple ${session.wikiSubindo ? "disabled" : ""}>
         <input type="text" id="wiki-legenda" placeholder="Legenda (opcional, vale para todas)" style="flex:1; min-width:160px;" ${session.wikiSubindo ? "disabled" : ""}>
@@ -2785,18 +2821,62 @@ function podeApagarMidia(m) {
 /* As fotos e os áudios em si. A mesma peça serve na lista (sem os botões de
    remover, que ali seriam um clique errado esperando acontecer) e no verbete
    aberto. */
-function galeriaHtml(imagens, audios, comRemover) {
+/* Nome de arquivo para o download: o do upload, se der para recuperar do
+   caminho; senão um nome legível, porque "foto" repetido dez vezes na pasta de
+   downloads não ajuda ninguém. */
+function nomeDeArquivoDaMidia(m) {
+  const doCaminho = String(m.caminho || "").split("/").pop() || "";
+  const limpo = doCaminho.replace(/^\d+-\d+-/, "").replace(/^\d+-/, "");
+  if (limpo) return limpo;
+  const base = (m.legenda || (m.tipo === "audio" ? "audio" : "foto")).replace(/[^a-zA-Z0-9.\-_ ]/g, "").trim() || "arquivo";
+  return `${base}.${m.tipo === "audio" ? "mp3" : "jpg"}`;
+}
+
+/* Foto em tela cheia. Fica fora das telas (é desenhada no fim de qualquer uma
+   que tenha galeria) porque a mesma foto pode ser aberta tanto da lista quanto
+   do verbete, e duplicar o visualizador criaria dois estados para a mesma
+   coisa. Fecha no X, no clique fora e no Esc; as setas andam pelas fotos
+   daquele verbete, que é o que se espera de uma galeria. */
+function visualizadorDeFoto() {
+  const alvo = session.wikiFotoAberta;
+  if (!alvo) return "";
+  const midias = wikiMidiasCache[alvo.verbeteId] || [];
+  const fotos = midias.filter(m => m.tipo === "imagem");
+  const i = fotos.findIndex(m => m.id === alvo.midiaId);
+  if (i < 0) return "";
+  const m = fotos[i];
+  return `
+    <div class="lightbox" data-fundo-foto="1">
+      <div class="lightbox-caixa">
+        <img src="${esc(m.url)}" alt="${esc(m.legenda || "Foto do verbete")}">
+        <div class="lightbox-pe">
+          <span>${esc(m.legenda || "")}${m.legenda ? " · " : ""}<span class="muted-sm">${esc(nomeDeUid(m.por))}${fotos.length > 1 ? ` · foto ${i + 1} de ${fotos.length}` : ""}</span></span>
+          <button class="btn-secondary btn-sm" data-baixar-midia="${esc(m.url)}" data-nome-arquivo="${esc(nomeDeArquivoDaMidia(m))}">Baixar</button>
+        </div>
+      </div>
+      ${fotos.length > 1 ? `
+        <button class="lightbox-nav lightbox-ant" data-foto-vizinha="-1" title="Foto anterior" aria-label="Foto anterior">&#8249;</button>
+        <button class="lightbox-nav lightbox-prox" data-foto-vizinha="1" title="Próxima foto" aria-label="Próxima foto">&#8250;</button>` : ""}
+      <button class="lightbox-fechar" data-fechar-foto="1" title="Fechar (Esc)" aria-label="Fechar">&times;</button>
+    </div>`;
+}
+
+function galeriaHtml(imagens, audios, comRemover, verbeteId) {
   const remover = m => (comRemover && podeApagarMidia(m)
     ? `<button class="btn-ghost btn-sm" data-remover-midia="${m.id}">Remover</button>` : "");
+  const baixar = m => `<button class="btn-ghost btn-sm" data-baixar-midia="${esc(m.url)}" data-nome-arquivo="${esc(nomeDeArquivoDaMidia(m))}">Baixar</button>`;
   return `
       ${imagens.length ? `
       <div class="wiki-galeria">
         ${imagens.map(m => `
           <figure class="wiki-foto">
-            <img src="${esc(m.url)}" alt="${esc(m.legenda || "Foto do verbete")}" loading="lazy">
+            <button class="wiki-foto-abrir" data-ampliar-foto="${m.id}" data-verbete-foto="${esc(verbeteId || "")}" title="Clique para ver a foto grande">
+              <img src="${esc(m.url)}" alt="${esc(m.legenda || "Foto do verbete")}" loading="lazy">
+            </button>
             <figcaption>
               ${esc(m.legenda || "")}
-              <span class="muted-sm">${esc(nomeDeUid(m.por))}</span>
+              <span class="muted-sm">${m.legenda ? "· " : ""}${esc(nomeDeUid(m.por))}</span>
+              ${baixar(m)}
               ${remover(m)}
             </figcaption>
           </figure>`).join("")}
@@ -2806,7 +2886,7 @@ function galeriaHtml(imagens, audios, comRemover) {
         ${audios.map(m => `
           <div class="wiki-audio">
             <div class="wiki-audio-cab"><b>${esc(m.legenda || "Áudio")}</b><span class="muted-sm">${esc(nomeDeUid(m.por))}</span>
-              ${remover(m)}</div>
+              ${baixar(m)}${remover(m)}</div>
             <audio controls preload="none" src="${esc(m.url)}"></audio>
           </div>`).join("")}
       </div>` : ""}`;
@@ -3491,7 +3571,7 @@ function dadosDoRepertorio({ somentePublicadas = false } = {}) {
   // teria explicação possível. Na área do batuqueiro não existe rascunho local:
   // sai o que está publicado, que é exatamente o que ele enxerga.
   const doBanco = m => ({
-    id: m.id, nome: m.nome, tom: m.tom || "", cantor: m.cantor || "",
+    id: m.id, nome: m.nome, tom: m.tom || "", cantor: m.cantor || "", video: (m.video || "").trim(),
     rascunho: ehRascunho(m), set: setDaMusica(m), ordem: m.ordem,
     novaManual: m.novaManual === true || m.novaManual === false ? m.novaManual : null,
   });
@@ -3513,6 +3593,7 @@ function dadosDoRepertorio({ somentePublicadas = false } = {}) {
         tom: (m.tom || "").trim() || "Sem tom definido",
         cantor: (m.cantor || "").trim() || "Sem cantor(a) definido",
         ensaios: ensaios.length,
+        video: (m.video || "").trim(),
         datas: ensaios.map(e => ensaioLabel(e)).join(", "),
         situacao: m.rascunho ? "Rascunho" : "Publicada",
         anos: sit.anos.join(", "),
@@ -3527,7 +3608,7 @@ function dadosDoRepertorio({ somentePublicadas = false } = {}) {
    rascunho) só existe na versão do admin: rascunho é assunto da organização, e
    na área do batuqueiro todas as músicas da planilha já estão publicadas. */
 function abaDoRepertorio(linhas, ed, { comSituacao }) {
-  const COLS = ["Set", "#", "Música", "Nova no bloco?", "Tom", "Cantor(a)", "Ensaios", "Ensaiada em"]
+  const COLS = ["Set", "#", "Música", "Nova no bloco?", "Tom", "Cantor(a)", "Vídeo", "Ensaios", "Ensaiada em"]
     .concat(comSituacao ? ["Situação"] : [])
     .concat(["Carnavais anteriores"]);
   const PRIMEIRA = 5;                      // linha 1 título, 2 subtítulo, 3 vazia, 4 cabeçalho
@@ -3550,13 +3631,14 @@ function abaDoRepertorio(linhas, ed, { comSituacao }) {
       { t: l.nova, s: l.nova === "Nova" ? E.nova : E.jaTocou },
       { t: l.tom, s: texto },
       { t: l.cantor, s: texto },
+      { t: l.video, s: texto },
       { n: l.ensaios, s: centro },
       { t: l.datas, s: E.textoQuebra },
       ...(comSituacao ? [{ t: l.situacao, s: l.situacao === "Rascunho" ? E.rascunho : E.publicada }] : []),
       { t: l.anos, s: texto },
     ]);
   });
-  const larguras = [6, 5, 38, 16, 18, 22, 10, 34].concat(comSituacao ? [14] : []).concat([22]);
+  const larguras = [6, 5, 38, 16, 18, 22, 34, 10, 34].concat(comSituacao ? [14] : []).concat([22]);
   return {
     aba: {
       nome: "Repertório",
@@ -5018,6 +5100,7 @@ function viewAdminMusicas() {
      está aqui ou se é só o espelho do banco. */
   const linhaDeMusica = m => ({
     id: m.id, nome: m.nome, tom: m.tom || "", cantor: m.cantor || "",
+    video: (m.video || "").trim(),
     rascunho: ehRascunho(m), set: setDaMusica(m), ordem: m.ordem,
     novaManual: m.novaManual === true || m.novaManual === false ? m.novaManual : null,
     base: { nome: m.nome, tom: m.tom || "", cantor: m.cantor || "" },
@@ -5047,8 +5130,11 @@ function viewAdminMusicas() {
       if (!atual) return;
       const novoSet = setDaMusica(atual), novoRascunho = ehRascunho(atual);
       const novaManualAtual = atual.novaManual === true || atual.novaManual === false ? atual.novaManual : null;
-      if (row.set !== novoSet || row.ordem !== atual.ordem || row.rascunho !== novoRascunho || row.novaManual !== novaManualAtual) {
-        row.set = novoSet; row.ordem = atual.ordem; row.rascunho = novoRascunho; row.novaManual = novaManualAtual;
+      const novoVideo = (atual.video || "").trim();
+      if (row.set !== novoSet || row.ordem !== atual.ordem || row.rascunho !== novoRascunho
+          || row.novaManual !== novaManualAtual || row.video !== novoVideo) {
+        row.set = novoSet; row.ordem = atual.ordem; row.rascunho = novoRascunho;
+        row.novaManual = novaManualAtual; row.video = novoVideo;
         mudouAlgumaLinha = true;
       }
       const base = row.base || (row.base = { nome: row.nome, tom: row.tom, cantor: row.cantor });
@@ -5235,6 +5321,13 @@ function viewAdminMusicas() {
                   </td>` : ""}
                   <td class="col-musica" title="${h.total ? `Já tocou em ${h.total} ano${h.total === 1 ? "" : "s"} · mais recente: ${esc(h.ultimo)}` : "Música nova — não aparece no histórico"}">
                     <input type="text" class="musica-name-input" data-derivado="1" data-musica-id="${m.id}" value="${esc(m.nome)}" ${editavel ? "" : "disabled"} aria-label="Nome da música">
+                    ${/* O link do vídeo fica EMBAIXO do nome, não numa coluna
+                          nova: a tabela já cabe na tela na medida, e mais uma
+                          coluna obrigaria a rolar para o lado só para alcançar
+                          os botões de ação. */""}
+                    ${m.video
+                      ? `<div class="linha-video"><a href="${esc(m.video)}" target="_blank" rel="noopener noreferrer" title="Abrir no YouTube">vídeo ▶</a>${editavel ? `<button class="link-btn" data-video-musica="${m.id}">trocar</button>` : ""}</div>`
+                      : (editavel ? `<div class="linha-video"><button class="link-btn sem-video" data-video-musica="${m.id}">+ link do vídeo</button></div>` : "")}
                   </td>
                   <td class="center">${caixinhaNovidade(m)}</td>
                   <td><input type="text" class="musica-tom-input" data-derivado="1" data-musica-id="${m.id}" value="${esc(m.tom)}" list="lista-tons" placeholder="Ex: Sol maior" ${editavel ? "" : "disabled"} aria-label="Tom"></td>
@@ -6401,6 +6494,56 @@ function wireEvents() {
     render();
   });
 
+  /* Foto grande. O estado é da sessão, não do DOM: assim um dado que chegue em
+     tempo real (alguém comentou) redesenha a tela sem fechar a foto na cara de
+     quem está olhando. */
+  onAll("[data-ampliar-foto]", "click", el => {
+    session.wikiFotoAberta = { verbeteId: el.dataset.verbeteFoto || session.wikiId, midiaId: el.dataset.ampliarFoto };
+    render();
+  });
+  onAll("[data-fechar-foto]", "click", () => { session.wikiFotoAberta = null; render(); });
+  /* Clique no fundo escuro fecha; clique nas setas, na foto ou no botão de
+     baixar sobe até o fundo por bolha e NÃO pode fechar - daí o alvo exato. */
+  document.querySelectorAll("[data-fundo-foto]").forEach(el => el.addEventListener("click", e => {
+    if (e.target === el) { session.wikiFotoAberta = null; render(); }
+  }));
+  onAll("[data-foto-vizinha]", "click", el => {
+    const passo = Number(el.dataset.fotoVizinha) || 1;
+    const alvo = session.wikiFotoAberta;
+    if (!alvo) return;
+    const fotos = (wikiMidiasCache[alvo.verbeteId] || []).filter(m => m.tipo === "imagem");
+    const i = fotos.findIndex(m => m.id === alvo.midiaId);
+    if (i < 0 || fotos.length < 2) return;
+    // dá a volta: na última, a próxima é a primeira
+    const prox = (i + passo + fotos.length) % fotos.length;
+    session.wikiFotoAberta = { verbeteId: alvo.verbeteId, midiaId: fotos[prox].id };
+    render();
+  });
+
+  /* Baixar a foto ou o áudio. O arquivo mora no Storage, em outro domínio, e
+     navegador nenhum obedece ao atributo download entre domínios: o clique
+     abriria a imagem numa aba em vez de salvar. Então o site busca o arquivo e
+     entrega como download de verdade — e, quando o navegador barra a busca
+     (CORS não configurado no bucket), cai para abrir em outra aba dizendo o que
+     fazer, em vez de não fazer nada. */
+  onAll("[data-baixar-midia]", "click", async el => {
+    const url = el.dataset.baixarMidia;
+    const nome = el.dataset.nomeArquivo || "arquivo";
+    if (!url) return;
+    const original = el.textContent;
+    el.textContent = "Baixando...";
+    try {
+      const resp = await fetch(url);
+      if (!resp.ok) throw new Error("resposta " + resp.status);
+      baixarArquivo(nome, await resp.blob());
+    } catch (err) {
+      console.warn("download direto não rolou, abrindo em outra aba:", err);
+      window.open(url, "_blank", "noopener");
+      showToast("Abri o arquivo em outra aba — toque e segure (ou botão direito) para salvar.");
+    }
+    el.textContent = original;
+  });
+
   onAll("[data-remover-midia]", "click", async el => {
     const mid = el.dataset.removerMidia;
     const id = session.wikiId;
@@ -6882,7 +7025,7 @@ function wireEvents() {
   on("#rep-limpar", "click", () => {
     session.repBusca = ""; session.repFiltroSet = []; session.repFiltroTom = [];
     session.repFiltroCantor = []; session.repFiltroEnsaio = [];
-    session.repFiltroNova = []; session.repFiltroQtdEnsaios = [];
+    session.repFiltroNova = []; session.repFiltroQtdEnsaios = []; session.repFiltroVideo = [];
     session.repOrdemCol = ""; session.repOrdemDir = "asc";
     session.multiAberto = null;
     render();
@@ -7376,6 +7519,31 @@ function wireEvents() {
   };
   /* Ciclo da caixinha: automático -> Nova -> Já tocou -> automático. Grava na
      hora, como publicar: é decisão, não texto em edição. */
+  /* Link do vídeo da música. Grava na hora, como o set e a ordem: é um campo
+     que se mexe sozinho, e misturá-lo no "Salvar todas as músicas" só criaria
+     mais uma chance de perder o que foi colado. */
+  onAll("[data-video-musica]", "click", async el => {
+    const id = el.dataset.videoMusica;
+    const row = (session.musicasDraft || []).find(m => m.id === id);
+    if (!row) return;
+    const atual = (row.video || "").trim();
+    const digitado = prompt(
+      `Link do vídeo desta música no YouTube.\n\nCole o endereço do vídeo (youtube.com ou youtu.be). Para tirar o link, apague tudo e confirme.`,
+      atual);
+    if (digitado === null) return;
+    const limpo = linkDeVideoValido(digitado);
+    if (limpo === null) {
+      alert("Esse endereço não é um link do YouTube.\n\nO campo aceita só youtube.com e youtu.be — é onde o bloco publica os vídeos de arranjo.");
+      return;
+    }
+    try {
+      await updateDoc(P.musica(edicaoCtxId(), id), { video: limpo });
+      row.video = limpo;
+      showToast(limpo ? "Vídeo ligado à música." : "Link do vídeo removido.");
+    } catch (err) { alert(friendlyFirestoreError(err)); }
+    render();
+  });
+
   onAll("[data-ciclar-nova]", "click", async el => {
     const id = el.dataset.ciclarNova;
     const row = (session.musicasDraft || []).find(m => m.id === id);
@@ -7513,6 +7681,12 @@ function wireEvents() {
 
 function on(sel, evt, fn) { const el = $(sel); if (el) el.addEventListener(evt, fn); }
 function onAll(sel, evt, fn) { document.querySelectorAll(sel).forEach(el => el.addEventListener(evt, () => fn(el))); }
+
+/* Esc fecha a foto em tela cheia. Registrado uma única vez, no documento: por
+   render seriam dezenas de listeners empilhados na mesma tecla. */
+document.addEventListener("keydown", e => {
+  if (e.key === "Escape" && session.wikiFotoAberta) { session.wikiFotoAberta = null; render(); }
+});
 
 /* boot inicial: mostra tela de carregamento até o primeiro onAuthStateChanged responder */
 render();
