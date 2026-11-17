@@ -2639,6 +2639,18 @@ async function main() {
     return m.video === 'https://youtu.be/abc123XYZ';
   }, idMusicaVideo));
   ok('E a linha passa a mostrar que tem vídeo', (await appHtml(page)).includes('vídeo ▶'));
+  // O link é da MÚSICA, não do ano: sem isto ele morreria junto com o carnaval
+  // de 2027 e alguém teria que colar tudo de novo em 2028.
+  const catalogoDaVentania = () => page.evaluate(() => {
+    const cat = window.__mock.dumpStore().repertorioHistorico || {};
+    const achado = Object.values(cat).find(m => (m.nome || '').toLowerCase() === 'ventania');
+    return achado || null;
+  });
+  const ventaniaNoCatalogo = await catalogoDaVentania();
+  ok('O link sobe para o catálogo de músicas do site',
+     !!ventaniaNoCatalogo && ventaniaNoCatalogo.video === 'https://youtu.be/abc123XYZ');
+  ok('Carimbado com o ano do carnaval em que foi colado',
+     !!ventaniaNoCatalogo && Number(ventaniaNoCatalogo.anoVideo) === 2027);
   await page.click('#btn-back-admin6');
   await page.waitForTimeout(400);
   await page.click('#btn-back-batuqueiro');
@@ -3054,6 +3066,47 @@ async function main() {
   ok('2027 passou a Encerrada sozinha ao abrir 2028', html.includes('Encerrada'));
   const abertas = (html.match(/>Aberta</g) || []).length;
   ok('Existe no máximo uma edição aberta por vez', abertas === 1);
+
+  console.log('\n== 24b. A música volta para o carnaval novo com o vídeo já ligado ==');
+  // O link do arranjo é da música. Colado em 2027, tem que estar lá quando a
+  // bateria montar 2028 — senão alguém recola 40 links todo ano.
+  await page.click('#btn-back-admin7');
+  await page.waitForTimeout(300);
+  await page.click('#btn-goto-musicas');
+  await page.waitForTimeout(1500);
+  const sugestaoVentania = await page.evaluate(() => {
+    const tr = [...document.querySelectorAll('#rep-sugestao-tbody tr')]
+      .find(x => x.querySelector('.name-cell') && x.querySelector('.name-cell').textContent.trim() === 'Ventania');
+    return tr ? { temMarca: !!tr.querySelector('.marca-video') } : null;
+  });
+  ok('Na lista de sugestões, a música com vídeo guardado vem marcada',
+     !!sugestaoVentania && sugestaoVentania.temMarca);
+  ok('E a marca não entra no nome copiado da tabela', await page.evaluate(() => {
+    const tr = [...document.querySelectorAll('#rep-sugestao-tbody tr')]
+      .find(x => x.querySelector('.name-cell') && x.querySelector('.name-cell').textContent.trim() === 'Ventania');
+    return !!tr;
+  }));
+  await page.click('[data-add-classica="Ventania"]');
+  await page.waitForTimeout(1200);
+  const ventania2028 = await page.evaluate(() => {
+    const musicas = window.__mock.dumpStore()['edicoes/2028-1/musicas'] || {};
+    return Object.values(musicas).find(m => m.nome === 'Ventania') || null;
+  });
+  ok('Adicionada ao carnaval novo, a música já vem com o link do vídeo',
+     !!ventania2028 && ventania2028.video === 'https://youtu.be/abc123XYZ');
+  ok('E continua trazendo tom e cantor(a) do catálogo, como antes',
+     !!ventania2028 && typeof ventania2028.tom === 'string' && typeof ventania2028.cantor === 'string');
+  // limpa: 2028 é montado por outras seções e não pode herdar esta música
+  await page.evaluate(async () => {
+    const fb = await import('./firebase-init.mock.js');
+    const musicas = window.__mock.dumpStore()['edicoes/2028-1/musicas'] || {};
+    for (const [id, m] of Object.entries(musicas)) {
+      if (m.nome === 'Ventania') await fb.deleteDoc(fb.doc(fb.db, 'edicoes', '2028-1', 'musicas', id));
+    }
+  });
+  await page.waitForTimeout(700);
+  await page.click('#btn-back-admin6');
+  await page.waitForTimeout(300);
   await logout(page);
 
   console.log('\n== 25. Ana renova a inscrição em 2028 com os dados de 2027 pré-preenchidos ==');
@@ -3244,6 +3297,32 @@ async function main() {
   ok('A tela do arquivo abre com a tabela de músicas por ano', html.includes('rep-hist-tbody'));
   ok('Com uma coluna por ano do arquivo', html.includes('data-ano-col="2011"') && html.includes('data-ano-col="2026"'));
 
+  // O vídeo do arranjo mora aqui, na música. Sem porta de entrada no catálogo,
+  // só dava para corrigir o link de música que estivesse no carnaval do momento.
+  const idNoCatalogo = await page.evaluate(() => {
+    const inp = [...document.querySelectorAll('.hist-nome-input')].find(i => i.value.includes('FESTIVAL 2029'));
+    return inp ? inp.dataset.histId : null;
+  });
+  ok('Cada música do catálogo tem onde pôr o link do vídeo', await page.evaluate(id =>
+     !!document.querySelector(`[data-video-hist="${id}"]`), idNoCatalogo));
+  respostaPrompt = 'https://vimeo.com/12345';
+  await page.click(`[data-video-hist="${idNoCatalogo}"]`);
+  await page.waitForTimeout(600);
+  ok('Endereço fora do YouTube é recusado também aqui', await page.evaluate(id =>
+     !(window.__mock.dumpStore().repertorioHistorico[id] || {}).video, idNoCatalogo));
+  respostaPrompt = 'https://www.youtube.com/watch?v=catalogo01';
+  await page.click(`[data-video-hist="${idNoCatalogo}"]`);
+  await page.waitForTimeout(700);
+  ok('Link colado no catálogo grava na música', await page.evaluate(id =>
+     (window.__mock.dumpStore().repertorioHistorico[id] || {}).video === 'https://www.youtube.com/watch?v=catalogo01',
+     idNoCatalogo));
+  ok('E a linha passa a mostrar o vídeo', (await appHtml(page)).includes('vídeo ▶'));
+  respostaPrompt = '';
+  await page.click(`[data-video-hist="${idNoCatalogo}"]`);
+  await page.waitForTimeout(700);
+  ok('Apagar o link tira o vídeo da música', await page.evaluate(id =>
+     (window.__mock.dumpStore().repertorioHistorico[id] || {}).video === '', idNoCatalogo));
+
   // corrigir um nome errado — o caso que motivou a tela
   const idFestival = await page.evaluate(() => {
     const inp = [...document.querySelectorAll('.hist-nome-input')].find(i => i.value.includes('FESTIVAL 2029'));
@@ -3296,16 +3375,19 @@ async function main() {
     const tr = document.querySelector('#rep-hist-tbody tr');
     const tds = tr.querySelectorAll('td');
     return {
-      cabecalhos: [...ths].slice(0, 3).map(t => t.textContent.trim()),
+      cabecalhos: [...ths].slice(0, 4).map(t => t.textContent.trim()),
       celula1EhNome: !!tds[0].querySelector('.hist-nome-input'),
       celula2EhNumero: /^\d+$/.test(tds[1].textContent.trim()),
-      celula3EhRemover: !!tds[2].querySelector('[data-remove-hist]'),
+      celula3EhVideo: !!tds[2].querySelector('[data-video-hist]'),
+      celula4EhRemover: !!tds[3].querySelector('[data-remove-hist]'),
     };
   });
-  ok('A tabela começa por Música, Anos e a ação — os anos vêm depois',
-     ordemColunas.cabecalhos[0] === 'Música' && ordemColunas.cabecalhos[1] === 'Anos');
-  ok('E cada linha segue a mesma ordem: nome, contagem, Remover',
-     ordemColunas.celula1EhNome && ordemColunas.celula2EhNumero && ordemColunas.celula3EhRemover);
+  ok('A tabela começa por Música, Anos, Vídeo e a ação — os anos vêm depois',
+     ordemColunas.cabecalhos[0] === 'Música' && ordemColunas.cabecalhos[1] === 'Anos'
+     && ordemColunas.cabecalhos[2] === 'Vídeo');
+  ok('E cada linha segue a mesma ordem: nome, contagem, vídeo, Remover',
+     ordemColunas.celula1EhNome && ordemColunas.celula2EhNumero
+     && ordemColunas.celula3EhVideo && ordemColunas.celula4EhRemover);
 
   // O total embaixo de cada ano tem que bater com a coluna — é o número que o
   // Pedro usa para saber quantas músicas a bateria tocou naquele carnaval.
@@ -3357,7 +3439,7 @@ async function main() {
   const centralizado = await page.evaluate(() => {
     const th = document.querySelector('thead th[data-ano-col="2011"]');
     const tdAno = document.querySelector('#rep-hist-tbody tr td:nth-child(2)');
-    const tdToggle = document.querySelector('#rep-hist-tbody tr td:nth-child(4)');
+    const tdToggle = document.querySelector('#rep-hist-tbody tr td:nth-child(5)');
     const g = el => getComputedStyle(el).textAlign;
     return { th: g(th), tdAno: g(tdAno), tdToggle: g(tdToggle) };
   });

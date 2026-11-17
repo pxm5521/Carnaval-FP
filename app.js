@@ -4256,10 +4256,48 @@ function doCatalogo(nome) {
   // marcados — é a do arquivo, a que as outras telas tratam como a música.
   return todas.find(m => (m.anos || []).length) || todas[0] || null;
 }
-/* Tom e cantor(a) guardados para essa música, para preencher a linha nova. */
-function tomCantorDoCatalogo(nome) {
+/* Tom, cantor(a) e vídeo guardados para essa música, para preencher a linha
+   nova. O vídeo do arranjo é da MÚSICA, não do ano: se ficasse só na edição,
+   o link colado em 2027 se perderia e alguém teria que colar tudo de novo em
+   2028 — que foi exatamente o buraco que esta função fecha. */
+function dadosDoCatalogo(nome) {
   const reg = doCatalogo(nome);
-  return { tom: (reg && reg.tom) || "", cantor: (reg && reg.cantor) || "" };
+  return {
+    tom: (reg && reg.tom) || "",
+    cantor: (reg && reg.cantor) || "",
+    video: (reg && reg.video) || "",
+  };
+}
+
+/* Guarda no catálogo o link do vídeo escolhido num carnaval, para a música
+   chegar com o vídeo já ligado no carnaval seguinte. Selo de ano próprio
+   (`anoVideo`), separado do de tom/cantor: trocar o tom em 2028 não pode
+   bloquear o link colado em 2027, nem o contrário. Diferente do tom, aqui o
+   campo em branco É decisão — só se esvazia por quem apagou o link de
+   propósito, nunca por um formulário salvo vazio. */
+async function registrarVideoNoCatalogo(nome, video, ano) {
+  const limpo = (nome || "").trim();
+  if (!limpo) return;
+  // Catálogo que não carregou: gravar criaria uma entrada paralela sem anos,
+  // e a música apareceria duas vezes. Mesmo cuidado de registrarNoCatalogo.
+  if (repertorioHistoricoFalhou) return;
+  const link = (video || "").trim();
+  try {
+    const reg = doCatalogo(limpo);
+    if (reg) {
+      const atual = await getDoc(P.musicaHistorica(reg.id));
+      const dados = atual.exists() ? atual.data() : reg;
+      if (ano < (Number(dados.anoVideo) || 0)) return;
+      if ((dados.video || "") === link) return;
+      await updateDoc(P.musicaHistorica(reg.id), { video: link, anoVideo: ano });
+      reg.video = link; reg.anoVideo = ano;
+    } else {
+      const ref = await addDoc(P.repertorioHistorico(), { nome: limpo, anos: [], video: link, anoVideo: ano });
+      if (repertorioHistorico) repertorioHistorico.push({ id: ref.id, nome: limpo, anos: [], video: link, anoVideo: ano });
+    }
+  } catch (err) {
+    console.warn("catálogo de músicas (vídeo):", err);
+  }
 }
 
 /* Guarda no catálogo o tom e o cantor(a) escolhidos num carnaval. Silencioso de
@@ -5413,7 +5451,7 @@ function viewAdminMusicas() {
           <tbody id="rep-sugestao-tbody">
             ${sugestoes.map(m => `
               <tr>
-                <td class="name-cell cell-wrap">${esc(m.nome)}</td>
+                <td class="name-cell cell-wrap">${esc(m.nome)}${dadosDoCatalogo(m.nome).video ? `<span class="marca-video" title="Esta música já tem vídeo do arranjo guardado — ele vem junto ao adicionar"></span>` : ""}</td>
                 <td class="center">${m.total}</td>
                 <td class="center">${esc(m.ultimo || "—")}</td>
                 <td class="row-actions"><button class="btn-secondary btn-sm" data-add-classica="${esc(m.nome)}">Adicionar ao repertório</button></td>
@@ -5421,7 +5459,7 @@ function viewAdminMusicas() {
           </tbody>
         </table>
       </div>
-      <p class="hint" style="margin-top:10px;">${termoSugestao ? `${sugestoes.length} com o filtro atual. ` : ""}É lembrete, não obrigação — o repertório de cada ano é escolha da bateria. Tom e cantor(a) vêm preenchidos com o que foi usado da última vez; é só corrigir na linha se mudou.</p>
+      <p class="hint" style="margin-top:10px;">${termoSugestao ? `${sugestoes.length} com o filtro atual. ` : ""}É lembrete, não obrigação — o repertório de cada ano é escolha da bateria. Tom e cantor(a) vêm preenchidos com o que foi usado da última vez; é só corrigir na linha se mudou. O sinal &#9654; ao lado do nome diz que a música já tem vídeo do arranjo guardado — ele entra junto.</p>
     </div>` : ""}
   </div>`;
 }
@@ -5476,7 +5514,7 @@ function viewAdminRepertorioHistorico() {
     <p><button class="link-btn" id="btn-back-admin9">← Voltar para o painel admin</button></p>
     <div class="card">
       <h2>Repertório histórico</h2>
-      <p class="card-sub">As músicas dos anos anteriores a este site, como estavam na planilha da bateria. Clique num ano para marcar ou desmarcar que a música tocou nele. Cada alteração grava na hora — não há botão de salvar. O número embaixo de cada ano é quantas músicas da tabela estão marcadas naquele ano.</p>
+      <p class="card-sub">As músicas dos anos anteriores a este site, como estavam na planilha da bateria. Clique num ano para marcar ou desmarcar que a música tocou nele. Cada alteração grava na hora — não há botão de salvar. O número embaixo de cada ano é quantas músicas da tabela estão marcadas naquele ano. A coluna <b>Vídeo</b> é o link do arranjo no YouTube: fica guardado na música, não no carnaval, e por isso já vem preenchido quando ela entra no repertório de um ano novo.</p>
 
       <div class="filter-row">
         <div style="flex:1; min-width:240px;">
@@ -5506,17 +5544,20 @@ function viewAdminRepertorioHistorico() {
 
       <div class="table-scroll">
         <table>
-          <thead><tr><th>Música</th><th class="center">Anos</th><th></th>${anos.map(a => `<th class="center" data-ano-col="${esc(a)}">${esc(a)}<span class="th-sub">${porAno[a]}</span></th>`).join("")}</tr></thead>
+          <thead><tr><th>Música</th><th class="center">Anos</th><th>Vídeo</th><th></th>${anos.map(a => `<th class="center" data-ano-col="${esc(a)}">${esc(a)}<span class="th-sub">${porAno[a]}</span></th>`).join("")}</tr></thead>
           <tbody id="rep-hist-tbody">
             ${lista.map(m => {
               const marcados = (m.anos || []).map(String);
               return `<tr data-hist-musica="${esc((m.nome || "").toLowerCase())}">
                 <td class="name-cell"><input type="text" class="hist-nome-input" data-hist-id="${m.id}" value="${esc(m.nome)}" style="min-width:220px;"></td>
                 <td class="center"><b>${marcados.length}</b></td>
+                <td class="linha-video">${m.video
+                  ? `<a href="${esc(m.video)}" target="_blank" rel="noopener noreferrer" title="Abrir no YouTube">vídeo &#9654;</a><button class="link-btn" data-video-hist="${m.id}">trocar</button>`
+                  : `<button class="link-btn sem-video" data-video-hist="${m.id}">+ link do vídeo</button>`}</td>
                 <td class="row-actions"><button class="btn-ghost btn-sm" data-remove-hist="${m.id}">Remover</button></td>
                 ${anos.map(a => `<td class="center"><button class="toggle ${marcados.includes(a) ? "on" : ""}" data-hist-ano="${esc(a)}" data-hist-id="${m.id}" title="${marcados.includes(a) ? `Tocou em ${esc(a)} — clique para desmarcar` : `Não tocou em ${esc(a)} — clique para marcar`}">${marcados.includes(a) ? "SIM" : "não"}</button></td>`).join("")}
               </tr>`;
-            }).join("") || `<tr><td colspan="${3 + anos.length}" class="hint">Nenhuma música encontrada com esse filtro.</td></tr>`}
+            }).join("") || `<tr><td colspan="${4 + anos.length}" class="hint">Nenhuma música encontrada com esse filtro.</td></tr>`}
           </tbody>
         </table>
       </div>
@@ -7037,6 +7078,33 @@ function wireEvents() {
     repertorioHistorico = (repertorioHistorico || []).map(m => (m.id === id ? { ...m, ...mudanca } : m));
   };
 
+  /* Link do vídeo direto no catálogo: é onde ele mora de verdade. Serve para
+     corrigir o link de uma música que não está no carnaval em andamento — sem
+     isto, a única porta de entrada era o repertório do ano. */
+  onAll("[data-video-hist]", "click", async el => {
+    const id = el.dataset.videoHist;
+    const musica = (repertorioHistorico || []).find(m => m.id === id);
+    if (!musica) return;
+    const digitado = prompt(
+      `Link do vídeo desta música no YouTube.\n\nFica guardado na música: quando ela entrar no repertório de um carnaval, o link vem junto. Para tirar o link, apague tudo e confirme.`,
+      (musica.video || "").trim());
+    if (digitado === null) return;
+    const limpo = linkDeVideoValido(digitado);
+    if (limpo === null) {
+      alert("Esse endereço não é um link do YouTube.\n\nO campo aceita só youtube.com e youtu.be — é onde o bloco publica os vídeos de arranjo.");
+      return;
+    }
+    try {
+      // Carimbo do ano corrente, nunca menor que o que já estava: correção
+      // feita agora não pode ser desfeita por um carnaval mais antigo.
+      const ano = Math.max(new Date().getFullYear(), Number(musica.anoVideo) || 0);
+      await updateDoc(P.musicaHistorica(id), { video: limpo, anoVideo: ano });
+      atualizarMusicaHistorica(id, { video: limpo, anoVideo: ano });
+      showToast(limpo ? "Vídeo ligado à música." : "Link do vídeo removido.");
+    } catch (err) { alert(friendlyFirestoreError(err)); }
+    render();
+  });
+
   onAll("[data-hist-ano]", "click", async el => {
     const id = el.dataset.histId, ano = el.dataset.histAno;
     const musica = (repertorioHistorico || []).find(m => m.id === id);
@@ -7111,11 +7179,12 @@ function wireEvents() {
     try {
       const destino = Number(session.setDestino) === 2 ? 2 : 1;
       const ordem = proximaOrdemDoSet(session.musicasDraft || musicasCache, destino);
-      // Tom e cantor(a) vêm do catálogo: é o que o bloco decidiu da última vez
-      // que tocou essa música. Fica editável aqui, e a edição volta para lá.
-      const { tom, cantor } = tomCantorDoCatalogo(nome);
-      const ref = await addDoc(P.musicas(edicaoCtxId()), { nome, tom, cantor, rascunho: true, set: destino, ordem });
-      acrescentarAoDraft({ id: ref.id, nome, tom, cantor, rascunho: true, set: destino, ordem });
+      // Tom, cantor(a) e link do vídeo vêm do catálogo: é o que o bloco decidiu
+      // da última vez que tocou essa música. Fica editável aqui, e a edição
+      // volta para lá.
+      const { tom, cantor, video } = dadosDoCatalogo(nome);
+      const ref = await addDoc(P.musicas(edicaoCtxId()), { nome, tom, cantor, video, rascunho: true, set: destino, ordem });
+      acrescentarAoDraft({ id: ref.id, nome, tom, cantor, video, rascunho: true, set: destino, ordem });
       showToast(`"${nome}" entrou no repertório.`);
     } catch (err) { alert(friendlyFirestoreError(err)); }
     render();
@@ -7370,8 +7439,12 @@ function wireEvents() {
       // e só depois anunciar. Publicar é um clique, individual ou de uma vez.
       const destino = Number(session.setDestino) === 2 ? 2 : 1;
       const ordem = proximaOrdemDoSet(session.musicasDraft || musicasCache, destino);
-      const ref = await addDoc(P.musicas(edicaoCtxId()), { nome, tom, cantor, rascunho: true, set: destino, ordem });
-      acrescentarAoDraft({ id: ref.id, nome, tom, cantor, rascunho: true, set: destino, ordem });
+      // Tom e cantor(a) são os digitados aqui; o vídeo não tem campo neste
+      // formulário, então vem do catálogo: quem digita o nome de uma música
+      // que o bloco já toca não precisa colar o link de novo.
+      const { video } = dadosDoCatalogo(nome);
+      const ref = await addDoc(P.musicas(edicaoCtxId()), { nome, tom, cantor, video, rascunho: true, set: destino, ordem });
+      acrescentarAoDraft({ id: ref.id, nome, tom, cantor, video, rascunho: true, set: destino, ordem });
       await registrarNoCatalogo(nome, tom, cantor, anoDaEdicao(edicaoCtx()));
       render();
     } catch (err) { alert(friendlyFirestoreError(err)); }
@@ -7539,6 +7612,8 @@ function wireEvents() {
     try {
       await updateDoc(P.musica(edicaoCtxId(), id), { video: limpo });
       row.video = limpo;
+      // Sobe para o catálogo do site: é o que faz o link estar lá no ano que vem.
+      await registrarVideoNoCatalogo(row.nome, limpo, anoDaEdicao(edicaoCtx()));
       showToast(limpo ? "Vídeo ligado à música." : "Link do vídeo removido.");
     } catch (err) { alert(friendlyFirestoreError(err)); }
     render();

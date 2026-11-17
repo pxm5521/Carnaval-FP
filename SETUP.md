@@ -418,6 +418,14 @@ As opções de cada filtro são calculadas sobre o que os outros já deixaram pa
 
 Na **área do batuqueiro**, a música que tem vídeo aparece com o **nome em azul e uma setinha**; clicar abre o YouTube em outra aba. O cabeçalho do box explica isso em uma linha, que só aparece quando existe pelo menos um vídeo no repertório. O azul não é escolha de gosto: vermelho, amarelo e verde já querem dizer outra coisa no site (pendência, atraso, resolvido), e um nome de música em vermelho seria lido como problema. E o filtro **"Vídeo do arranjo"** separa o que já tem vídeo do que ainda falta gravar — serve tanto para o batuqueiro achar o que estudar quanto para a organização ver o que está faltando. A coluna também entra nas duas planilhas do repertório.
 
+**O link fica guardado na música, não no carnaval.** Ao colar o endereço no repertório de um ano, ele sobe junto para o catálogo de músicas do site (a mesma lista do **Repertório histórico**). No carnaval seguinte, quando a música for puxada da lista de sugestões, ela entra **já com o vídeo ligado** — do mesmo jeito que tom e cantor(a) já vinham. Na lista de sugestões, a música que tem vídeo guardado aparece com uma setinha ao lado do nome.
+
+Isso vale também para quem cadastra a música digitando o nome: se o bloco já tocou essa música e há link guardado, ele vem junto.
+
+Quem decide em caso de divergência é o carnaval mais recente: link colado em 2028 não é desfeito por um carnaval anterior. Apagar o link num carnaval apaga também no catálogo — apagar é decisão, diferente de um campo que ficou em branco.
+
+**Para corrigir o link de uma música que não está no carnaval em andamento**, use **Painel admin → Repertório histórico**: a tabela tem a coluna **Vídeo**, com o mesmo "+ link do vídeo" / "trocar". É a porta de entrada do catálogo, e a correção feita ali vale mais que o link colado num carnaval antigo.
+
 > **O campo aceita só YouTube** (youtube.com e youtu.be). Não é frescura: um campo de endereço livre, num site que a bateria inteira abre no celular, é um convite a colar qualquer coisa — inclusive link de golpe que chega por grupo de WhatsApp. Se um dia o bloco passar a publicar vídeo em outro lugar, é uma linha de código a mudar.
 
 **Dá para ordenar e filtrar o repertório na área do batuqueiro?** Dá, e vale para qualquer pessoa da bateria, não só para a organização.

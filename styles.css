@@ -429,6 +429,9 @@
 .musica-com-video:hover { text-decoration: underline; }
 /* A setinha é decoração de CSS, não texto: assim ela não entra no texto da
    célula (que o site compara e que a pessoa copia da tabela). */
+/* Marca de "já tem vídeo" na lista de sugestões. Pelo CSS, não no HTML: dentro
+   do texto da célula ela entraria no nome copiado e na comparação de nomes. */
+.marca-video::after { content: " \25B6"; color: var(--video); }
 .musica-com-video::after { content: " \25B6"; font-size: 10px; vertical-align: middle; }
 .legenda-video { color: var(--video); font-weight: 600; }
 
