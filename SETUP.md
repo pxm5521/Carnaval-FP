@@ -422,9 +422,11 @@ Na **área do batuqueiro**, a música que tem vídeo aparece com o **nome em azu
 
 Isso vale também para quem cadastra a música digitando o nome: se o bloco já tocou essa música e há link guardado, ele vem junto.
 
-Quem decide em caso de divergência é o carnaval mais recente: link colado em 2028 não é desfeito por um carnaval anterior. Apagar o link num carnaval apaga também no catálogo — apagar é decisão, diferente de um campo que ficou em branco.
+**Um link por música, em todo lugar.** Mexer no link — no repertório de um ano ou no catálogo — atualiza a mesma música em todos os carnavais que a têm. Cada carnaval guarda a sua cópia (é o que faz a tela do batuqueiro abrir sem precisar carregar o catálogo inteiro no celular), e quem escreve é que mantém as cópias iguais. Na prática: corrigiu em um lugar, está corrigido em todos.
 
-**Para corrigir o link de uma música que não está no carnaval em andamento**, use **Painel admin → Repertório histórico**: a tabela tem a coluna **Vídeo**, com o mesmo "+ link do vídeo" / "trocar". É a porta de entrada do catálogo, e a correção feita ali vale mais que o link colado num carnaval antigo.
+Apagar o link apaga em todos também — apagar é decisão, diferente de um campo que ficou em branco. Entre dois carnavais que gravaram links diferentes antes desta atualização, vale o mais recente.
+
+**Painel admin → Repertório histórico** tem a coluna **Vídeo**, com o mesmo "+ link do vídeo" / "trocar". É por onde se mexe no link de uma música que não está no carnaval em andamento, e também o caminho mais curto para corrigir a de uma que está.
 
 > **O campo aceita só YouTube** (youtube.com e youtu.be). Não é frescura: um campo de endereço livre, num site que a bateria inteira abre no celular, é um convite a colar qualquer coisa — inclusive link de golpe que chega por grupo de WhatsApp. Se um dia o bloco passar a publicar vídeo em outro lugar, é uma linha de código a mudar.
 

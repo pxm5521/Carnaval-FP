@@ -4269,6 +4269,37 @@ function dadosDoCatalogo(nome) {
   };
 }
 
+/* Leva o link do vídeo para TODOS os carnavais que têm essa música. O vídeo é
+   da música, não do ano: quem corrige o link no catálogo espera ver a correção
+   no carnaval em andamento, e quem cola o link num ano espera que os outros
+   anos mostrem o mesmo vídeo. Cada carnaval guarda a sua cópia (é o que faz a
+   tela do batuqueiro abrir sem precisar carregar o catálogo inteiro no celular),
+   então manter as cópias iguais é trabalho de quem escreve. */
+async function espalharVideoNasEdicoes(nome, video, { exceto } = {}) {
+  const chave = chaveMusica(nome);
+  if (!chave) return;
+  const link = (video || "").trim();
+  try {
+    for (const ed of edicoesCache) {
+      if (exceto && ed.id === exceto) continue;
+      const snap = await getDocs(P.musicas(ed.id));
+      for (const d of snap.docs) {
+        const dados = d.data();
+        if (chaveMusica(dados.nome) !== chave) continue;
+        if ((dados.video || "") === link) continue;
+        await updateDoc(P.musica(ed.id, d.id), { video: link });
+        // cache e rascunho da edição em contexto, para a tela não ficar velha
+        const naTela = (musicasCache || []).find(m => m.id === d.id);
+        if (naTela) naTela.video = link;
+        const noRascunho = (session.musicasDraft || []).find(m => m.id === d.id);
+        if (noRascunho) noRascunho.video = link;
+      }
+    }
+  } catch (err) {
+    console.warn("espalhar vídeo pelas edições:", err);
+  }
+}
+
 /* Guarda no catálogo o link do vídeo escolhido num carnaval, para a música
    chegar com o vídeo já ligado no carnaval seguinte. Selo de ano próprio
    (`anoVideo`), separado do de tom/cantor: trocar o tom em 2028 não pode
@@ -5514,7 +5545,7 @@ function viewAdminRepertorioHistorico() {
     <p><button class="link-btn" id="btn-back-admin9">← Voltar para o painel admin</button></p>
     <div class="card">
       <h2>Repertório histórico</h2>
-      <p class="card-sub">As músicas dos anos anteriores a este site, como estavam na planilha da bateria. Clique num ano para marcar ou desmarcar que a música tocou nele. Cada alteração grava na hora — não há botão de salvar. O número embaixo de cada ano é quantas músicas da tabela estão marcadas naquele ano. A coluna <b>Vídeo</b> é o link do arranjo no YouTube: fica guardado na música, não no carnaval, e por isso já vem preenchido quando ela entra no repertório de um ano novo.</p>
+      <p class="card-sub">As músicas dos anos anteriores a este site, como estavam na planilha da bateria. Clique num ano para marcar ou desmarcar que a música tocou nele. Cada alteração grava na hora — não há botão de salvar. O número embaixo de cada ano é quantas músicas da tabela estão marcadas naquele ano. A coluna <b>Vídeo</b> é o link do arranjo no YouTube: fica guardado na música, não no carnaval. Mexer nele aqui muda em todos os carnavais que têm essa música, inclusive o que está em andamento, e ela já entra com o vídeo quando for para o repertório de um ano novo.</p>
 
       <div class="filter-row">
         <div style="flex:1; min-width:240px;">
@@ -7100,6 +7131,9 @@ function wireEvents() {
       const ano = Math.max(new Date().getFullYear(), Number(musica.anoVideo) || 0);
       await updateDoc(P.musicaHistorica(id), { video: limpo, anoVideo: ano });
       atualizarMusicaHistorica(id, { video: limpo, anoVideo: ano });
+      // A música pode estar no repertório de um carnaval agora mesmo: corrigir
+      // aqui sem alcançar lá deixaria a bateria vendo o link errado.
+      await espalharVideoNasEdicoes(musica.nome, limpo);
       showToast(limpo ? "Vídeo ligado à música." : "Link do vídeo removido.");
     } catch (err) { alert(friendlyFirestoreError(err)); }
     render();
@@ -7614,6 +7648,8 @@ function wireEvents() {
       row.video = limpo;
       // Sobe para o catálogo do site: é o que faz o link estar lá no ano que vem.
       await registrarVideoNoCatalogo(row.nome, limpo, anoDaEdicao(edicaoCtx()));
+      // E alcança os outros carnavais que têm a mesma música.
+      await espalharVideoNasEdicoes(row.nome, limpo, { exceto: edicaoCtxId() });
       showToast(limpo ? "Vídeo ligado à música." : "Link do vídeo removido.");
     } catch (err) { alert(friendlyFirestoreError(err)); }
     render();

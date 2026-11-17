@@ -3341,6 +3341,26 @@ async function main() {
   ok('Apagar o link tira o vídeo da música', await page.evaluate(id =>
      (window.__mock.dumpStore().repertorioHistorico[id] || {}).video === '', idNoCatalogo));
 
+  // Correção feita no catálogo tem que chegar ao carnaval em andamento: a
+  // bateria olha o repertório do ano, não o catálogo. Ventania está no
+  // repertório de 2027 com um link colado lá atrás.
+  const idVentaniaCatalogo = await page.evaluate(() => {
+    const inp = [...document.querySelectorAll('.hist-nome-input')].find(i => i.value === 'Ventania');
+    return inp ? inp.dataset.histId : null;
+  });
+  ok('A música do carnaval também está no catálogo', !!idVentaniaCatalogo);
+  respostaPrompt = 'https://youtu.be/corrigido99';
+  await page.click(`[data-video-hist="${idVentaniaCatalogo}"]`);
+  await page.waitForTimeout(1500);
+  ok('Corrigir o link no catálogo corrige no repertório do carnaval', await page.evaluate(() => {
+    const musicas = window.__mock.dumpStore()['edicoes/2027-1/musicas'] || {};
+    const m = Object.values(musicas).find(x => x.nome === 'Ventania');
+    return !!m && m.video === 'https://youtu.be/corrigido99';
+  }));
+  ok('E o catálogo fica com o mesmo link, sem duas verdades', await page.evaluate(id =>
+     (window.__mock.dumpStore().repertorioHistorico[id] || {}).video === 'https://youtu.be/corrigido99',
+     idVentaniaCatalogo));
+
   // corrigir um nome errado — o caso que motivou a tela
   const idFestival = await page.evaluate(() => {
     const inp = [...document.querySelectorAll('.hist-nome-input')].find(i => i.value.includes('FESTIVAL 2029'));
