@@ -1890,6 +1890,42 @@ function faixaWikiBrega() {
     </div>`;
 }
 
+/* Faixa dos vídeos, logo abaixo da WikiBrega e pelo mesmo motivo: um link de
+   texto solto no meio da tela não é visto. Mostra qual foi o último vídeo que
+   entrou, que é a única novidade que essa tela tem de um dia para o outro. */
+function faixaVideos() {
+  const comVideo = linhasDoRepertorio(musicasPublicadas()).filter(l => l.video);
+  if (!comVideo.length) {
+    return `
+    <div class="faixa-wiki faixa-videos">
+      <div class="faixa-wiki-texto">
+        <span class="faixa-wiki-etiqueta">Vídeos dos arranjos</span>
+        <span>Nenhuma música deste carnaval tem vídeo ainda. Os dos carnavais anteriores continuam aqui.</span>
+      </div>
+      <button class="btn-secondary btn-sm" data-ir-videos="1">Ver os vídeos</button>
+    </div>`;
+  }
+  // Sem carimbo (vídeo colado antes desta versão do site) a música vai para o
+  // fim da fila em vez de disputar o posto de "último" com data inventada.
+  const recente = [...comVideo].sort((a, b) => dataDoCarimbo(b.videoEm) - dataDoCarimbo(a.videoEm))[0];
+  const mini = miniaturaDoVideo(recente.video);
+  const detalhe = [`Set ${recente.set} · ${recente.pos}ª`, recente.tom && `Tom ${recente.tom}`, recente.cantor]
+    .filter(Boolean).map(esc).join(" · ");
+  return `
+    <div class="faixa-wiki faixa-videos">
+      <a class="faixa-wiki-teaser" href="${esc(recente.video)}" target="_blank" rel="noopener noreferrer"
+         title="Abrir o vídeo de ${esc(recente.nome)} no YouTube">
+        <span class="faixa-video-thumb"${mini ? ` style="background-image:url('${esc(mini)}')"` : ""}><span class="video-play">&#9654;</span></span>
+        <span class="faixa-wiki-texto">
+          <span class="faixa-wiki-etiqueta">Vídeos dos arranjos · ${comVideo.length} ${comVideo.length === 1 ? "música" : "músicas"}</span>
+          <b>${esc(recente.nome)}</b>
+          <span class="faixa-wiki-trecho">${recente.videoEm ? "Último vídeo que entrou" : "Vídeo do arranjo"} · ${detalhe}</span>
+        </span>
+      </a>
+      <button class="btn-secondary btn-sm" data-ir-videos="1">Ver os vídeos</button>
+    </div>`;
+}
+
 function viewBatuqueiro() {
   const u = perfilMesclado();
   const ed = edicaoCtx();
@@ -1937,9 +1973,9 @@ function viewBatuqueiro() {
          bloco só é lida se estiver no caminho. -->
     ${faixaWikiBrega()}
 
-    <!-- A caixa do repertório só nasce quando já existe repertório; este atalho
+    <!-- A caixa do repertório só nasce quando já existe repertório; esta faixa
          não depende dela, senão no começo do ano ninguém chega aos vídeos. -->
-    <p class="nav-rapida"><button class="link-btn" data-ir-videos="1">Vídeos dos arranjos</button></p>
+    ${faixaVideos()}
 
     <div class="two-col">
       <!-- BOX 1: MEUS DADOS -->
@@ -2404,7 +2440,7 @@ function linhasDoRepertorio(lista) {
         tom: (m.tom || "").trim(), cantor: (m.cantor || "").trim(),
         ensaios: datas.map(e => e.id), datas: datas.map(ensaioLabel),
         nova: ehMusicaNova(m),
-        video: (m.video || "").trim(),
+        video: (m.video || "").trim(), videoEm: m.videoEm || null,
       });
     });
   });
@@ -4418,7 +4454,7 @@ async function espalharVideoNasEdicoes(nome, video, { exceto } = {}) {
         const dados = d.data();
         if (chaveMusica(dados.nome) !== chave) continue;
         if ((dados.video || "") === link) continue;
-        await updateDoc(P.musica(ed.id, d.id), { video: link });
+        await updateDoc(P.musica(ed.id, d.id), { video: link, videoEm: serverTimestamp() });
         // cache e rascunho da edição em contexto, para a tela não ficar velha
         const naTela = (musicasCache || []).find(m => m.id === d.id);
         if (naTela) naTela.video = link;
@@ -7348,7 +7384,8 @@ function wireEvents() {
       // da última vez que tocou essa música. Fica editável aqui, e a edição
       // volta para lá.
       const { tom, cantor, video } = dadosDoCatalogo(nome);
-      const ref = await addDoc(P.musicas(edicaoCtxId()), { nome, tom, cantor, video, rascunho: true, set: destino, ordem });
+      const carimbo = video ? { videoEm: serverTimestamp() } : {};
+      const ref = await addDoc(P.musicas(edicaoCtxId()), { nome, tom, cantor, video, ...carimbo, rascunho: true, set: destino, ordem });
       acrescentarAoDraft({ id: ref.id, nome, tom, cantor, video, rascunho: true, set: destino, ordem });
       showToast(`"${nome}" entrou no repertório.`);
     } catch (err) { alert(friendlyFirestoreError(err)); }
@@ -7780,7 +7817,9 @@ function wireEvents() {
       return;
     }
     try {
-      await updateDoc(P.musica(edicaoCtxId(), id), { video: limpo });
+      // Carimbo de quando o vídeo entrou: é o que a faixa da área do batuqueiro
+      // usa para dizer qual foi o último. Sem ele, "último" seria chute.
+      await updateDoc(P.musica(edicaoCtxId(), id), { video: limpo, videoEm: serverTimestamp() });
       row.video = limpo;
       // Sobe para o catálogo do site: é o que faz o link estar lá no ano que vem.
       await registrarVideoNoCatalogo(row.nome, limpo, anoDaEdicao(edicaoCtx()));

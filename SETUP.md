@@ -428,7 +428,9 @@ Apagar o link apaga em todos também — apagar é decisão, diferente de um cam
 
 **Painel admin → Repertório histórico** tem a coluna **Vídeo**, com o mesmo "+ link do vídeo" / "trocar". É por onde se mexe no link de uma música que não está no carnaval em andamento, e também o caminho mais curto para corrigir a de uma que está.
 
-**A tela de Vídeos.** Na área do batuqueiro há o botão **Vídeos** (na caixa do Repertório, e também como atalho no alto da página, que funciona mesmo antes de o repertório do ano estar montado). Ela reúne só as músicas que têm vídeo, em cartões grandes com a miniatura, o set e a posição, o tom e o cantor(a) — toque no cartão e o YouTube abre em outra aba. Tem busca por nome e um link para **mostrar também as músicas de outros carnavais que têm vídeo**, que só então carrega o catálogo (é leitura grande para quem abriu a tela atrás do repertório do ano).
+**A tela de Vídeos.** Na área do batuqueiro, logo abaixo da faixa da WikiBrega, há a **faixa dos vídeos**: ela mostra qual foi o **último vídeo que entrou** (miniatura, nome da música, set e posição, tom e cantor), leva ao vídeo em um toque e tem o botão **Ver os vídeos**, que abre a lista. A mesma lista também abre pelo botão **Vídeos** na caixa do Repertório. A faixa não depende do repertório estar montado — é em janeiro, antes do repertório novo, que a pessoa quer rever os vídeos do ano passado.
+
+Para saber qual foi o último, o site carimba a hora em que o link entrou (`videoEm`). Vídeo colado antes desta atualização não tem carimbo: ele aparece na lista normalmente, só não disputa o posto de "último" com data inventada. Ela reúne só as músicas que têm vídeo, em cartões grandes com a miniatura, o set e a posição, o tom e o cantor(a) — toque no cartão e o YouTube abre em outra aba. Tem busca por nome e um link para **mostrar também as músicas de outros carnavais que têm vídeo**, que só então carrega o catálogo (é leitura grande para quem abriu a tela atrás do repertório do ano).
 
 No alto da tela, fixo e inteiro, está o aviso da regência:
 

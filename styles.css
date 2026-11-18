@@ -435,7 +435,18 @@ td.cel-video a:hover { text-decoration: underline; }
 td.cel-video .link-btn { font-size: 12px; }
 td.cel-video a + .link-btn { margin-left: 8px; }
 td.cel-video .sem-video { color: var(--muted); }
-.nav-rapida { margin: 0 0 14px; }
+/* Faixa dos vídeos: mesma forma da WikiBrega, cor do vídeo em vez da cor do
+   bloco, para as duas não virarem a mesma mancha na tela. */
+.faixa-videos { background: linear-gradient(90deg, color-mix(in srgb, var(--video) 12%, transparent), color-mix(in srgb, var(--video) 3%, transparent)); }
+.faixa-videos .faixa-wiki-etiqueta { color: var(--video); }
+/* O teaser é um <a> (abre o YouTube), e o sublinhado padrão de link riscaria a
+   faixa inteira. Sublinha só o nome da música, no hover, como na WikiBrega. */
+.faixa-videos a.faixa-wiki-teaser { text-decoration: none; color: var(--text-primary); }
+.faixa-videos a.faixa-wiki-teaser:hover b { text-decoration: underline; }
+.faixa-video-thumb {
+  position: relative; flex: none; width: 96px; height: 62px; border-radius: 10px;
+  background: #111 center/cover; display: flex; align-items: center; justify-content: center;
+}
 /* ---------- tela de vídeos ---------- */
 /* Aviso da regência: alto contraste e no alto da tela, porque a pessoa pode
    sair daqui achando que o vídeo é a forma definitiva. */

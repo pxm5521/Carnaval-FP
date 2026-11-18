@@ -2687,6 +2687,66 @@ async function main() {
   ok('O link do vídeo não usa a cor de alerta do site',
      rgbVideo.length >= 3 && Number(rgbVideo[2]) > Number(rgbVideo[0]));
 
+  // ---- faixa dos vídeos na área do batuqueiro ----
+  // Link de texto solto no meio da tela não é visto; a faixa mostra qual foi o
+  // último vídeo que entrou, que é a novidade que essa tela tem de um dia para
+  // o outro.
+  const faixa = () => page.evaluate(() => {
+    const el = document.querySelector('.faixa-videos');
+    if (!el) return null;
+    const a = el.querySelector('a');
+    const thumb = el.querySelector('.faixa-video-thumb');
+    return {
+      texto: el.textContent.trim(),
+      href: a ? a.getAttribute('href') : null,
+      alvo: a ? a.getAttribute('target') : null,
+      miniatura: thumb ? (thumb.getAttribute('style') || '') : '',
+      temBotao: !!el.querySelector('[data-ir-videos]'),
+    };
+  });
+  const faixaVideo = (await faixa()) || { texto: '', href: null, alvo: null, miniatura: '', temBotao: false, vazia: true };
+  ok('A área do batuqueiro ganha uma faixa de vídeos, não um link solto', !faixaVideo.vazia);
+  ok('Dizendo qual foi o último vídeo que entrou',
+     faixaVideo.texto.includes('Ventania') && faixaVideo.texto.includes('Último vídeo que entrou'));
+  ok('Com a miniatura do vídeo', faixaVideo.miniatura.includes('i.ytimg.com'));
+  ok('Clicar na faixa abre o vídeo em outra aba',
+     faixaVideo.href === 'https://youtu.be/abc123XYZ' && faixaVideo.alvo === '_blank');
+  ok('E o botão da faixa leva para a lista', faixaVideo.temBotao);
+
+  // a faixa tem que acompanhar o vídeo mais novo, não o primeiro da lista
+  await page.click('#btn-goto-admin');
+  await page.waitForTimeout(300);
+  await page.click('#btn-goto-musicas');
+  await page.waitForTimeout(1200);
+  const idSegundaMusica = await page.evaluate(() => {
+    const inp = [...document.querySelectorAll('.musica-name-input')].find(i => i.value !== 'Ventania');
+    return inp ? { id: inp.dataset.musicaId, nome: inp.value } : null;
+  });
+  respostaPrompt = 'https://youtu.be/novo55555';
+  await page.click(`[data-video-musica="${idSegundaMusica.id}"]`);
+  await page.waitForTimeout(1200);
+  await page.click('#btn-back-admin6');
+  await page.waitForTimeout(300);
+  await page.click('#btn-back-batuqueiro');
+  await page.waitForTimeout(1200);
+  const faixaDepois = (await faixa()) || { texto: '', href: null };
+  ok('Vídeo colado depois passa a ser o da faixa',
+     faixaDepois.texto.includes(idSegundaMusica.nome) && faixaDepois.href === 'https://youtu.be/novo55555');
+  // desfaz, para o resto da suíte continuar com um vídeo só
+  await page.click('#btn-goto-admin');
+  await page.waitForTimeout(300);
+  await page.click('#btn-goto-musicas');
+  await page.waitForTimeout(1200);
+  respostaPrompt = '';
+  await page.click(`[data-video-musica="${idSegundaMusica.id}"]`);
+  await page.waitForTimeout(1200);
+  await page.click('#btn-back-admin6');
+  await page.waitForTimeout(300);
+  await page.click('#btn-back-batuqueiro');
+  await page.waitForTimeout(1200);
+  ok('Tirado o link, a faixa volta para o vídeo anterior',
+     ((await faixa()) || {}).href === 'https://youtu.be/abc123XYZ');
+
   // ---- tela de vídeos ----
   // A lista de vídeos é usada noutra hora que não a do repertório: a pessoa
   // senta para estudar o arranjo e não quer caçar as azuis entre 40 linhas.
