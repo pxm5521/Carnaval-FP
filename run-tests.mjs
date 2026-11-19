@@ -3229,6 +3229,20 @@ async function main() {
   ok('Posição de 2027 (Surdo 1) vem pré-selecionada', posicaoPreSelecionada === 'Surdo 1');
   const camisaPre = await page.locator('#insc-radio-camisa .radio-pill.active').getAttribute('data-val');
   ok('Camisa de 2027 (M) vem pré-selecionada', camisaPre === 'M');
+  // A bateria não cabe em cinco tamanhos: os maiores entram depois do XGG, na
+  // ordem em que crescem, porque é essa ordem que a encomenda de camisas usa.
+  const tamanhos = await page.evaluate(() =>
+    [...document.querySelectorAll('#insc-radio-camisa .radio-pill')].map(p => p.dataset.val));
+  ok('A inscrição oferece os tamanhos maiores além do XGG',
+     ['G1', 'G2', 'G3', 'G4'].every(t => tamanhos.includes(t)));
+  ok('Na ordem do menor para o maior, não em ordem alfabética',
+     tamanhos.join(',') === 'P,M,G,GG,XGG,G1,G2,G3,G4');
+  await page.click('#insc-radio-camisa .radio-pill[data-val="G3"]');
+  await page.waitForTimeout(200);
+  ok('Dá para escolher um dos tamanhos novos',
+     (await page.locator('#insc-radio-camisa .radio-pill.active').getAttribute('data-val')) === 'G3');
+  await page.click('#insc-radio-camisa .radio-pill[data-val="M"]');
+  await page.waitForTimeout(200);
 
   // Regressão: o formulário de inscrição não pode perder o que já foi escolhido se
   // a tela for redesenhada no meio (dados chegando em tempo real de outra pessoa).
@@ -3925,6 +3939,130 @@ async function main() {
   ok('Limpar o filtro traz todo mundo de volta', (await page.locator('#hist-pessoas-tbody tr[data-hist-nome]:visible').count()) === 4);
   await page.click('#btn-back-admin8');
   await page.waitForTimeout(200);
+  await logout(page);
+
+  console.log('\n== 26e. Acesso ao site, mês a mês ==');
+  // A organização publica aviso no site e não sabe se chegou. Esta tela conta
+  // quantas pessoas da bateria entraram em cada mês — e, o que importa mais,
+  // quem não entrou. Um acesso por pessoa por dia: abrir cinco vezes no mesmo
+  // dia é um dia de uso, não cinco acessos.
+  const mesDeHoje = await page.evaluate(() => {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+  });
+  const diaDeHoje = await page.evaluate(() => {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  });
+  const registros = () => page.evaluate(mes =>
+    window.__mock.dumpStore()[`metricas/${mes}/acessos`] || {}, mesDeHoje);
+
+  await login(page, 'ana@example.com');
+  await page.waitForTimeout(900);
+  const acessosDaAna = await page.evaluate(([mes, email]) => {
+    const uid = window.__mock.uidPorEmail(email);
+    const reg = (window.__mock.dumpStore()[`metricas/${mes}/acessos`] || {})[uid];
+    return reg ? { dias: reg.dias, temUltimo: !!reg.ultimo } : null;
+  }, [mesDeHoje, 'ana@example.com']);
+  ok('Entrar no site grava o acesso da pessoa no mês', !!acessosDaAna);
+  ok('Com o dia de hoje', !!acessosDaAna && acessosDaAna.dias.includes(diaDeHoje));
+  ok('E a hora do último acesso', !!acessosDaAna && acessosDaAna.temUltimo);
+  ok('O registro guarda o dia, não cada abertura de tela',
+     !!acessosDaAna && acessosDaAna.dias.length === 1);
+
+  // sair e entrar de novo no mesmo dia não vira dois dias de uso
+  await logout(page);
+  await login(page, 'ana@example.com');
+  await page.waitForTimeout(900);
+  const depoisDeVoltar = await page.evaluate(([mes, email]) => {
+    const uid = window.__mock.uidPorEmail(email);
+    const reg = (window.__mock.dumpStore()[`metricas/${mes}/acessos`] || {})[uid];
+    return reg ? reg.dias.length : 0;
+  }, [mesDeHoje, 'ana@example.com']);
+  ok('Entrar de novo no mesmo dia continua contando um dia só', depoisDeVoltar === 1);
+
+  await logout(page);
+
+  // quem não é da organização não lê o acesso de ninguém (Ana virou admin no
+  // meio da suíte; Carla é batuqueira comum, que é o caso a testar)
+  await login(page, 'carla@example.com');
+  await page.waitForTimeout(900);
+  const leituraNegada = await page.evaluate(async mes => {
+    const fb = await import('./firebase-init.mock.js');
+    try {
+      await fb.getDocs(fb.collection(fb.db, 'metricas', mes, 'acessos'));
+      return false;
+    } catch { return true; }
+  }, mesDeHoje);
+  ok('Batuqueiro comum não consegue ler quem entrou no site', leituraNegada);
+  await logout(page);
+
+  await login(page, 'bruno@example.com');
+  await page.waitForTimeout(900);
+  await page.click('#btn-goto-admin');
+  await page.waitForTimeout(400);
+  ok('O painel admin tem a tela de acessos', !!(await page.$('#btn-goto-acessos')));
+  await page.click('#btn-goto-acessos');
+  await page.waitForTimeout(1500);
+  let htmlAcessos = await appHtml(page);
+  const quantosRegistros = Object.keys(await registros()).length;
+  ok('A tela abre no mês corrente', htmlAcessos.includes('Acesso ao site'));
+  ok('Mostrando quantas pessoas entraram', await page.evaluate(n => {
+    const tiles = [...document.querySelectorAll('.stat-tile')];
+    const t = tiles.find(x => x.textContent.includes('Pessoas que entraram'));
+    return !!t && t.querySelector('.value').textContent.trim() === String(n);
+  }, quantosRegistros));
+  const linhasAcesso = await page.evaluate(() =>
+    [...document.querySelectorAll('#acessos-tbody tr')].map(tr => tr.textContent.trim()));
+  ok('E a lista de quem entrou, com nome e não com código do banco',
+     linhasAcesso.some(l => l.includes('Ana')) && !linhasAcesso.some(l => /uid-/.test(l)));
+  // Com todo mundo tendo entrado durante a suíte, a lista de ausentes fica
+  // vazia — e é ela a parte útil da tela. Tiro o registro de um inscrito para
+  // conferir que ele aparece como quem não entrou.
+  const semRegistro = await page.evaluate(async ([mes, eid]) => {
+    const fb = await import('./firebase-init.mock.js');
+    const store = window.__mock.dumpStore();
+    const inscritos = Object.keys(store[`edicoes/${eid}/inscricoes`] || {});
+    const acessos = store[`metricas/${mes}/acessos`] || {};
+    const uid = inscritos.find(x => acessos[x]);
+    if (!uid) return null;
+    await fb.deleteDoc(fb.doc(fb.db, 'metricas', mes, 'acessos', uid));
+    const p = store.pessoas[uid] || {};
+    return `${p.nome || ''} ${p.sobrenome || ''}`.trim();
+  }, [mesDeHoje, '2028-1']);
+  ok('Há um inscrito para conferir a lista de quem não entrou', !!semRegistro);
+
+  // mês anterior ao início da contagem aparece vazio, com explicação
+  const mesAnterior = await page.evaluate(() => {
+    const d = new Date(); d.setMonth(d.getMonth() - 1);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+  });
+  await page.selectOption('#acessos-mes', mesAnterior);
+  await page.waitForTimeout(1200);
+  htmlAcessos = await appHtml(page);
+  ok('Mês sem registro não mente: explica que a contagem começou depois',
+     htmlAcessos.includes('Nenhum acesso registrado em') && htmlAcessos.includes('contagem começou'));
+  ok('E o seletor continua marcando o mês escolhido',
+     (await page.locator('#acessos-mes').inputValue()) === mesAnterior);
+  await page.selectOption('#acessos-mes', mesDeHoje);
+  await page.waitForTimeout(1200);
+  htmlAcessos = await appHtml(page);
+  ok('A tela separa quem está inscrito e não entrou no site no mês',
+     htmlAcessos.includes('Não entraram no site em'));
+  const ausentes = await page.evaluate(() =>
+    [...document.querySelectorAll('#acessos-ausentes-tbody tr')].map(tr => tr.textContent.trim()));
+  ok('Com o nome de quem faltou', ausentes.some(l => l.includes(semRegistro)));
+  const entraram = await page.evaluate(() =>
+    [...document.querySelectorAll('#acessos-tbody tr')].map(tr => tr.textContent.trim()));
+  ok('E quem entrou não aparece nas duas listas',
+     !entraram.some(l => l.includes(semRegistro)));
+
+  // o rodapé precisa avisar a bateria de que esse registro existe
+  ok('O aviso de privacidade conta que o site anota os dias de acesso',
+     (await page.evaluate(() => document.querySelector('.rodape').textContent))
+       .includes('anota em que dias você entrou'));
+  await page.click('#btn-back-admin10');
+  await page.waitForTimeout(300);
   await logout(page);
 
   console.log('\n== 27. Edição encerrada vira histórico só-leitura, até para o admin ==');

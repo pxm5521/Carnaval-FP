@@ -39,7 +39,7 @@ O cadastro não exige confirmação por e-mail — assim que a pessoa cria o log
 
 ### 1.3 — Publicar as regras de segurança
 
-O arquivo `firestore.rules` (incluído neste pacote) já contém as regras corretas: qualquer pessoa logada pode ver a lista de batuqueiros e a presença de todos, mas só quem tem permissão marca presença; celular, data de nascimento, os pagamentos individuais e o financeiro de cada carnaval (valor pago, forma de pagamento e isenção) só o dono e a organização leem; só o dono de um cadastro (ou um admin) pode editá-lo; e só admins mexem em edições, posições, ensaios, músicas, preços ou concedem acessos. Uma edição encerrada fica travada até para o admin.
+O arquivo `firestore.rules` (incluído neste pacote) já contém as regras corretas: qualquer pessoa logada pode ver a lista de batuqueiros e a presença de todos, mas só quem tem permissão marca presença; celular, data de nascimento, os pagamentos individuais e o financeiro de cada carnaval (valor pago, forma de pagamento e isenção) só o dono e a organização leem; só o dono de um cadastro (ou um admin) pode editá-lo; e só admins mexem em edições, posições, ensaios, músicas, preços ou concedem acessos; cada pessoa grava o próprio registro de acesso ao site, que só a organização lê. Uma edição encerrada fica travada até para o admin.
 
 > **Sempre que este arquivo mudar numa atualização do site, republique as regras.** É um passo separado de subir o código no GitHub — se esquecer, o site publica normalmente mas algumas ações passam a dar erro de permissão.
 
@@ -493,6 +493,18 @@ A **própria pessoa** remove: na área dela, cada lançamento tem um botão **Re
 **Por que às vezes aparece "Carregando..." por um instante ao entrar?** Porque o site espera os dados chegarem antes de decidir o que mostrar. Parece um detalhe, mas é proteção: antes ele afirmava "você ainda não confirmou a inscrição" enquanto as inscrições ainda estavam a caminho, e quem já tinha respondido via a tela de confirmação piscar por cerca de um segundo a cada login. Quem clicasse ali naquele instante reescrevia a própria inscrição por cima — zerando forma de pagamento e valor já pago. Hoje isso não acontece por dois motivos: a tela só aparece depois que os dados chegaram e, mesmo que aparecesse, confirmar a inscrição de quem já está inscrito só atualiza posição, camisa e "vai tocar", sem tocar em dinheiro.
 
 **Mudei a data de um ensaio. Preciso avisar alguém?** Não. A data grava sozinha assim que você troca, e a tabela de presença dos batuqueiros muda na mesma hora, sem ninguém precisar recarregar o site. Não existe botão de salvar nessa tela — se existisse, seria fácil trocar a data, ver o campo com a data nova e sair achando que salvou.
+
+**Como vejo quantas pessoas usam o site?** Painel admin → **Acesso ao site**. A tela mostra, mês a mês: quantas pessoas entraram, quantos dias de uso somados, que porcentagem da bateria inscrita isso representa, a lista de quem entrou (com o último acesso) e — a parte que decide alguma coisa — **quem está inscrito neste carnaval e não entrou no mês**. Essas são as pessoas que precisam ser avisadas no ensaio ou no grupo, porque o aviso publicado no site não chegou nelas.
+
+Três coisas a saber antes de confiar no número:
+
+- **Um acesso por pessoa por dia.** Abrir o site cinco vezes no mesmo dia conta um. O número mede dias de uso, não cliques — contar cada abertura faria campeão de acesso quem deixa a aba aberta no celular.
+- **A contagem começa quando esta versão entra no ar.** O Firebase guarda só o último login de cada pessoa, sem histórico, então não há como reconstruir os meses anteriores. Mês anterior a isso aparece vazio, e a tela diz por quê.
+- **Isso é registro de pessoa, e está no aviso de privacidade do rodapé** ("Uso do site"), que toda a bateria lê. A organização passa a ver quem entrou e quando; não vê o que a pessoa fez dentro do site. Se preferir não ter esse registro, apague a chamada `registrarAcesso(user.uid)` no `app.js` — o resto do site funciona igual, e a tela passa a mostrar sempre zero.
+
+Onde fica no banco: `/metricas/{aaaa-mm}/acessos/{uid}`, um documento por pessoa por mês, com a lista de dias e a hora do último acesso. Cada pessoa só escreve o próprio registro; ler é só da organização; e o site não apaga nada — para limpar meses antigos, Firebase Console → Firestore → `metricas`.
+
+**Como mudo os tamanhos de camisa?** A lista é a constante `CAMISAS`, na primeira tela do `app.js`: hoje `P, M, G, GG, XGG, G1, G2, G3, G4`. Tamanho acrescentado ali aparece sozinho no cadastro, na inscrição, na edição pelo painel e na encomenda de camisas. A ordem da lista é a ordem usada na encomenda, então escreva do menor para o maior — em ordem alfabética, GG viria antes de P. Tirar um tamanho da lista não apaga quem já o escolheu: a pessoa continua com ele até trocar, e o painel mostra o valor antigo como "Sem tamanho informado" no seletor, então prefira acrescentar a remover.
 
 **Quem respondeu que NÃO vai tocar aparece onde?** Num bloco próprio na tela de **Cadastros**, chamado "Não vão tocar no [carnaval]". Essas pessoas ficam de fora de tudo que é operacional daquele carnaval: não aparecem na tabela de presença dos ensaios, não entram na contagem por naipe nem na encomenda de camisas, e não são cobradas (a regra da bateria é que quem não desfila é isento). O cadastro, o histórico e os pagamentos delas continuam intactos, e no carnaval seguinte a inscrição aparece normalmente — inclusive pré-preenchida com os dados do ano anterior.
 

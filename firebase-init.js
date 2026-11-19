@@ -31,6 +31,7 @@ import {
   where,
   writeBatch,
   increment,
+  arrayUnion,
   serverTimestamp,
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 // Storage entra só por causa da WikiBrega (fotos e áudios dos verbetes). Ele
@@ -77,6 +78,7 @@ export {
   where,
   writeBatch,
   increment,
+  arrayUnion,
   serverTimestamp,
   storageRef,
   uploadBytes,

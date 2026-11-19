@@ -247,6 +247,27 @@ service cloud.firestore {
       allow write: if isAdmin();
     }
 
+    // ---------- acesso ao site, mês a mês ----------
+    // Cada pessoa grava o PRÓPRIO registro ao entrar; ler é só da organização.
+    // A lista de campos é barreira, não organização: sem ela, qualquer pessoa
+    // logada poderia escrever o que quisesse num documento que o painel exibe.
+    // Nada aqui é apagável pelo site — mês antigo some pelo Console, quando a
+    // organização decidir, e não por um clique de quem está sendo contado.
+    match /metricas/{mes} {
+      allow read: if isAdmin();
+      allow write: if false;
+
+      match /acessos/{uid} {
+        allow read: if isAdmin();
+        allow create, update: if isSignedIn()
+          && request.auth.uid == uid
+          && request.resource.data.keys().hasOnly(['dias', 'ultimo'])
+          && request.resource.data.dias is list
+          && request.resource.data.dias.size() <= 31;
+        allow delete: if false;
+      }
+    }
+
     // ---------- edições do carnaval ----------
     match /edicoes/{eid} {
       allow read: if isSignedIn();

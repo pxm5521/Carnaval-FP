@@ -3,14 +3,19 @@ import {
   createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut,
   onAuthStateChanged, sendPasswordResetEmail,
   collection, doc, setDoc, updateDoc, deleteDoc, addDoc, getDoc, getDocs,
-  onSnapshot, query, where, writeBatch, increment, serverTimestamp,
+  onSnapshot, query, where, writeBatch, increment, arrayUnion, serverTimestamp,
   storageRef, uploadBytes, getDownloadURL, deleteObject,
 } from './firebase-init.js';
 
 /* ============================================================
    CONSTANTES
    ============================================================ */
-const CAMISAS = ["P", "M", "G", "GG", "XGG"];
+/* Tamanhos de camisa, na ordem em que a bateria pensa neles — do menor para o
+   maior. A ordem importa: é ela que a encomenda de camisas usa para listar os
+   tamanhos (alfabética poria GG antes de P). Tamanho novo entra aqui e aparece
+   sozinho no cadastro, na inscrição, na edição do admin e na encomenda; quem já
+   escolheu um tamanho antigo continua com ele até trocar. */
+const CAMISAS = ["P", "M", "G", "GG", "XGG", "G1", "G2", "G3", "G4"];
 const PLANOS = {
   avista:    { label: "À vista", parcelas: 1 },
   duasVezes: { label: "2x",      parcelas: 2 },
@@ -119,6 +124,14 @@ const P = {
   pagamentos: (eid)       => collection(db, "edicoes", eid, "pagamentos"),
   presencas:  (eid)       => collection(db, "edicoes", eid, "presencas"),
   presenca:   (eid, id)   => doc(db, "edicoes", eid, "presencas", id),
+  // Quem entrou no site e em que dias, um documento por pessoa por mês. Fica
+  // FORA das edições porque não é dado de carnaval: é uso do site, e a conta
+  // de novembro não muda quando o carnaval em contexto muda. Um documento por
+  // pessoa (e não um só por mês, com todo mundo dentro) por dois motivos: a
+  // regra do Firestore consegue dizer "cada um escreve o seu", e 90 pessoas
+  // entrando na mesma noite de ensaio não disputam a escrita do mesmo papel.
+  acessos:    (mes)       => collection(db, "metricas", mes, "acessos"),
+  acesso:     (mes, uid)  => doc(db, "metricas", mes, "acessos", uid),
 };
 
 /* ============================================================
@@ -222,6 +235,9 @@ const session = {
   wikiFotoAberta: null,       // { verbeteId, midiaId } da foto aberta em tela cheia
   videosBusca: "",
   videosTodos: false,         // na tela de vídeos, mostrar também outros carnavais
+  acessosMes: null,           // "aaaa-mm" escolhido na tela de acessos
+  acessos: null,              // { mes, linhas } carregado sob demanda
+  acessosBusy: false,
   historico: null,            // carregado sob demanda em "Meu histórico"
   historicoBusy: false,
   histGeral: null,            // carregado sob demanda no "Histórico geral" do admin
@@ -433,6 +449,7 @@ onAuthStateChanged(auth, (user) => {
     return;
   }
   setupUserListeners(user.uid);
+  registrarAcesso(user.uid);
   render();
 });
 
@@ -555,6 +572,9 @@ function limparEstadoDeSessao() {
     historicoBusy: false,
     videosBusca: "",
     videosTodos: false,
+    acessosMes: null,
+    acessos: null,
+    acessosBusy: false,
     histGeral: null,
     histGeralBusy: false,
     histFiltro: "",
@@ -915,6 +935,42 @@ const hojeISO = () => {
   const dd = String(d.getDate()).padStart(2, "0");
   return `${d.getFullYear()}-${mm}-${dd}`;
 };
+const mesDoDia = iso => String(iso || "").slice(0, 7);
+const mesAtual = () => mesDoDia(hojeISO());
+/* Nome do mês em português, para o seletor e o título: "novembro de 2026". */
+function mesPorExtenso(mes) {
+  const [ano, mm] = String(mes || "").split("-");
+  const nomes = ["janeiro", "fevereiro", "março", "abril", "maio", "junho",
+                 "julho", "agosto", "setembro", "outubro", "novembro", "dezembro"];
+  const nome = nomes[Number(mm) - 1];
+  return nome ? `${nome} de ${ano}` : mes;
+}
+
+/* Registro de acesso ao site. Um por pessoa por dia: abrir o site cinco vezes
+   no mesmo dia continua sendo um dia de uso, que é o que mede hábito — contar
+   cada abertura transformaria quem deixa a aba aberta no campeão de acessos.
+   A gravação é silenciosa e nunca derruba a tela: se falhar, a pessoa usa o
+   site do mesmo jeito e o mês fica com um registro a menos.
+   Está no aviso de privacidade do rodapé, de propósito: a organização passa a
+   ver quem entrou e quando, e isso não pode ser surpresa para a bateria. */
+async function registrarAcesso(uid) {
+  if (!uid) return;
+  const dia = hojeISO();
+  const chave = `fp-acesso-${uid}-${dia}`;
+  // Marca no próprio aparelho para não gravar a cada tela aberta no mesmo dia.
+  // localStorage pode estar bloqueado (aba anônima, navegador travado): nesse
+  // caso grava de novo, e o arrayUnion faz a gravação repetida não duplicar nada.
+  try { if (localStorage.getItem(chave)) return; } catch { /* sem localStorage */ }
+  try {
+    await setDoc(P.acesso(mesDoDia(dia), uid), {
+      dias: arrayUnion(dia), ultimo: serverTimestamp(),
+    }, { merge: true });
+    try { localStorage.setItem(chave, "1"); } catch { /* idem */ }
+  } catch (err) {
+    console.warn("registro de acesso:", err);
+  }
+}
+
 const ensaioLabel = e => dateBR(e.data);
 /* Data de nascimento válida é só o formato aaaa-mm-dd. Vale para tudo que vem
    do banco: o formato antigo guardava "10/05/1990" em alguns cadastros, e essa
@@ -1259,7 +1315,7 @@ function go(view, extra = {}) {
 /* ============================================================
    RENDER — roteador principal
    ============================================================ */
-const VIEWS_ADMIN = ["admin", "admin-edicoes", "admin-historico", "admin-precos", "admin-ensaios", "admin-relatorio", "admin-posicoes", "admin-musicas", "admin-pessoas", "admin-repertorio-historico"];
+const VIEWS_ADMIN = ["admin", "admin-edicoes", "admin-historico", "admin-precos", "admin-ensaios", "admin-relatorio", "admin-posicoes", "admin-musicas", "admin-pessoas", "admin-repertorio-historico", "admin-acessos"];
 
 /* ============================================================
    REDESENHO POR DADOS QUE CHEGAM DE FORA
@@ -1414,6 +1470,7 @@ function render() {
       else if (session.view === "admin-posicoes") html = viewAdminPosicoes();
       else if (session.view === "admin-musicas") html = viewAdminMusicas();
       else if (session.view === "admin-repertorio-historico") html = viewAdminRepertorioHistorico();
+      else if (session.view === "admin-acessos") html = viewAdminAcessos();
       else if (session.view === "admin-pessoas") html = viewAdminPessoas();
       // Estas duas esperas existem para NÃO afirmar coisa errada enquanto os
       // dados ainda estão chegando. Sem elas, quem já respondeu tudo via, por
@@ -1449,6 +1506,7 @@ function rodape() {
       <p><b>Para que serve:</b> só para organizar a bateria — montar os naipes, encomendar camisas, controlar a anuidade e acompanhar os ensaios. Nada é usado para outra finalidade, vendido ou enviado para fora do bloco.</p>
       <p><b>Quem enxerga o quê:</b> quem tem cadastro no site vê o nome, o apelido, a posição e a presença dos outros nos ensaios — é o que faz a lista de ensaio funcionar. Seu <b>celular e sua data de nascimento</b> só são vistos por você e pela organização. Seus <b>pagamentos</b> (valor, data e o nome de quem pagou) são vistos por você e pela organização, que precisa conferir cada Pix no extrato do bloco — nenhum outro batuqueiro vê.</p>
       <p><b>WikiBrega:</b> o que você escrever no verbete, comentar na conversa, fotografar ou gravar lá é visto por toda a bateria e fica assinado com o seu nome; o texto do verbete guarda as versões anteriores. Foto em que você aparece e não quer que fique: peça a remoção a quem subiu ou à organização, que tira.</p>
+      <p><b>Uso do site:</b> o site anota em que dias você entrou, para a organização saber quantas pessoas da bateria estão acompanhando os avisos publicados aqui. É o dia, não o que você fez dentro do site, e só a organização vê.</p>
       <p><b>Seus direitos:</b> você pode ver e corrigir seus dados a qualquer momento em "Meus dados", e pode pedir a exclusão do seu cadastro falando com a organização do bloco. Os dados ficam guardados enquanto você fizer parte da bateria.</p>
       <p class="rodape-fim">Carnaval do Fogo e Paixão · site de uso interno da bateria</p>
       </div>
@@ -4205,6 +4263,13 @@ function viewAdmin() {
 
     <div class="card">
       <div class="card-head">
+        <div><h2>Acesso ao site</h2><p class="card-sub" style="margin-bottom:0">Quantas pessoas da bateria entraram no site em cada mês, e quem não entrou</p></div>
+        <button class="btn-secondary btn-sm" id="btn-goto-acessos">Ver acessos por mês</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-head">
         <div><h2>Relatório geral de pagamentos</h2><p class="card-sub" style="margin-bottom:0">Quantas pessoas em cada status</p></div>
         <button class="btn-secondary btn-sm" id="btn-goto-relatorio">Ver relatório completo</button>
       </div>
@@ -5673,6 +5738,135 @@ function viewAdminMusicas() {
    correções pontuais de um registro que quase nunca muda; um botão de "salvar
    tudo" só criaria a chance de sair da tela e perder a correção.
    ============================================================ */
+/* ------------------------------------------------------------
+   Acesso ao site, mês a mês
+   ------------------------------------------------------------
+   Pergunta que o painel passou a responder: quantas pessoas da bateria usam o
+   site e com que frequência. Serve para saber se um aviso publicado aqui foi
+   visto — e para parar de supor que "todo mundo viu no site".
+
+   A contagem começa no dia em que isto entrou no ar: o Firebase guarda só o
+   último login de cada pessoa, sem histórico, então não há como reconstruir
+   mês passado. ------------------------------------------------------------ */
+/* Últimos doze meses, do mais recente para o mais antigo. Lista fixa em vez de
+   descoberta no banco: um índice de meses seria mais um documento para manter
+   em dia, e doze opções cobrem o ano inteiro do bloco. */
+function mesesParaAcesso() {
+  const out = [];
+  const d = new Date();
+  for (let i = 0; i < 12; i++) {
+    out.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`);
+    d.setMonth(d.getMonth() - 1);
+  }
+  return out;
+}
+
+async function carregarAcessos(mes) {
+  if (!fbUser || session.acessosBusy) return;
+  const uid = fbUser.uid;
+  session.acessosBusy = true;
+  session.acessosMes = mes;
+  render();
+  try {
+    const snap = await getDocs(P.acessos(mes));
+    const linhas = snap.docs.map(d => {
+      const dados = d.data() || {};
+      const dias = [...new Set((dados.dias || []).map(String))].sort();
+      return { uid: d.id, dias, ultimo: dados.ultimo || null };
+    });
+    if (fbUser && fbUser.uid === uid) session.acessos = { mes, linhas };
+  } catch (err) {
+    console.error("acessos", err);
+    if (fbUser && fbUser.uid === uid) {
+      session.acessos = { mes, linhas: [], falhou: true };
+      showToast("Não foi possível carregar os acessos: " + friendlyFirestoreError(err));
+    }
+  }
+  if (fbUser && fbUser.uid === uid) { session.acessosBusy = false; render(); }
+}
+
+function viewAdminAcessos() {
+  const u = perfilMesclado();
+  const mes = session.acessosMes || mesAtual();
+  const carregado = session.acessos && session.acessos.mes === mes ? session.acessos : null;
+  if (!carregado && !session.acessosBusy) carregarAcessos(mes);
+
+  const linhas = (carregado ? carregado.linhas : [])
+    .map(l => ({ ...l, nome: nomeDeUid(l.uid) }))
+    .sort((a, b) => b.dias.length - a.dias.length || a.nome.localeCompare(b.nome, "pt-BR", { sensitivity: "base" }));
+  const pessoas = linhas.length;
+  const acessos = linhas.reduce((t, l) => t + l.dias.length, 0);
+
+  // Quem está inscrito neste carnaval e não apareceu no mês. É a informação que
+  // faz a tela valer: saber que o aviso não chegou em dez pessoas é mais útil
+  // que saber que chegou em oitenta.
+  const comAcesso = new Set(linhas.map(l => l.uid));
+  const inscritos = batuqueirosDaEdicao();
+  const semAcesso = inscritos.filter(p => !comAcesso.has(p.id))
+    .sort((a, b) => fullName(a).localeCompare(fullName(b), "pt-BR", { sensitivity: "base" }));
+  const proporcao = inscritos.length
+    ? Math.round((inscritos.filter(p => comAcesso.has(p.id)).length / inscritos.length) * 100)
+    : 0;
+
+  return `
+  ${headerBar(u)}
+  <div class="wrap">
+    <p><button class="link-btn" id="btn-back-admin10">← Voltar para o painel admin</button></p>
+    <div class="card">
+      <div class="card-head">
+        <div>
+          <h2>Acesso ao site</h2>
+          <p class="card-sub" style="margin-bottom:0">Quem entrou no site e em quantos dias, mês a mês. Abrir o site várias vezes no mesmo dia conta um só — o número mede dias de uso, não cliques.</p>
+        </div>
+        <div><label>Mês</label>
+          <select id="acessos-mes">
+            ${mesesParaAcesso().map(m => `<option value="${esc(m)}" ${m === mes ? "selected" : ""}>${esc(mesPorExtenso(m))}</option>`).join("")}
+          </select>
+        </div>
+      </div>
+
+      ${session.acessosBusy ? viewLoading("Carregando os acessos...") : `
+        <div class="stat-row">
+          <div class="stat-tile"><div class="label">Pessoas que entraram</div><div class="value">${pessoas}</div></div>
+          <div class="stat-tile"><div class="label">Dias de uso somados</div><div class="value">${acessos}</div><div class="sub">cada pessoa conta um por dia</div></div>
+          <div class="stat-tile"><div class="label">Da bateria inscrita</div><div class="value">${proporcao}<small>%</small></div><div class="sub">${inscritos.length} inscritos neste carnaval</div></div>
+        </div>
+
+        ${linhas.length ? `
+        <div class="table-scroll" style="margin-top:14px;">
+          <table>
+            <thead><tr><th>Pessoa</th><th class="center">Dias no mês</th><th>Último acesso</th></tr></thead>
+            <tbody id="acessos-tbody">
+              ${linhas.map(l => `<tr>
+                <td class="name-cell cell-wrap">${esc(l.nome)}</td>
+                <td class="center"><b>${l.dias.length}</b></td>
+                <td>${l.ultimo ? esc(dataHoraBRdoCarimbo(l.ultimo)) : '<span class="hint">—</span>'}</td>
+              </tr>`).join("")}
+            </tbody>
+          </table>
+        </div>` : `<p class="hint" style="margin-top:14px;">Nenhum acesso registrado em ${esc(mesPorExtenso(mes))}. A contagem começou quando esta tela entrou no ar — meses anteriores a isso aparecem vazios.</p>`}
+
+        ${semAcesso.length ? `
+        <h3 style="margin-top:20px;">Não entraram no site em ${esc(mesPorExtenso(mes))} <span class="muted-sm">(${semAcesso.length} de ${inscritos.length} inscritos)</span></h3>
+        <p class="hint" style="margin-top:0;">Quem precisa ser avisado por outro caminho — no ensaio ou no grupo — porque o aviso publicado aqui não chegou.</p>
+        <div class="table-scroll">
+          <table>
+            <thead><tr><th>Pessoa</th><th>Posição</th></tr></thead>
+            <tbody id="acessos-ausentes-tbody">
+              ${semAcesso.map(p => `<tr>
+                <td class="name-cell cell-wrap">${esc(fullName(p))}</td>
+                <td>${esc(rotuloDaPosicao((p.posicao || "").trim() || SEM_POSICAO))}</td>
+              </tr>`).join("")}
+            </tbody>
+          </table>
+        </div>` : (inscritos.length ? `<p class="hint" style="margin-top:18px;">Todo mundo que está inscrito neste carnaval entrou no site em ${esc(mesPorExtenso(mes))}.</p>` : "")}
+      `}
+
+      <p class="hint" style="margin-top:16px;">O rodapé do site avisa a toda a bateria que esse registro existe. Ele guarda o dia, não o que a pessoa fez dentro do site.</p>
+    </div>
+  </div>`;
+}
+
 function viewAdminRepertorioHistorico() {
   const u = perfilMesclado();
   if (repertorioHistorico === null) {
@@ -7210,6 +7404,9 @@ function wireEvents() {
   on("#btn-backup", "click", baixarBackup);
   on("#btn-importar-repertorio", "click", importarRepertorioHistorico);
   on("#btn-goto-repertorio-historico", "click", () => go("admin-repertorio-historico"));
+  on("#btn-goto-acessos", "click", () => { session.acessos = null; session.acessosMes = mesAtual(); go("admin-acessos"); });
+  on("#btn-back-admin10", "click", () => go("admin"));
+  on("#acessos-mes", "change", e => { session.acessos = null; carregarAcessos(e.target.value); });
   on("#btn-back-admin9", "click", () => go("admin"));
 
   /* ---------- edição do repertório histórico ---------- */

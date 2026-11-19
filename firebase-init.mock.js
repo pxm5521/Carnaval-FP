@@ -87,6 +87,9 @@ function resolveSentinels(data, existing) {
     const v = out[k];
     if (v && typeof v === "object" && "__increment" in v) {
       out[k] = (existing && typeof existing[k] === "number" ? existing[k] : 0) + v.__increment;
+    } else if (v && typeof v === "object" && "__arrayUnion" in v) {
+      const atual = Array.isArray(existing && existing[k]) ? existing[k] : [];
+      out[k] = [...new Set([...atual, ...v.__arrayUnion])];
     } else if (v && typeof v === "object" && v.__serverTimestamp) {
       out[k] = new Date().toISOString();
     }
@@ -237,6 +240,11 @@ function podeLer(ref) {
     return (ref.constraints || []).some(c => c.field === "uid" && c.op === "==" && c.value === u.uid);
   }
 
+  // /metricas: quem entrou no site e quando. Cada pessoa escreve o próprio
+  // registro, mas ler é só da organização — é o que a regra do Firestore diz, e
+  // sem espelhar aqui um erro de permissão em produção passaria batido.
+  if (ref.name.startsWith("metricas")) return ehAdminNoMock();
+
   return true;
 }
 
@@ -331,6 +339,7 @@ export async function deleteObject(ref) {
 function erroDeStorage(code, msg) { const e = new Error(msg); e.code = code; return e; }
 
 export function increment(n) { return { __increment: n }; }
+export function arrayUnion(...valores) { return { __arrayUnion: valores }; }
 export function serverTimestamp() { return { __serverTimestamp: true }; }
 
 /* ============================================================
